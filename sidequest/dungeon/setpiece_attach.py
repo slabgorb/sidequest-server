@@ -1,4 +1,46 @@
-"""Set-piece attach — Plan 6, Tasks 1, 2, 3 & 4.
+"""Set-piece attach — the runtime owner that ``setpieces.py`` deferred to.
+
+``sidequest/dungeon/setpieces.py`` (Plan 4) shipped the set-piece TEMPLATE
+schema only, with an honest-deferral note: "Plan 6 rolls set-pieces / starts
+trope+quest components / writes the ledger."  THIS MODULE is that Plan 6
+owner.  It is the single public entry point Plan 7's attach stage invokes —
+not an extension of ``setpieces.py`` but a peer module in the same package
+that owns the runtime behaviour.
+
+Three seams (as-merged contracts — read before editing):
+  1. Plan 5 complication-ledger storage (Seam 1):
+       ``DungeonStore.open_thread(ComplicationThread)`` and
+       ``DungeonStore.resolve_thread(thread_id)`` are the primitives.
+       Plan 5 owns the ``ledger.add`` and ``ledger.resolve`` OTEL spans
+       (emitted internally by those calls).  Plan 6 calls the primitives
+       and does NOT emit ``ledger.add`` / ``ledger.resolve`` itself.
+  2. ADR-018 trope engine (Seam 2):
+       A started trope component = append a
+       ``TropeState(id=trope_id, status="progressing", progress=0.0)`` to
+       ``snapshot.active_tropes``.  ``extra="ignore"`` on ``TropeState``
+       means origin_region + params CANNOT go on ``TropeState`` (Decision A
+       below) — they travel in ``TropeStartResult.pending`` for Task 4 to
+       persist in the ledger thread.
+  3. ADR-053 scenario (Seam 3 — SUPERSEDED):
+       ``ScenarioState`` is a whodunit model (clue graph / guilty_npc) with
+       no dungeon-quest surface and is NOT touched here.  A quest component
+       IS a ``ComplicationThread(kind="quest")`` written via Plan 5's
+       ``open_thread()`` — same primitive as a trope thread, different
+       ``kind``.  There is no quest registry; "seed a quest" = carry
+       ``quest_id`` + ``params`` + origin region forward as a pending
+       thread, symmetric to Task 2.
+
+``AttachReport.as_dict()`` span contract (Decision K — byte-pinned):
+  The locked key set is EXACTLY five flat scalars:
+    ``{setpiece_id, region_id, tropes_started, quests_seeded,
+       threads_written}``
+  ``rolled`` is deliberately NOT in ``as_dict()``: it is a nested
+  ``RolledSetPiece`` — a Plan-7 freeze target, not a flat OTEL span
+  attribute.  Plan 7 reads ``report.rolled`` directly to persist into the
+  save; it must NEVER recompute it (spec §7 save-is-truth contract).
+  Any addition/removal from ``as_dict()`` breaks the GM-panel lie-detector
+  and Plan 7's attach span; the key set is pinned by
+  ``test_attach_report_as_dict_key_set_locked``.
 
 Public surface (grows across Plan 6 Tasks 1–5, exactly like Plan 3's
 DepthReport precedent; NOT a stub):
@@ -27,8 +69,8 @@ DepthReport precedent; NOT a stub):
         started_at_depth_score
     ) -> AttachReport
 
-Determinism contract
---------------------
+Determinism / save-is-truth / resolution-only-shrinks contracts
+----------------------------------------------------------------
 * ``roll_set_piece`` is a pure function — no I/O, no engine mutation.
 * Sub-seeding uses blake2b over a pipe-delimited UTF-8 string of all five
   discriminators, fed into random.Random.  This is the canonical pattern
@@ -44,6 +86,20 @@ Determinism contract
 * ``start_trope_components`` and ``seed_quest_components`` reuse the same
   _slot_seed family for the budget-capped deterministic ordering of
   components (never a second scheme, never XOR).
+* Save-is-truth: the exact ``RolledSetPiece`` from the first attach is the
+  canonical slot assignment.  Plan 7 freezes ``AttachReport.rolled`` into
+  the save; the roll is NEVER recomputed from seed on subsequent turns.
+  A genuine re-attach (same inputs, same store) trips Plan 5's
+  ``open_thread`` duplicate-thread_id loud raise — the freeze-violation
+  signal (Decision J: caller owns the txn, not this module).
+* Resolution-only-shrinks: a ``ComplicationThread`` in the ledger flips
+  from ``open`` → ``resolved`` ONLY on player resolution (trope terminal
+  status via the 45-20 handshake diff, quest via Plan 7's scenario mechanic).
+  There is no arbitrary clock, no background aging, no silent expiry.
+  Accumulation is fully observable in the ledger rows and the
+  ``setpiece.resolve`` aggregate OTEL span (emitted every turn, even on an
+  empty diff — carries ``tropes_processed`` and ``threads_resolved`` so the
+  GM panel can distinguish "fired, 0 matches" from "never ran").
 
 Architect decisions (Plan 6, 2026-05-16)
 -----------------------------------------
