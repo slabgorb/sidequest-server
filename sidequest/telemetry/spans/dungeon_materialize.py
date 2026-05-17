@@ -82,11 +82,21 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_DESIGN] = SpanRoute(
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # `regions` is the per-region fill payload (Plan 7 Task 3): a JSON list
+    # of {region_id, algorithm, width, height, braid_ratio} — the
+    # ACTUALLY-applied braid_ratio per region (lie-detector: proves it was
+    # not silently defaulted). `error` is the failure marker: it reads None
+    # on the success path (graceful-get idiom — harmless) and surfaces a
+    # missing-theme / roomcorridor-floor / degenerate-seed / unknown-algorithm
+    # failure on the GM panel on the failure path.
     extract=lambda s: {
         "field": "dungeon_map",
         "op": "materialize.fill",
         "expansion_id": _attr("expansion_id")(s),
         "stage": "fill",
+        "regions": _attr("regions")(s),
+        "region_count": _attr("region_count")(s),
+        "error": _attr("error")(s),
     },
 )
 
