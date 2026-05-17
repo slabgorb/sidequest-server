@@ -418,6 +418,8 @@ def test_unknown_trope_id_raises_loudly() -> None:
     components = _make_components("ghost_lights")
 
     original_tracer_fn = _spans_module.tracer
+    # ignore: module attribute override (swap the tracer factory), not a
+    # class/method override — pyright flags the reassignment shape only.
     _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
     try:
         with pytest.raises(ValueError, match="ghost_lights"):
@@ -433,6 +435,7 @@ def test_unknown_trope_id_raises_loudly() -> None:
                 threads_already_lit=0,
             )
     finally:
+        # ignore: module attribute restore, not a method override (see above).
         _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
 
     # Span must have been emitted carrying the failure
@@ -535,3 +538,132 @@ def test_budget_no_silent_default() -> None:
             threads_already_lit=0,
             # threads_lit_per_expansion intentionally omitted
         )
+
+
+def test_zero_budget_lights_nothing() -> None:
+    """threads_lit_per_expansion=0 (with already_lit=0) lights nothing —
+    distinct from the exhaustion case (budget=1, already_lit=1)."""
+    trope_def = _make_trope_def("dripping_water")
+    pack = _make_pack(trope_def)
+    snapshot = _fresh_snapshot()
+    components = _make_components("dripping_water")
+
+    result = start_trope_components(
+        campaign_seed=3,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="zero_budget",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot,
+        threads_lit_per_expansion=0,
+        threads_already_lit=0,
+    )
+    assert result.tropes_started == 0
+    assert result.pending == []
+    assert snapshot.active_tropes == []
+
+
+# ---------------------------------------------------------------------------
+# Task 2: atomicity — a bad trope_id rejects the whole set-piece's
+# trope-start with ZERO snapshot mutation (no orphan TropeState on raise).
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_trope_id_is_atomic_no_partial_mutation() -> None:
+    """components=[known, unknown] with budget for both → ValueError raised
+    AND snapshot.active_tropes still empty (no orphan TropeState) AND the
+    trope.start failure span still emitted.
+
+    This pins the validate-all-then-mutate ordering. Under the OLD one-pass
+    ordering (open span → resolve → append, per component) the 'known'
+    component would have been appended to snapshot.active_tropes BEFORE the
+    'unknown' component's ValueError fired — leaving exactly one orphan
+    TropeState in a live snapshot. This test asserts zero, so it fails
+    against that old reasoning."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    # Only "known_trope" is registered; "missing_trope" is the content bug.
+    pack = _make_pack(_make_trope_def("known_trope"))
+    snapshot = _fresh_snapshot()
+    components = _make_components("known_trope", "missing_trope")
+
+    original_tracer_fn = _spans_module.tracer
+    # ignore: module attribute override (swap the tracer factory), not a
+    # class/method override — pyright flags the reassignment shape only.
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ValueError, match="missing_trope"):
+            start_trope_components(
+                campaign_seed=11,
+                expansion_id=4,
+                region_id="exp004.r9",
+                setpiece_id="mixed_bag",
+                components=components,
+                pack_tropes=pack,
+                snapshot=snapshot,
+                threads_lit_per_expansion=10,  # budget allows BOTH
+                threads_already_lit=0,
+            )
+    finally:
+        # ignore: module attribute restore, not a method override (see above).
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # ATOMIC: zero snapshot mutation despite "known_trope" being resolvable
+    # and within budget.
+    assert snapshot.active_tropes == [], (
+        "orphan TropeState left in snapshot — trope-start is not atomic"
+    )
+
+    # The failure span must still be emitted for the GM panel.
+    finished = exporter.get_finished_spans()
+    failure_spans = [
+        s
+        for s in finished
+        if s.name == "trope.start" and (s.attributes or {}).get("failed") is True
+    ]
+    assert failure_spans, "trope.start failure span was NOT emitted — GM panel is blind"
+    assert (failure_spans[0].attributes or {}).get("trope_id") == "missing_trope"
+
+
+def test_duplicate_trope_id_in_one_setpiece_lights_two_states() -> None:
+    """Pin current behavior: two identical TropeComponents (same trope_id) in
+    one set-piece → two TropeState entries appended.
+
+    This is intentional (each component lights its own thread). It is pinned
+    so Task 4 sees the constraint: a thread_id derived from trope_id ALONE
+    would collide here and trip Plan 5's open_thread duplicate-thread_id loud
+    raise — Task 4 must use a per-component discriminator."""
+    pack = _make_pack(_make_trope_def("twin_trap"))
+    snapshot = _fresh_snapshot()
+    components = _make_components("twin_trap", "twin_trap")
+
+    result = start_trope_components(
+        campaign_seed=8,
+        expansion_id=2,
+        region_id="exp002.r3",
+        setpiece_id="double_trouble",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+    )
+
+    assert result.tropes_started == 2
+    assert len(snapshot.active_tropes) == 2
+    assert [t.id for t in snapshot.active_tropes] == ["twin_trap", "twin_trap"]
+    # Both pending entries carry the origin region for Task 4's ledger.
+    assert len(result.pending) == 2
+    assert all(region == "exp002.r3" for _comp, region in result.pending)

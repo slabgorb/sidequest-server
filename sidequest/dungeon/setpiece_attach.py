@@ -217,11 +217,17 @@ def start_trope_components(
         pairs for Task 4.
 
     Raises:
-        ValueError: if any selected component's trope_id is not present in
-                    pack_tropes.  This is a content authoring bug — loud
-                    failure per CLAUDE.md "No Silent Fallbacks".  The
-                    trope.start span is still emitted with failed=True before
-                    the exception propagates so the GM panel sees it.
+        ValueError: if ANY component's trope_id (not just the budget-selected
+                    ones) is not present in pack_tropes.  This is a content
+                    authoring bug — loud failure per CLAUDE.md "No Silent
+                    Fallbacks", and the rejection is ATOMIC: validation runs
+                    over the whole components list BEFORE any
+                    ``snapshot.active_tropes.append``, so a bad trope_id
+                    rejects the entire set-piece's trope-start with zero
+                    snapshot mutation (no orphan TropeState on raise — Task 5
+                    wires this into a live snapshot). The trope.start span
+                    is still emitted with failed=True before the exception
+                    propagates so the GM panel sees the content bug.
     """
     from sidequest.telemetry.spans.dungeon_setpiece import trope_start_span
 
@@ -233,6 +239,27 @@ def start_trope_components(
     remaining = threads_lit_per_expansion - threads_already_lit
     if remaining <= 0 or not components:
         return TropeStartResult(tropes_started=0)
+
+    # PASS 1 — validate EVERY component's trope_id against the pack BEFORE
+    # any snapshot mutation. A bad trope_id in an authored set-piece is a
+    # content bug; it must reject the whole set-piece cleanly, not leave
+    # an orphan TropeState behind when the exception propagates ("No Silent
+    # Fallbacks" covers state consistency, not just error surfacing). The
+    # failure path still emits a trope.start span with failed=True so the
+    # GM panel sees the content bug.
+    for component in components:
+        if component.trope_id not in pack_tropes_by_id:
+            with trope_start_span(
+                trope_id=component.trope_id,
+                setpiece_id=setpiece_id,
+                origin_region_id=region_id,
+            ) as span:
+                span.set_attribute("failed", True)
+                raise ValueError(
+                    f"trope_id {component.trope_id!r} not found in pack — "
+                    "content authoring bug (add it to tropes.yaml or fix the "
+                    "set-piece template). No Silent Fallbacks."
+                )
 
     # Deterministic ordering of components within this budget cap.
     # Reuses the _slot_seed / blake2b family — index as the innermost
@@ -252,21 +279,19 @@ def start_trope_components(
     pending: list[tuple[TropeComponent, str]] = []
     started = 0
 
+    # PASS 2 — all ids validated above; append + emit the success span.
     for _orig_idx, component in selected:
-        # Open the span before resolution so the failure path can set
-        # failed=True on the live span before re-raising.
         with trope_start_span(
             trope_id=component.trope_id,
             setpiece_id=setpiece_id,
             origin_region_id=region_id,
-        ) as span:
-            if component.trope_id not in pack_tropes_by_id:
-                span.set_attribute("failed", True)
-                raise ValueError(
-                    f"trope_id {component.trope_id!r} not found in pack — "
-                    "content authoring bug (add it to tropes.yaml or fix the "
-                    "set-piece template). No Silent Fallbacks."
-                )
+        ):
+            # Task 4 note: do NOT derive thread_id from trope_id alone.
+            # Two TropeComponents with the same trope_id in one set-piece
+            # are intentionally allowed (each lights its own TropeState);
+            # a trope_id-only thread_id would collide and trip Plan 5's
+            # open_thread duplicate-thread_id loud raise. Use a per-component
+            # discriminator (origin region + component index / params).
             snapshot.active_tropes.append(
                 TropeState(id=component.trope_id, status="progressing", progress=0.0)
             )

@@ -47,15 +47,16 @@ def trope_start_span(
     trope_id: str,
     setpiece_id: str,
     origin_region_id: str,
-    failed: bool = False,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Open a trope.start span.
+    """Open a trope.start span (opens with failed=False).
 
-    Open before attempting resolution; set failed=True on the yielded span
-    before raising when the trope_id is unknown — the GM panel must see
-    the content bug, not silence.
+    The failure path is signalled post-yield via
+    ``span.set_attribute("failed", True)`` on the yielded span before the
+    caller re-raises — there is no open-time failure-declaration API. The
+    span is opened with ``failed=False``; an unknown trope_id flips it on
+    the live span so the GM panel sees the content bug, not silence.
     """
     with Span.open(
         SPAN_TROPE_START,
@@ -63,7 +64,7 @@ def trope_start_span(
             "trope_id": trope_id,
             "setpiece_id": setpiece_id,
             "origin_region_id": origin_region_id,
-            "failed": failed,
+            "failed": False,
             **attrs,
         },
         tracer_override=_tracer,
