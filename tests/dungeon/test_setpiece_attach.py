@@ -24,13 +24,16 @@ import pytest
 from pydantic import ValidationError
 
 from sidequest.dungeon.setpiece_attach import (
+    QuestSeedResult,
     RolledSetPiece,
     _slot_seed,
     roll_set_piece,
+    seed_quest_components,
     start_trope_components,
 )
 from sidequest.dungeon.setpieces import (
     ComponentSlot,
+    QuestComponent,
     SetPiece,
     TropeComponent,
 )
@@ -667,3 +670,389 @@ def test_duplicate_trope_id_in_one_setpiece_lights_two_states() -> None:
     # Both pending entries carry the origin region for Task 4's ledger.
     assert len(result.pending) == 2
     assert all(region == "exp002.r3" for _comp, region in result.pending)
+
+
+# ===========================================================================
+# Task 3: Quest-component seed → pending ComplicationThread(kind="quest")
+#
+# REDUCED SCOPE (Architect decision 2026-05-16, logged in the plan's
+# Post-Implementation Corrections): the "seed into ScenarioState" prose is
+# SUPERSEDED — ScenarioState is a whodunit model and is NOT touched. A quest
+# component is a future ComplicationThread(kind="quest") written via Plan 5's
+# open_thread() by Task 4. There is NO quest registry to resolve quest_id
+# against. The set-piece↔cookbook creature/loot manifest-join (the dropped
+# Task-3 test 2) is REASSIGNED TO PLAN 7 (Plan 4 shipped no ref convention).
+# Consequently reduced Task 3 has NO content-bug failure path — quest.seed is
+# an informational/success span only. A fabricated failure test would be
+# testing theater (the inverse of stubbing), so none is written by design.
+# ===========================================================================
+
+
+def _make_quest_components(*quest_ids: str, params: dict | None = None) -> list[QuestComponent]:
+    """Build QuestComponent list with optional shared params."""
+    return [QuestComponent(quest_id=qid, params=params or {}) for qid in quest_ids]
+
+
+class _FakeManifest:
+    """Duck-typed RegionContentManifest stand-in (.wandering_table /
+    .loot_table). Plan 7 supplies the real RegionContentManifest at attach;
+    reduced Task 3 accepts the parameter but does NOT resolve refs against it
+    (manifest-join deferred to Plan 7 — see plan Post-Implementation
+    Corrections). The fixture proves the parameter is accepted unchanged."""
+
+    def __init__(self) -> None:
+        self.wandering_table: list[dict] = [
+            {"name": "Zombie", "cr": 0.25, "weight": 3, "count": "1d4"}
+        ]
+        self.loot_table: list[dict] = [
+            {"name": "Grave Silver", "item_type": "treasure", "rarity": "common"}
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Task 3 Test 1: a seeded quest produces a REAL pending entry that Task 4 can
+# write as ComplicationThread(kind="quest") via DungeonStore.open_thread().
+# This is the genuine lie-detector (symmetric to Task 2 Test 1) — it proves
+# the pending shape is consumable end-to-end through the REAL Plan 5 ledger
+# primitive, not just a struct write.
+# ---------------------------------------------------------------------------
+
+
+def test_seeded_quest_is_a_real_pending_ledger_thread() -> None:
+    """seed_quest_components produces a (QuestComponent, origin_region_id)
+    pending entry that Task 4 can turn into a ComplicationThread(kind="quest")
+    and persist via Plan 5's real DungeonStore.open_thread() — then read back
+    through the real DungeonStore.get_thread(). Wiring proof: the pending
+    shape is end-to-end-consumable, not an inert blob."""
+    import sqlite3  # noqa: PLC0415
+
+    from sidequest.dungeon.persistence import (  # noqa: PLC0415
+        ComplicationThread,
+        DungeonStore,
+    )
+
+    components = _make_quest_components("deny_or_feed_the_altar", params={"irreversible": True})
+    result = seed_quest_components(
+        campaign_seed=42,
+        expansion_id=1,
+        region_id="exp001.r5",
+        setpiece_id="the_altar_that_waits",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+    )
+
+    # The pending shape is symmetric with Task 2's TropeStartResult.pending.
+    assert result.quests_seeded == 1
+    assert len(result.pending) == 1
+    comp, origin_region = result.pending[0]
+    assert comp.quest_id == "deny_or_feed_the_altar"
+    assert comp.params == {"irreversible": True}
+    assert origin_region == "exp001.r5"
+
+    # LIE DETECTOR: the pending entry must be consumable by the REAL Plan 5
+    # ledger primitive. Build the ComplicationThread Task 4 will build and
+    # persist+read it back through the real DungeonStore.
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    thread = ComplicationThread(
+        thread_id=f"quest|{origin_region}|0|{comp.quest_id}",
+        origin_region_id=origin_region,
+        kind="quest",
+        status="open",
+        started_at_depth_score=0.0,
+        payload={"quest_id": comp.quest_id, "params": comp.params},
+    )
+    store.open_thread(thread)
+    conn.commit()
+
+    read_back = store.get_thread(thread.thread_id)
+    assert read_back.kind == "quest"
+    assert read_back.origin_region_id == "exp001.r5"
+    assert read_back.status == "open"
+    assert read_back.payload == {
+        "quest_id": "deny_or_feed_the_altar",
+        "params": {"irreversible": True},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 Test (test-3 reframed): no ScenarioState touched, no stub. The
+# reconciliation killed the ScenarioState path; this asserts the honest
+# equivalent — a REAL pending thread, and that seed_quest_components never
+# imports or mutates ScenarioState.
+# ---------------------------------------------------------------------------
+
+
+def test_quest_seed_does_not_touch_scenario_state() -> None:
+    """The ADR-053 supersession is real: seed_quest_components must NOT
+    import, construct, or mutate ScenarioState. It produces only a real
+    pending ComplicationThread-bound entry. This pins the reconciliation so
+    a future change that re-introduces a ScenarioState dependency fails
+    loudly here.
+
+    The check is on real COUPLING (AST imports), not docstring prose — the
+    module docstring legitimately *names* ScenarioState to document that the
+    path is deliberately superseded. A substring scan would false-positive
+    on that intentional documentation (and on this very test file)."""
+    import ast  # noqa: PLC0415
+
+    import sidequest.dungeon.setpiece_attach as mod  # noqa: PLC0415
+
+    src = mod.__file__
+    assert src is not None
+    with open(src, encoding="utf-8") as fh:
+        source = fh.read()
+    tree = ast.parse(source)
+
+    imported_names: set[str] = set()
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported_modules.add(node.module)
+            for alias in node.names:
+                imported_names.add(alias.name)
+
+    assert "ScenarioState" not in imported_names, (
+        "setpiece_attach.py imports ScenarioState — the Task-0 "
+        "reconciliation (Seam 3) explicitly removed this coupling"
+    )
+    assert not any("scenario" in m for m in imported_modules), (
+        "setpiece_attach.py imports a scenario module — forbidden by the "
+        f"Task-0 reconciliation (imports: {sorted(imported_modules)})"
+    )
+    # Belt-and-braces: no ScenarioState symbol referenced anywhere in code
+    # (ast.Name covers construction / attribute-base usage).
+    referenced = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    assert "ScenarioState" not in referenced, (
+        "setpiece_attach.py references the ScenarioState symbol in code — "
+        "the reconciliation removed this path"
+    )
+
+    # And the produced pending entry is the real Task-4-consumable shape.
+    result = seed_quest_components(
+        campaign_seed=1,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="p0",
+        components=_make_quest_components("a_quest"),
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=5,
+        threads_already_lit=0,
+    )
+    assert isinstance(result, QuestSeedResult)
+    assert result.quests_seeded == 1
+    comp, region = result.pending[0]
+    assert isinstance(comp, QuestComponent)
+    assert region == "exp001.r0"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 Test: budget bound + seed-determinism of over-budget selection
+# (symmetric to Task 2's test_budget_caps_tropes_lit).
+# ---------------------------------------------------------------------------
+
+
+def test_quest_budget_caps_seeded_and_is_deterministic() -> None:
+    """With 4 quest components and budget=2 (remaining=2), exactly 2 are
+    seeded. Which 2 is deterministic from the seed via the shared _slot_seed
+    family — running twice gives the same pair (no second seed scheme)."""
+    components = _make_quest_components("quest_0", "quest_1", "quest_2", "quest_3")
+
+    result_a = seed_quest_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+    result_b = seed_quest_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+
+    assert result_a.quests_seeded == 2
+    assert len(result_a.pending) == 2
+    ids_a = {c.quest_id for c, _r in result_a.pending}
+    ids_b = {c.quest_id for c, _r in result_b.pending}
+    assert ids_a == ids_b, "selection is non-deterministic across identical inputs"
+
+
+def test_quest_shared_budget_accumulator_with_tropes() -> None:
+    """threads_already_lit threads the SHARED expansion budget: Task 4 passes
+    threads_already_lit = trope_result.tropes_started so quests consume what
+    remains after tropes. With budget=3 and 2 already lit by tropes, only 1
+    quest seeds even though 3 are offered."""
+    components = _make_quest_components("q0", "q1", "q2")
+    result = seed_quest_components(
+        campaign_seed=7,
+        expansion_id=2,
+        region_id="exp002.r1",
+        setpiece_id="shared_budget",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=3,
+        threads_already_lit=2,  # 2 tropes already consumed the budget
+    )
+    assert result.quests_seeded == 1
+    assert len(result.pending) == 1
+
+
+def test_quest_zero_budget_seeds_nothing() -> None:
+    """threads_lit_per_expansion=0 (already_lit=0) seeds nothing — distinct
+    from the exhaustion case."""
+    result = seed_quest_components(
+        campaign_seed=3,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="zero_budget",
+        components=_make_quest_components("q0"),
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=0,
+        threads_already_lit=0,
+    )
+    assert result.quests_seeded == 0
+    assert result.pending == []
+
+
+def test_quest_budget_exhausted_seeds_nothing() -> None:
+    """already_lit >= budget → nothing seeds (budget fully consumed by
+    tropes upstream)."""
+    result = seed_quest_components(
+        campaign_seed=5,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="full_budget",
+        components=_make_quest_components("q0"),
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=1,
+        threads_already_lit=1,
+    )
+    assert result.quests_seeded == 0
+    assert result.pending == []
+
+
+def test_quest_budget_no_silent_default() -> None:
+    """threads_lit_per_expansion has no default — omitting it raises
+    TypeError, not a silent fallback (symmetric to Task 2)."""
+    with pytest.raises(TypeError):
+        seed_quest_components(  # type: ignore[call-arg]
+            campaign_seed=1,
+            expansion_id=1,
+            region_id="r0",
+            setpiece_id="p0",
+            components=[],
+            manifest=_FakeManifest(),
+            threads_already_lit=0,
+            # threads_lit_per_expansion intentionally omitted
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 3 Test: quest.seed span emitted per seeded component AND routed.
+# Informational/success span (NOT a failure path — by design; the manifest
+# join that would surface a content bug is Plan 7's, see module docstring).
+# ---------------------------------------------------------------------------
+
+
+def test_quest_seed_span_emitted_per_component_and_routed() -> None:
+    """seed_quest_components emits one quest.seed span per seeded component,
+    carrying quest_id / setpiece_id / origin_region_id. The span must also
+    be registered in SPAN_ROUTES (routing-completeness contract)."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.telemetry.spans import SPAN_ROUTES  # noqa: PLC0415
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_QUEST_SEED,
+    )
+
+    # Routing-completeness: the new constant must have a routing decision.
+    assert SPAN_QUEST_SEED in SPAN_ROUTES, (
+        "quest.seed has no SPAN_ROUTES entry — GM panel would miss it"
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    components = _make_quest_components("q_alpha", "q_beta")
+
+    original_tracer_fn = _spans_module.tracer
+    # ignore: module attribute override (swap the tracer factory), not a
+    # class/method override — pyright flags the reassignment shape only.
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        result = seed_quest_components(
+            campaign_seed=11,
+            expansion_id=4,
+            region_id="exp004.r9",
+            setpiece_id="span_test",
+            components=components,
+            manifest=_FakeManifest(),
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+        )
+    finally:
+        # ignore: module attribute restore, not a method override (see above).
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    assert result.quests_seeded == 2
+    finished = exporter.get_finished_spans()
+    quest_seed_spans = [s for s in finished if s.name == "quest.seed"]
+    assert len(quest_seed_spans) == 2, (
+        "expected one quest.seed span per seeded component — GM panel needs the per-quest trail"
+    )
+    quest_ids = {(s.attributes or {}).get("quest_id") for s in quest_seed_spans}
+    assert quest_ids == {"q_alpha", "q_beta"}
+    for s in quest_seed_spans:
+        attrs = s.attributes or {}
+        assert attrs.get("setpiece_id") == "span_test"
+        assert attrs.get("origin_region_id") == "exp004.r9"
+
+
+def test_quest_seed_manifest_parameter_accepted_unchanged() -> None:
+    """The manifest parameter is REQUIRED (Plan 7 supplies the real
+    RegionContentManifest) but reduced Task 3 does NOT resolve refs against
+    it — that join is Plan 7's (Plan 4 shipped no ref convention; see plan
+    Post-Implementation Corrections). This pins that the parameter is
+    accepted and the call succeeds without touching its tables."""
+    manifest = _FakeManifest()
+    # Sentinel: if the implementation ever iterates the tables to resolve
+    # refs, an empty-table manifest would still pass (no resolution happens).
+    manifest.wandering_table = []
+    manifest.loot_table = []
+    result = seed_quest_components(
+        campaign_seed=2,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="no_resolution",
+        components=_make_quest_components("q0", params={"creatures": ["Nonexistent"]}),
+        manifest=manifest,
+        threads_lit_per_expansion=5,
+        threads_already_lit=0,
+    )
+    # A creatures-ref in params that is absent from the (empty) manifest does
+    # NOT raise here — ref-resolution is Plan 7's job, by Architect decision.
+    assert result.quests_seeded == 1
