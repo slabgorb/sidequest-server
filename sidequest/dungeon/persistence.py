@@ -191,6 +191,12 @@ CREATE TABLE IF NOT EXISTS dungeon_complication_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_dungeon_ledger_status ON dungeon_complication_ledger(status);
 CREATE INDEX IF NOT EXISTS idx_dungeon_ledger_origin ON dungeon_complication_ledger(origin_region_id);
+
+CREATE TABLE IF NOT EXISTS dungeon_meta (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    campaign_seed INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -226,6 +232,41 @@ class DungeonStore:
             self._conn.executescript(DUNGEON_SCHEMA_SQL)
         except sqlite3.Error as exc:  # fail loud — no silent fallback
             raise DatabaseError(f"dungeon schema creation failed: {exc}") from exc
+
+    def get_campaign_seed(self) -> int | None:
+        """The persisted campaign seed, or ``None`` on a fresh save.
+
+        Save-is-truth: the seed is frozen at bootstrap and read back
+        verbatim every reopen (Plan 7 session-integration spec §5). Fails
+        loud on a real sqlite error (No Silent Fallbacks).
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT campaign_seed FROM dungeon_meta WHERE id = 1"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"dungeon_meta read failed: {exc}") from exc
+        return None if row is None else int(row["campaign_seed"])
+
+    def set_campaign_seed(self, seed: int) -> None:
+        """Persist the campaign seed exactly once (write-once).
+
+        A second write is a contract violation, not an upsert — the seed
+        is frozen with the dungeon (save-is-truth). Does NOT autocommit:
+        the caller owns the transaction boundary (spec §7.5).
+        """
+        if self.get_campaign_seed() is not None:
+            raise PersistError(
+                "campaign_seed already set — it is write-once "
+                "(save-is-truth); refusing to overwrite a frozen seed"
+            )
+        try:
+            self._conn.execute(
+                "INSERT INTO dungeon_meta (id, campaign_seed) VALUES (1, ?)",
+                (seed,),
+            )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"dungeon_meta write failed: {exc}") from exc
 
     def commit_expansion(
         self,

@@ -14,8 +14,8 @@ Three plan bullets, TDD:
 No mocking of the dungeon/persistence/region_graph layer — real
 ``DungeonStore`` on a real connection, real ``materialize()`` pipeline
 through Tasks 1–6, real ``frontier_hook`` producer. The ONLY mock is the
-``claude -p`` curation subprocess (an injected fake-spawn ClaudeClient,
-the Task-4 precedent).
+curation LLM call (an injected ToolingLlmClient-shaped fake — the Task-4
+SDK precedent; never a real network call).
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def _register(store: Any, palette: Any, *, lookahead_breadth: int = 1) -> Any:
     from tests.dungeon.test_materializer import (
         _attach_pack,
         _real_cookbook_bundle,
-        _reflecting_claude_client,
+        _reflecting_sdk_client,
     )
 
     return register_lookahead_worker(
@@ -90,7 +90,7 @@ def _register(store: Any, palette: Any, *, lookahead_breadth: int = 1) -> Any:
         bundle=_real_cookbook_bundle(),
         palette=palette,
         pack_tropes=_attach_pack("cave_in"),
-        claude_client=_reflecting_claude_client(),
+        claude_client=_reflecting_sdk_client(),
         campaign_seed=7,
         lookahead_breadth=lookahead_breadth,
     )
@@ -227,7 +227,7 @@ async def test_default_lookahead_breadth_is_one() -> None:
     from tests.dungeon.test_materializer import (
         _attach_pack,
         _real_cookbook_bundle,
-        _reflecting_claude_client,
+        _reflecting_sdk_client,
     )
 
     handle = register_lookahead_worker(
@@ -235,7 +235,7 @@ async def test_default_lookahead_breadth_is_one() -> None:
         bundle=_real_cookbook_bundle(),
         palette=palette,
         pack_tropes=_attach_pack("cave_in"),
-        claude_client=_reflecting_claude_client(),
+        claude_client=_reflecting_sdk_client(),
         campaign_seed=7,
     )
     try:
@@ -247,12 +247,12 @@ async def test_default_lookahead_breadth_is_one() -> None:
 
 
 def _yielding_concurrency_probe_client(probe: dict[str, int]) -> Any:
-    """A real ClaudeClient whose injected spawner (a) reflects the
-    curation verdict (the Task-4 precedent — never a real subprocess) and
-    (b) yields control with ``await asyncio.sleep(0)`` so that IF two
-    edges' ``materialize`` ran concurrently their curate awaits would
-    interleave. It tracks live concurrency: ``probe['max']`` is the peak
-    number of simultaneously-suspended materialize runs.
+    """A ToolingLlmClient-shaped fake whose ``complete_with_tools`` (a)
+    reflects the curation verdict (the Task-4 SDK precedent — never a real
+    network call) and (b) yields control with ``await asyncio.sleep(0)``
+    so that IF two edges' ``materialize`` ran concurrently their curate
+    awaits would interleave. It tracks live concurrency: ``probe['max']``
+    is the peak number of simultaneously-suspended materialize runs.
 
     With the breadth>1 serial fix, ``probe['max']`` MUST stay 1 (one task
     materialises all edges serially — the next edge's ``load_map``/build
@@ -260,45 +260,61 @@ def _yielding_concurrency_probe_client(probe: dict[str, int]) -> Any:
     returns). If the worker reverted to per-edge parallel tasks, the
     sleep(0) yields would let curates overlap → ``probe['max'] >= 2`` AND
     the expansion_id reads would collide on the same ``max+1`` → a
-    PersistError re-commit. This asserts REAL serialization, not the
-    instant ``_FakeProc`` resolving before the next task starts."""
+    PersistError re-commit. This asserts REAL serialization, not an
+    instant fake resolving before the next task starts."""
     import asyncio as _asyncio
     import json as _json
 
-    from sidequest.agents.claude_client import ClaudeClient
-    from tests.dungeon.test_materializer import _FakeProc
+    from sidequest.agents.tooling_protocol import ToolingResult
 
-    async def _spawn(command: str, *args: object, **_k: object) -> Any:
-        probe["live"] = probe.get("live", 0) + 1
-        probe["max"] = max(probe.get("max", 0), probe["live"])
-        try:
-            # Real cooperative yield: if a sibling edge's materialize were
-            # running concurrently it would advance here and bump 'live'.
-            await _asyncio.sleep(0)
-            await _asyncio.sleep(0)
-            arglist = list(args)
-            prompt = arglist[arglist.index("-p") + 1]
-            assert isinstance(prompt, str)
-            _, _, input_blob = prompt.partition("INPUT:\n")
-            payload = _json.loads(input_blob)
-            verdict = {
-                region_id: {
-                    "race": region["race"],
-                    "cr_band": region["cr_band"],
-                    "wandering_table": [
-                        {**row, "telegraph": (row.get("telegraph") or "It is here.")}
-                        for row in region["wandering_table"]
-                    ],
-                    "big_bad": region["big_bad"],
+    class _ProbeSdk:
+        async def complete_with_tools(
+            self,
+            system_blocks: Any,
+            messages: Any,
+            tools: Any,
+            tool_dispatch: Any = None,
+            *,
+            model: str,
+            max_iterations: int = 8,
+            on_text_delta: Any = None,
+        ) -> ToolingResult:
+            probe["live"] = probe.get("live", 0) + 1
+            probe["max"] = max(probe.get("max", 0), probe["live"])
+            try:
+                # Real cooperative yield: if a sibling edge's materialize
+                # were running concurrently it would advance here and
+                # bump 'live'.
+                await _asyncio.sleep(0)
+                await _asyncio.sleep(0)
+                prompt = messages[0].content
+                _, _, input_blob = prompt.partition("INPUT:\n")
+                payload = _json.loads(input_blob)
+                verdict = {
+                    region_id: {
+                        "race": region["race"],
+                        "cr_band": region["cr_band"],
+                        "wandering_table": [
+                            {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                            for row in region["wandering_table"]
+                        ],
+                        "big_bad": region["big_bad"],
+                    }
+                    for region_id, region in payload.items()
                 }
-                for region_id, region in payload.items()
-            }
-            envelope = {"result": _json.dumps(verdict), "usage": {"output_tokens": 7}}
-            return _FakeProc(_json.dumps(envelope).encode())
-        finally:
-            probe["live"] -= 1
+                return ToolingResult(
+                    text=_json.dumps(verdict),
+                    stop_reason="end_turn",
+                    input_tokens=1,
+                    output_tokens=7,
+                    cached_input_read_tokens=0,
+                    cached_input_write_tokens=0,
+                    model=model,
+                )
+            finally:
+                probe["live"] -= 1
 
-    return ClaudeClient(timeout=5.0, spawn_fn=_spawn)
+    return _ProbeSdk()
 
 
 async def test_lookahead_breadth_greater_than_one_materializes_near_set_serially() -> None:
@@ -310,8 +326,8 @@ async def test_lookahead_breadth_greater_than_one_materializes_near_set_serially
     IMPORTANT: this asserts the REAL post-fix behaviour — the N edges are
     materialised SERIALLY inside ONE background task, so the
     ``expansion_id`` (``max+1``) reads cannot race even with a genuinely
-    suspending (slow) curate subprocess. The deterministic ``[2,3,4]`` is
-    a consequence of real serialization, NOT of an instant ``_FakeProc``
+    suspending (slow) curate LLM call. The deterministic ``[2,3,4]`` is
+    a consequence of real serialization, NOT of an instant fake
     resolving before the next task starts. The concurrency probe proves
     only ONE materialize is ever in-flight at a time (peak == 1); a
     parallel-per-edge regression would overlap the suspending curates
@@ -416,8 +432,7 @@ async def test_worker_failure_loud_on_span_and_does_not_abort_transition() -> No
     )
     from tests.dungeon.test_materializer import (
         _attach_pack,
-        _fake_claude_client,
-        _FakeProc,
+        _failing_sdk_client,
         _real_cookbook_bundle,
     )
 
@@ -429,10 +444,10 @@ async def test_worker_failure_loud_on_span_and_does_not_abort_transition() -> No
     frontier = store.load_frontier()
     target = frontier[0].from_region_id
 
-    # A fake claude subprocess that FAILS curation (non-zero return,
-    # garbage stdout) → _stage_curate raises → materialize raises → the
-    # background worker fails. The ONLY mocked seam (Task-4 precedent).
-    failing_client = _fake_claude_client(_FakeProc(b"not json", b"boom", returncode=1))
+    # A fake SDK client whose curation call FAILS (LlmClientError) →
+    # _stage_curate raises → materialize raises → the background worker
+    # fails. The ONLY mocked seam (Task-4 SDK precedent).
+    failing_client = _failing_sdk_client()
 
     exporter, _provider, real_tracer = _otel_in_memory()
     original_tracer_fn = _spans_module.tracer
@@ -600,7 +615,7 @@ async def test_sync_observer_body_failure_does_not_abort_region_crossing() -> No
     from tests.dungeon.test_materializer import (
         _attach_pack,
         _real_cookbook_bundle,
-        _reflecting_claude_client,
+        _reflecting_sdk_client,
     )
 
     conn = _mem_conn()
@@ -624,7 +639,7 @@ async def test_sync_observer_body_failure_does_not_abort_region_crossing() -> No
         bundle=_real_cookbook_bundle(),
         palette=palette,
         pack_tropes=_attach_pack("cave_in"),
-        claude_client=_reflecting_claude_client(),
+        claude_client=_reflecting_sdk_client(),
         campaign_seed=7,
         lookahead_breadth=1,
     )

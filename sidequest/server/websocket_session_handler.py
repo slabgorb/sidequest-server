@@ -925,6 +925,21 @@ class WebSocketSessionHandler:
                         exc,
                         exc_info=True,
                     )
+            # Beneath Sünden Plan 7 (§8): drain the live dungeon look-ahead
+            # worker before the final save so the observer is gone before
+            # state is persisted. Null-safe by construction — lookahead_handle
+            # is None for non-beneath_sunden sessions and for sessions that
+            # disconnected before attach. Mirrors embed_task.cancel(): it
+            # unregisters/drains only and must NOT close the store — the room
+            # owns the store lifecycle. Function-local import avoids any
+            # import cycle through the dungeon package.
+            from sidequest.dungeon.session_integration import (
+                detach_dungeon_from_session,
+            )
+
+            await detach_dungeon_from_session(
+                self._session_data.lookahead_handle
+            )
             try:
                 # ADR-037 Python port: room owns the canonical snapshot,
                 # so a plain room.save() persists it once for every

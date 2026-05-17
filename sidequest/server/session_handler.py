@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 
 if TYPE_CHECKING:
+    from sidequest.dungeon.lookahead_worker import LookaheadWorkerHandle
     from sidequest.game.monster_manual import MonsterManual
     from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import SessionRoom
@@ -501,6 +502,14 @@ class _SessionData:
     # in-memory lore_store after disconnect and from racing a sibling worker
     # at the ``await client.embed()`` yield point on rapid successive turns.
     embed_task: asyncio.Task[None] | None = None
+    # Beneath Sünden Plan 7 (§8): live dungeon look-ahead worker handle.
+    # Set by the connect handler via attach_dungeon_to_session for
+    # beneath_sunden sessions; None for every other genre/world and for
+    # sessions that disconnect before attach. cleanup() drains it via
+    # detach_dungeon_from_session before the final save. TYPE_CHECKING
+    # import + `from __future__ import annotations` (top of file) keep
+    # this lazy — no runtime import of the dungeon package is needed.
+    lookahead_handle: LookaheadWorkerHandle | None = None
     # Last dice roll outcome (story 34 — physics-is-the-roll). Stashed on
     # DICE_THROW resolution and read by the next narration turn's context
     # builder so the narrator knows whether the roll succeeded. Cleared by

@@ -15,8 +15,8 @@ Pipeline shape
 
 All stages run inside a parent ``dungeon.materialize`` OTEL span; each stage's child span
 nests under it in order.  Only the curate stage is ``await``-ed; the other four are
-synchronous calls inside the async coordinator.  The async shape is forced by
-``ClaudeClient.send`` being a coroutine: a nested ``asyncio.run`` from the running uvicorn
+synchronous calls inside the async coordinator.  The async shape is forced by the SDK
+``complete_with_tools`` being a coroutine: a nested ``asyncio.run`` from the running uvicorn
 event loop (or from the Task-7 async look-ahead worker) would raise ``RuntimeError``
 unconditionally, so ``materialize`` is declared ``async def`` and the curate stage is
 ``async def _stage_curate``.
@@ -92,8 +92,9 @@ Byte-pinned span contracts (consumed here)
 Contracts (No Silent Fallbacks / save-is-truth)
 -----
 
-- **Curation-failure-is-LOUD**: the one-shot ``claude -p`` curation pass (``ClaudeClient.send``)
-  failing, returning non-JSON, or returning a non-dict ALWAYS raises ``CurationError`` and
+- **Curation-failure-is-LOUD**: the one-shot SDK curation pass
+  (``complete_with_tools``) failing (``LlmClientError``), returning non-JSON, or
+  returning a non-dict ALWAYS raises ``CurationError`` and
   aborts the materialisation transaction.  There is NO fallback that ships the raw
   assembled manifest stamped as curated.  The curate span carries ``curated=false`` +
   ``reason`` before the raise (lie-detector visibility).
@@ -138,7 +139,9 @@ from typing import Any
 
 from opentelemetry import trace as _otel_trace
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeClientError
+from sidequest.agents.claude_client import LlmClientError
+from sidequest.agents.model_routing import CallType, resolve_model
+from sidequest.agents.tooling_protocol import CacheableBlock, Message
 from sidequest.dungeon.interiors import generate_interior
 from sidequest.dungeon.interiors.grid import Grid
 from sidequest.dungeon.persistence import DungeonStore, FrontierEdge, PersistError
@@ -325,9 +328,9 @@ class CuratedCreature:
 class RegionCuration:
     """In-memory curated content for one expansion (Plan 7 Task 4).
 
-    Curation deliberately breaks byte-reproducibility (the ``claude -p``
-    pass): ``assemble_region`` is deterministic up to the seam, the
-    post-curation output is NOT seed-reproducible — the save, not the
+    Curation deliberately breaks byte-reproducibility (the one-shot SDK
+    ``complete_with_tools`` pass): ``assemble_region`` is deterministic up
+    to the seam, the post-curation output is NOT seed-reproducible — the save, not the
     seed, is truth (spec §7). This is the curate stage's OUTPUT; applying
     it to a ``GameSnapshot`` / persisting it is Task 6 (commit). Because
     every creature here already carries an :class:`EdgePool` and no raw
@@ -645,7 +648,7 @@ def _stage_fill(
 
 
 class CurationError(RuntimeError):
-    """The bounded ``claude -p`` curation pass failed.
+    """The bounded one-shot SDK ``complete_with_tools`` curation pass failed.
 
     Raised loudly so the materialization transaction aborts — there is no
     fallback that ships the raw manifest stamped curated (spec §7 / No
@@ -696,10 +699,11 @@ def _build_curation_prompt(
     looks: dict[str, str],
 ) -> str:
     """One bounded prompt covering spec §7 'pass 1 content, pass 2
-    creatures' in a SINGLE one-shot ``claude -p`` subprocess (ADR-001/098:
-    no tools mid-generation, no --resume). The model selects/refines to
-    ship quality and returns a strict JSON verdict mirroring the manifest
-    shape (so curation is auditable, not free-form prose)."""
+    creatures' in a SINGLE one-shot SDK ``complete_with_tools`` call
+    (ADR-098: no tools mid-generation, no --resume). The model
+    selects/refines to ship quality and returns a strict JSON verdict
+    mirroring the manifest shape (so curation is auditable, not free-form
+    prose)."""
     payload = {
         region_id: {
             "look": looks[region_id],
@@ -761,24 +765,25 @@ async def _stage_curate(
     expansion: Expansion | None,
     fill_result: dict[str, RegionFill] | None,
     is_first_band_entry: bool,
-    claude_client: ClaudeClient | None,
+    claude_client: Any,
     span: _otel_trace.Span,
 ) -> RegionCuration:
-    """Plan 7 Task 4: curate stage — assemble_region + one-shot claude -p
-    + the owned CR→Edge seam.
+    """Plan 7 Task 4: curate stage — assemble_region + one-shot SDK
+    ``complete_with_tools`` + the owned CR→Edge seam.
 
     Generation proposes; curation disposes. For every region in the
     expansion: derive its cookbook LOOK from its theme (the resolved
     look→theme seam), call the pure deterministic
     ``cookbook.assemble_region`` (campaign_seed/expansion_id int→str at
-    this seam — DIVERGENCE 1), then run ONE bounded ``claude -p`` pass
-    (ADR-001/098 one-shot; spec §7 pass1+pass2 in a single subprocess) to
-    select/refine to ship quality. Every corpus creature crossing the
-    seam (wandering rows AND big_bad) is CR→Edge translated via the single
-    canonical ``creature_edge_pool_from_hp`` — no raw cr/hp leaks into the
+    this seam — DIVERGENCE 1), then run ONE bounded one-shot SDK
+    ``complete_with_tools`` pass (ADR-098 one-shot; spec §7 pass1+pass2 in
+    a single call, the codebase-idiomatic SDK precedent) to select/refine
+    to ship quality. Every corpus creature crossing the seam (wandering
+    rows AND big_bad) is CR→Edge translated via the single canonical
+    ``creature_edge_pool_from_hp`` — no raw cr/hp leaks into the
     curate-stage OUTPUT (so Task 6 commits Edge-only).
 
-    ``async def``: ``ClaudeClient.send`` is a coroutine and the event
+    ``async def``: ``complete_with_tools`` is a coroutine and the event
     loop is owned by the caller (uvicorn in prod, pytest-asyncio
     ``asyncio_mode=auto`` in tests). There is NO ``asyncio.run`` anywhere
     in production — a nested ``asyncio.run`` from the running uvicorn loop
@@ -800,11 +805,11 @@ async def _stage_curate(
       incomplete state here would be a silent fallback; Task 6 (commit,
       which owns persistence) owns the real band-entry-history
       computation. (Reconcile seam: ``is_first_band_entry``.)
-    - A curation subprocess failure (non-zero exit / timeout / empty /
-      unparseable) raises a loud ``CurationError`` and aborts the
-      transaction — it does NOT fall back to shipping the raw manifest
-      stamped curated. The span records ``curated=false`` + a specific
-      ``reason`` before the raise (lie-detector visibility).
+    - A curation LLM-call failure (``LlmClientError`` — network / API /
+      empty) OR an unparseable verdict raises a loud ``CurationError``
+      and aborts the transaction — it does NOT fall back to shipping the
+      raw manifest stamped curated. The span records ``curated=false`` +
+      a specific ``reason`` before the raise (lie-detector visibility).
     """
     if bundle is None:
         raise ValueError(
@@ -830,8 +835,9 @@ async def _stage_curate(
         )
     if claude_client is None:
         raise ValueError(
-            "_stage_curate requires an injected ClaudeClient — "
-            "claude_client=None is not valid (No Silent Fallbacks)"
+            "_stage_curate requires an injected SDK client "
+            "(ToolingLlmClient) — claude_client=None is not valid "
+            "(No Silent Fallbacks)"
         )
 
     campaign_seed_s = str(request.campaign_seed)  # DIVERGENCE 1: int→str seam
@@ -870,24 +876,42 @@ async def _stage_curate(
         span.set_attribute("reason", f"assemble: {exc}")
         raise
 
-    # ONE bounded one-shot claude -p curation pass (spec §7 pass1+pass2 in
-    # a single subprocess). ClaudeClient.send is a coroutine; this stage
-    # is async and the event loop is owned by the caller (uvicorn in
-    # prod, pytest-asyncio in tests) — NO asyncio.run anywhere, so Task
-    # 7's async look-ahead worker can await materialize() directly.
+    # ONE bounded one-shot SDK curation pass (spec §7 pass1+pass2 in a
+    # single complete_with_tools call — the codebase-idiomatic one-shot,
+    # the orchestrator precedent). complete_with_tools is a coroutine;
+    # this stage is async and the event loop is owned by the caller
+    # (uvicorn in prod, pytest-asyncio in tests) — NO asyncio.run
+    # anywhere, so Task 7's async look-ahead worker can await
+    # materialize() directly.
     prompt = _build_curation_prompt(manifests, region_look)
     try:
-        response = await claude_client.send(prompt)
-    except ClaudeClientError as exc:
+        result = await claude_client.complete_with_tools(
+            system_blocks=[
+                CacheableBlock(
+                    text=(
+                        "You curate procedural dungeon regions: select and "
+                        "refine each region's creatures, CR band, wandering "
+                        "table, and telegraphs. Reply with the verdict JSON "
+                        "only."
+                    ),
+                    cache=False,
+                )
+            ],
+            messages=[Message(role="user", content=prompt)],
+            tools=[],
+            tool_dispatch=None,
+            model=resolve_model(CallType.SCRATCH),
+        )
+    except LlmClientError as exc:
         span.set_attribute("curated", False)
-        span.set_attribute("reason", f"subprocess: {exc}")
+        span.set_attribute("reason", f"llm: {exc}")
         raise CurationError(
-            f"curation subprocess failed: {exc} — aborting "
+            f"curation LLM call failed: {exc} — aborting "
             f"materialization (no raw-manifest-stamped-curated fallback)"
         ) from exc
 
     try:
-        verdict = _parse_curation_verdict(response.text)
+        verdict = _parse_curation_verdict(result.text)
     except CurationError as exc:
         span.set_attribute("curated", False)
         span.set_attribute("reason", str(exc))
@@ -1493,7 +1517,7 @@ async def materialize(
     persistence: DungeonStore,
     snapshot: GameSnapshot,
     pack_tropes: Any,
-    claude_client: ClaudeClient | None = None,
+    claude_client: Any,
     is_first_band_entry: bool = True,
 ) -> None:
     """Run the five-stage materialisation pipeline for one expansion.
@@ -1504,13 +1528,13 @@ async def materialize(
     Stages design/fill/curate are implemented (Plan 7 Tasks 2–4); attach
     and commit remain ``NotImplementedError`` until Plan 7 Tasks 5–6.
 
-    ``async def``: the curate stage awaits ``ClaudeClient.send``. The
-    event loop is owned by the caller (uvicorn in prod, pytest-asyncio
-    ``asyncio_mode=auto`` in tests) — there is NO ``asyncio.run``
-    anywhere, so Task 7's async look-ahead worker can ``await
-    materialize()`` directly from inside its coroutine. design/fill/
-    attach/commit remain plain synchronous calls inside this async
-    coordinator; only curate is awaited.
+    ``async def``: the curate stage awaits the SDK
+    ``complete_with_tools``. The event loop is owned by the caller
+    (uvicorn in prod, pytest-asyncio ``asyncio_mode=auto`` in tests) —
+    there is NO ``asyncio.run`` anywhere, so Task 7's async look-ahead
+    worker can ``await materialize()`` directly from inside its
+    coroutine. design/fill/attach/commit remain plain synchronous calls
+    inside this async coordinator; only curate is awaited.
 
     Parameters
     ----------
@@ -1540,11 +1564,13 @@ async def materialize(
         genre-pack) is the Task-7 session-wiring concern; Task 5 binds the
         API. (Reconcile seam: ``pack_tropes``.)
     claude_client:
-        Injected ``ClaudeClient`` for the curate stage's one-shot
-        ``claude -p`` pass. ``None`` → a real ``ClaudeClient()`` is
-        constructed (production). Tests inject a fake-spawn client so no
-        real subprocess is launched (DI discipline mirrored from the rest
-        of the codebase — NOT a hardcoded non-injectable client).
+        Required. The session supplies the SDK client
+        (``build_llm_client()`` default ``AnthropicSdkClient``); the
+        curate stage issues a one-shot ``complete_with_tools``. Tests
+        inject a ``ToolingLlmClient``-shaped fake so no real network call
+        is made (DI discipline mirrored from the rest of the codebase —
+        NOT a hardcoded non-injectable client; No Silent Fallbacks —
+        ``None`` raises, no implicit construction).
     is_first_band_entry:
         Caller-asserted band-entry flag threaded into the curate stage's
         ``assemble_region`` call. The TRUE band-entry-history computation
@@ -1554,7 +1580,13 @@ async def materialize(
         caller-supplied value (NOT a silent default computed from
         incomplete state). (Reconcile seam: ``is_first_band_entry``.)
     """
-    curation_client = claude_client if claude_client is not None else ClaudeClient()
+    if claude_client is None:
+        raise ValueError(
+            "materialize requires an explicit claude_client (the look-ahead "
+            "worker/session supplies the SDK client via build_llm_client(); "
+            "No Silent Fallbacks — no implicit ClaudeClient())"
+        )
+    curation_client = claude_client
 
     # The per-region look is derived from each region's theme INSIDE
     # _stage_curate (it has bundle+palette+expansion) — the theme is the
