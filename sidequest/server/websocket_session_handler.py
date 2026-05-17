@@ -698,9 +698,7 @@ class WebSocketSessionHandler:
 
         if author_player_id is None:
             return emitters.emit_event(self, kind, payload_model)
-        return emitters.emit_event(
-            self, kind, payload_model, author_player_id=author_player_id
-        )
+        return emitters.emit_event(self, kind, payload_model, author_player_id=author_player_id)
 
     def _dispatch_pending_magic_frames(self, snapshot: GameSnapshot) -> None:
         """Phase 5 (Story 47-3): drain pending magic-confrontation queues.
@@ -2784,6 +2782,48 @@ class WebSocketSessionHandler:
                         source="chapter_promotion",
                     )
 
+                    # Plan 6 Task 5 — complication-ledger resolution
+                    # subscription. Consumes the same resolved-trope diff
+                    # the 45-20 handshake already computed above (reuse-
+                    # first, Decision M). Calls
+                    # resolve_complications_for_resolved_tropes which calls
+                    # store.resolve_thread() (Plan 5's span emitter) for
+                    # each open trope-thread whose ref_id matches a
+                    # just-resolved trope. Quest-thread resolution is
+                    # Plan 7's (Decision O).
+                    #
+                    # DECISION N STOP-AND-REPORT: _SessionData has NO
+                    # dungeon_store attribute — Plan 7 owns the
+                    # session→DungeonStore wiring (adds
+                    # ``dungeon_store: DungeonStore | None = None`` to
+                    # _SessionData and populates it at session-construction
+                    # time). Until Plan 7 lands, getattr returns None and
+                    # the WARNING below fires so the GM panel and server log
+                    # show the honest deferral. This is NOT a silent no-op:
+                    # the log line is the auditable deferral signal.
+                    _dungeon_store = getattr(sd, "dungeon_store", None)
+                    if _dungeon_store is not None:
+                        from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+                            resolve_complications_for_resolved_tropes,
+                        )
+
+                        _resolved_this_turn = [
+                            t.id
+                            for t in snapshot.active_tropes
+                            if t.status == "resolved"
+                            and trope_status_baseline.get(t.id) != "resolved"
+                        ]
+                        resolve_complications_for_resolved_tropes(
+                            resolved_trope_ids=_resolved_this_turn,
+                            store=_dungeon_store,
+                        )
+                    else:
+                        logger.warning(
+                            "dungeon.ledger_resolve.skipped — sd.dungeon_store is not "
+                            "set; Plan 7 must wire DungeonStore into _SessionData to "
+                            "activate complication-ledger resolution (Decision N)"
+                        )
+
                     now_encounter = snapshot.encounter
                     now_live = now_encounter is not None and not now_encounter.resolved
 
@@ -3103,14 +3143,10 @@ class WebSocketSessionHandler:
                     # author_player_id (Track A) gives the owning PC a
                     # real per-recipient projection pass. Default is zero
                     # segments — fully-public turns add nothing here.
-                    _private_segments = (
-                        getattr(result, "private_prose_segments", []) or []
-                    )
+                    _private_segments = getattr(result, "private_prose_segments", []) or []
                     if _private_segments:
                         _seat_to_player = {
-                            name: pid
-                            for pid, name in snapshot.player_seats.items()
-                            if name
+                            name: pid for pid, name in snapshot.player_seats.items() if name
                         }
                         _seg_turn_id = (
                             f"{sd.genre_slug}:{sd.world_slug}:"
@@ -3120,14 +3156,8 @@ class WebSocketSessionHandler:
                             _seg_text = (_seg.get("text") or "").strip()
                             if not _seg_text:
                                 continue
-                            _seg_anchor = (
-                                _seg.get("anchor_pc") or ""
-                            ).strip() or None
-                            _owner_pid = (
-                                _seat_to_player.get(_seg_anchor)
-                                if _seg_anchor
-                                else None
-                            )
+                            _seg_anchor = (_seg.get("anchor_pc") or "").strip() or None
+                            _owner_pid = _seat_to_player.get(_seg_anchor) if _seg_anchor else None
                             if _owner_pid is None:
                                 # Fail loud, never leak: an unresolvable
                                 # owner means we cannot safely route this
@@ -3148,9 +3178,7 @@ class WebSocketSessionHandler:
                                         "anchor_pc": _seg_anchor or "",
                                         "visible_to": "",
                                         "recipient_count": 0,
-                                        "withheld_from_count": len(
-                                            _connected_player_ids
-                                        ),
+                                        "withheld_from_count": len(_connected_player_ids),
                                         "routed": False,
                                     },
                                     component="projection",
@@ -3204,19 +3232,11 @@ class WebSocketSessionHandler:
                             # socket is not a leak, just a deferred read.
                             _seg_room = self._room
                             if _seg_msg is not None and _seg_room is not None:
-                                _seg_sock_fn = getattr(
-                                    _seg_room, "socket_for_player", None
-                                )
-                                _seg_q_fn = getattr(
-                                    _seg_room, "queue_for_socket", None
-                                )
+                                _seg_sock_fn = getattr(_seg_room, "socket_for_player", None)
+                                _seg_q_fn = getattr(_seg_room, "queue_for_socket", None)
                                 if callable(_seg_sock_fn) and callable(_seg_q_fn):
                                     _seg_sock = _seg_sock_fn(_owner_pid)
-                                    _seg_q = (
-                                        _seg_q_fn(_seg_sock)
-                                        if _seg_sock is not None
-                                        else None
-                                    )
+                                    _seg_q = _seg_q_fn(_seg_sock) if _seg_sock is not None else None
                                     if _seg_q is not None:
                                         _seg_q.put_nowait(_seg_msg)
                             _watcher_publish(
@@ -3226,9 +3246,7 @@ class WebSocketSessionHandler:
                                     "anchor_pc": _seg_anchor,
                                     "visible_to": _owner_pid,
                                     "recipient_count": 1,
-                                    "withheld_from_count": max(
-                                        len(_connected_player_ids) - 1, 0
-                                    ),
+                                    "withheld_from_count": max(len(_connected_player_ids) - 1, 0),
                                     "routed": True,
                                 },
                                 component="projection",

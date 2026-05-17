@@ -120,7 +120,35 @@ Decision L: ComplicationThread.payload is the legible linkage:
   {"setpiece_id": ..., "component_index": ..., "ref_id": ..., "params": ...}.
 
 Plan 6 later tasks extend this module:
-  Task 5 — resolution wiring
+  Task 5 — resolution wiring (DONE)
+
+Task 5 architecture (Plan 6, 2026-05-16)
+------------------------------------------
+Decision M: ``resolve_complications_for_resolved_tropes`` is the Plan 6
+  public resolution function. It receives the set of trope_ids that flipped
+  to "resolved" this turn (the 45-20 handshake diff), finds matching open
+  ``kind="trope"`` ledger threads via ``store.open_threads()`` filtered by
+  ``payload["ref_id"] == resolved_trope_id``, and calls
+  ``store.resolve_thread(thread_id)`` for each matching thread. Plan 5's
+  ``resolve_thread`` emits ``ledger.resolve`` internally — Plan 6 does NOT
+  emit ``ledger.resolve`` directly (continuation of the Seam 1 supersession:
+  Plan 5 owns the span; Plan 6 only calls resolve_thread).
+
+Decision N (STOP-AND-REPORT): ``_SessionData`` has NO ``dungeon_store``
+  attribute. The real store-source seam does not exist yet — Plan 7 owns it.
+  The handler-site call at the 45-20 handshake site references
+  ``sd.dungeon_store`` (the Plan 7–designated attribute name) via
+  ``getattr(sd, "dungeon_store", None)``. When the attribute is absent (pre-
+  Plan 7), the resolution subscription logs a WARNING and skips — this is
+  the honest-deferral path (NOT a silent no-op: the warning is the loud
+  declaration of the missing seam). Plan 7 populates ``sd.dungeon_store`` to
+  activate the path. The wiring function itself is real and fully tested.
+
+Decision O (Plan 7 handoff): Quest-thread resolution is Plan 7's.
+  ``resolve_complications_for_resolved_tropes`` resolves ONLY ``kind="trope"``
+  threads. Quest threads remain ``open`` — the detection mechanic (scenario
+  finish/fail) and the resolve call are Plan 7's by Architect decision.
+  This is tested by Task 5 Test 2 (quest thread stays open across ticks).
 """
 
 from __future__ import annotations
@@ -855,3 +883,81 @@ def attach_set_piece(
 
     # Step 6: Return the AttachReport (Plan 7's attach-stage contract).
     return report
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Resolution wiring — subscribe to the existing 45-20 handshake diff
+# ---------------------------------------------------------------------------
+
+
+def resolve_complications_for_resolved_tropes(
+    *,
+    resolved_trope_ids: list[str],
+    store: DungeonStore,
+) -> None:
+    """For each trope_id that flipped to "resolved" this turn, find and
+    resolve matching open ``kind="trope"`` ledger threads via Plan 5's
+    ``store.resolve_thread()``.
+
+    Decision M: this function is called from the 45-20 handshake site in
+    ``websocket_session_handler.py`` with the diff that site already
+    computes (the set of trope_ids whose status flipped to "resolved" this
+    turn — do NOT recompute; reuse the handshake's detection). Plan 5's
+    ``resolve_thread`` emits ``ledger.resolve`` internally — Plan 6 does
+    NOT emit ``ledger.resolve`` directly (Seam 1 supersession continuation).
+
+    Decision A reminder: a TropeState carries only ``id`` + ``status``, no
+    thread_id back-reference. The mapping is by matching open
+    ``kind="trope"`` threads whose ``payload["ref_id"] == resolved_trope_id``.
+    Duplicate trope_ids in one set-piece → multiple threads with the same
+    ref_id; each matching open thread is resolved (one per resolution event,
+    aggregate per spec §7.1).
+
+    Decision O: quest-thread resolution is Plan 7's. This function resolves
+    ONLY ``kind="trope"`` threads. Quest threads remain open.
+
+    Args:
+        resolved_trope_ids: List of trope_ids that flipped to "resolved"
+            this turn (produced by the 45-20 handshake diff in
+            ``websocket_session_handler.py``). Empty list is a valid no-op
+            (nothing resolved this turn).
+        store: Real DungeonStore from Plan 7's session seam. The caller
+            (the 45-20 handshake site) obtains this from ``sd.dungeon_store``
+            (the Plan 7–designated attribute). Transaction boundary is the
+            caller's (plan §7.5).
+
+    Raises:
+        NotFoundError: propagated from ``store.resolve_thread`` if a
+            matched thread_id is absent from the ledger — this is a real
+            bug (the match logic found a thread, then it disappeared), NOT
+            silenced.
+    """
+    if not resolved_trope_ids:
+        return
+
+    # Fetch all open threads once — O(open_threads) rather than one query
+    # per trope_id. On typical dungeon sizes (tens to hundreds of threads)
+    # this is fast; if the ledger grows very large Plan 7 can add an index
+    # on payload["ref_id"] without changing this interface.
+    open_threads = store.open_threads()
+
+    # Build a lookup: ref_id → list[thread_id] for open trope threads.
+    # Multiple threads with the same ref_id are all included (duplicate
+    # trope_id case, spec §7.1 aggregate resolution).
+    trope_threads_by_ref_id: dict[str, list[str]] = {}
+    for thread in open_threads:
+        if thread.kind != "trope":
+            # Decision O: only trope threads; quest resolution is Plan 7's.
+            continue
+        ref_id = thread.payload.get("ref_id", "")
+        if ref_id not in trope_threads_by_ref_id:
+            trope_threads_by_ref_id[ref_id] = []
+        trope_threads_by_ref_id[ref_id].append(thread.thread_id)
+
+    for trope_id in resolved_trope_ids:
+        for thread_id in trope_threads_by_ref_id.get(trope_id, []):
+            # Plan 5's resolve_thread emits ledger.resolve internally — Plan 6
+            # does NOT add another emit here (Seam 1 supersession continuation).
+            # NotFoundError propagates — the match above found this thread_id,
+            # so absence at resolve time is a real bug (No Silent Fallbacks).
+            store.resolve_thread(thread_id)

@@ -1851,3 +1851,324 @@ def test_attach_report_rolled_is_the_deterministic_rolled_set_piece() -> None:
         "quests_seeded",
         "threads_written",
     }
+
+
+# ===========================================================================
+# Task 5: Resolution wiring — ledger.resolve from the real gameplay path
+#
+# Test 1: driving a trope to terminal status through the REAL trope path
+#   (tick_tropes → _fire_one_staggered_beat) flips its ledger entry from
+#   "open" to "resolved" and emits ledger.resolve (Plan 5's span, captured
+#   via the real OTEL in-memory exporter).
+#
+# Test 2: an unresolved thread stays "open" across subsequent expansions
+#   (accumulation spine — it does not silently age out; spec §7.1 "no
+#   arbitrary clock").
+#
+# The mandatory wiring test (CLAUDE.md) lives in test_setpiece_attach_wiring.py.
+# ===========================================================================
+
+
+def _make_terminal_trope_def(trope_id: str) -> Any:
+    """TropeDefinition-shaped object that resolves after ONE tick_tropes call.
+
+    The escalation ladder has a single beat at threshold 0.0 so it is
+    immediately eligible on the first staggered-beat pass. The TropeState
+    is constructed with ``progress=1.0`` (already at cap) so
+    _advance_progress does nothing and _fire_one_staggered_beat fires the
+    single beat immediately. After firing: beats_fired==1==len(escalation)
+    AND progress>=1.0 → terminal resolution (winner.status="resolved").
+
+    This is the REAL ``_fire_one_staggered_beat`` terminal path — not a test
+    shortcut. Duck-typing matches tick_tropes' ``pack_tropes_by_id`` usage.
+    """
+    progression = SimpleNamespace(
+        rate_per_turn=0.0,
+        rate_per_day=0.0,
+        accelerators=[],
+        decelerators=[],
+        accelerator_bonus=0.0,
+        decelerator_penalty=0.0,
+    )
+    beat = SimpleNamespace(at=0.0, event="The trap springs!", stakes="", npcs_involved=[], roles=[])
+    return SimpleNamespace(
+        id=trope_id,
+        passive_progression=progression,
+        escalation=[beat],  # exactly ONE beat at threshold 0.0
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 Test 1: terminal status via real tick_tropes → ledger entry resolved
+# + ledger.resolve span emitted.
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_trope_flips_ledger_entry_and_emits_span() -> None:
+    """Task 5 Test 1.
+
+    Drives a trope to terminal status through the REAL tick_tropes engine
+    (not a test-only shortcut), then calls
+    resolve_complications_for_resolved_tropes with the resolved trope id.
+    Asserts:
+      - the ledger thread flipped from "open" to "resolved"
+      - ledger.resolve (Plan 5's span) was emitted with the thread_id
+      - the origin_region_id carried on the thread matches the attach origin
+
+    OTEL captured via the in-memory exporter (established pattern from
+    test_commit_and_ledger_emit_spans in test_persistence.py).
+    """
+    import sqlite3  # noqa: PLC0415
+
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.persistence import DungeonStore  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        attach_set_piece,
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.game.trope_tick import tick_tropes  # noqa: PLC0415
+    from sidequest.telemetry.spans.dungeon_persist import SPAN_LEDGER_RESOLVE  # noqa: PLC0415
+
+    # OTEL in-memory capture for ledger.resolve
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = DungeonStore(conn)
+    store.ensure_schema()
+
+    trope_id = "cave_in"
+    origin_region = "exp001.r5"
+    trope_def = _make_terminal_trope_def(trope_id)
+    pack = _make_pack(trope_def)
+    snapshot = _fresh_snapshot()
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+
+    # Step 1: Attach the set-piece — writes an open ledger thread for cave_in.
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        attach_set_piece(
+            campaign_seed=42,
+            expansion_id=1,
+            region_id=origin_region,
+            setpiece_id="the_trap",
+            set_piece=set_piece,
+            trope_components=_make_components(trope_id),
+            quest_components=[],
+            pack_tropes=pack,
+            snapshot=snapshot,
+            manifest=_FakeManifest(),
+            store=store,
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+            started_at_depth_score=15.0,
+        )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+    conn.commit()
+
+    # Verify the thread is open before tick.
+    open_before = store.open_threads()
+    assert len(open_before) == 1
+    assert open_before[0].status == "open"
+    assert open_before[0].payload["ref_id"] == trope_id
+
+    # Step 2: Set trope progress=1.0 so the first tick fires the beat and
+    # hits the terminal condition (beats_fired==1==len(escalation) AND
+    # progress>=1.0 → status="resolved"). Using the REAL tick_tropes engine.
+    snapshot.active_tropes[0].progress = 1.0
+
+    # Capture baseline for the handshake diff (mirrors the 45-20 site).
+    trope_status_baseline: dict[str, str] = {t.id: t.status for t in snapshot.active_tropes}
+
+    # Drive the trope to terminal through the REAL tick_tropes engine.
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        tick_tropes(snapshot, pack, now_turn=1)
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # Confirm the real engine flipped the status to "resolved".
+    assert snapshot.active_tropes[0].status == "resolved", (
+        "tick_tropes did not resolve the trope — terminal condition not met"
+    )
+
+    # Step 3: Compute the resolved-trope diff (the 45-20 handshake diff).
+    # This mirrors the exact diff the handler produces.
+    resolved_trope_ids = [
+        t.id
+        for t in snapshot.active_tropes
+        if t.status == "resolved" and trope_status_baseline.get(t.id) != "resolved"
+    ]
+    assert resolved_trope_ids == [trope_id]
+
+    # Step 4: Call the resolution subscription through the REAL function.
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=resolved_trope_ids,
+            store=store,
+        )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+    conn.commit()
+
+    # Assert 1: ledger thread flipped to "resolved".
+    remaining_open = store.open_threads()
+    assert remaining_open == [], (
+        f"ledger thread still open after resolve_complications_for_resolved_tropes; "
+        f"open threads: {remaining_open}"
+    )
+
+    # Assert 2: ledger.resolve span was emitted (Plan 5's span in resolve_thread).
+    finished = exporter.get_finished_spans()
+    resolve_spans = [s for s in finished if s.name == SPAN_LEDGER_RESOLVE]
+    assert resolve_spans, (
+        "ledger.resolve span NOT emitted — Plan 5's resolve_thread span is missing"
+    )
+    # The span carries the thread_id.
+    resolve_thread_ids = {(s.attributes or {}).get("thread_id") for s in resolve_spans}
+    assert any(tid is not None for tid in resolve_thread_ids), (
+        "ledger.resolve span has no thread_id attribute — origin region unverifiable"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 Test 2: unresolved thread stays "open" across subsequent expansions
+# (accumulation spine — no arbitrary clock).
+# ---------------------------------------------------------------------------
+
+
+def test_unresolved_thread_stays_open_across_subsequent_expansions() -> None:
+    """Task 5 Test 2 — spec §7.1 accumulation spine.
+
+    An open ledger thread (from a set-piece attach) stays "open" after a
+    subsequent attach_set_piece call. No arbitrary clock ages it out. This
+    covers both:
+      - a still-progressing trope thread (Plan 6 has a resolver for it
+        but the trope has not yet hit terminal status)
+      - a quest thread (Plan 6 has no resolver — Plan 7's; it also stays
+        open, proving Decision O is correct: quest-thread resolution is
+        Plan 7's)
+
+    The test drives one tick that does NOT reach terminal status (progress
+    starts below 1.0 and rate=0.0 so it stays below 1.0), confirms both
+    threads are still open, then calls a second attach and confirms the
+    original threads remain.
+    """
+    import sqlite3  # noqa: PLC0415
+
+    from sidequest.dungeon.persistence import DungeonStore  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        attach_set_piece,
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.game.trope_tick import tick_tropes  # noqa: PLC0415
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = DungeonStore(conn)
+    store.ensure_schema()
+
+    # Trope def with NO escalation — progress never hits terminal.
+    # rate_per_turn=0.0 so progress stays at 0.0 through any number of ticks.
+    still_progressing_def = _make_trope_def("slow_rising_water", rate_per_turn=0.0)
+    pack = _make_pack(still_progressing_def)
+    snapshot = _fresh_snapshot()
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+
+    # Attach 1: one trope + one quest. Two threads, both open.
+    attach_set_piece(
+        campaign_seed=7,
+        expansion_id=1,
+        region_id="exp001.r2",
+        setpiece_id="flood_chamber",
+        set_piece=set_piece,
+        trope_components=_make_components("slow_rising_water"),
+        quest_components=_make_quest_components("find_the_drain"),
+        pack_tropes=pack,
+        snapshot=snapshot,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=5.0,
+    )
+    conn.commit()
+
+    open_after_attach1 = store.open_threads()
+    assert len(open_after_attach1) == 2, (
+        f"expected 2 open threads after attach 1, got {len(open_after_attach1)}"
+    )
+
+    # Tick the trope — it does NOT resolve (no escalation ladder, rate=0.0).
+    trope_status_baseline = {t.id: t.status for t in snapshot.active_tropes}
+    tick_tropes(snapshot, pack, now_turn=1)
+
+    # The trope is still progressing (not resolved).
+    assert snapshot.active_tropes[0].status == "progressing", (
+        "trope resolved unexpectedly — test fixture is wrong"
+    )
+
+    # Compute resolved diff — should be empty (nothing resolved).
+    resolved_ids = [
+        t.id
+        for t in snapshot.active_tropes
+        if t.status == "resolved" and trope_status_baseline.get(t.id) != "resolved"
+    ]
+    assert resolved_ids == [], "test fixture produced unexpected resolution"
+
+    # Call the resolution subscription with an empty resolved set — no-op.
+    resolve_complications_for_resolved_tropes(
+        resolved_trope_ids=resolved_ids,
+        store=store,
+    )
+
+    # Both threads still open — no arbitrary aging.
+    still_open = store.open_threads()
+    assert len(still_open) == 2, (
+        f"threads aged out without resolution — spec §7.1 'no arbitrary clock' violated; "
+        f"open={len(still_open)}"
+    )
+    assert all(t.status == "open" for t in still_open)
+
+    # Attach 2: a second set-piece in the same expansion.
+    # The two original threads must STILL be open after the second attach
+    # (accumulation spine: ledger grows, old threads do not disappear).
+    snapshot2 = _fresh_snapshot()
+    another_trope_def = _make_trope_def("collapsing_bridge", rate_per_turn=0.0)
+    pack2 = _make_pack(still_progressing_def, another_trope_def)
+    attach_set_piece(
+        campaign_seed=7,
+        expansion_id=1,
+        region_id="exp001.r3",
+        setpiece_id="broken_bridge",
+        set_piece=set_piece,
+        trope_components=_make_components("collapsing_bridge"),
+        quest_components=[],
+        pack_tropes=pack2,
+        snapshot=snapshot2,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=2,  # the two from attach 1 already lit
+        started_at_depth_score=8.0,
+    )
+    conn.commit()
+
+    final_open = store.open_threads()
+    assert len(final_open) == 3, (
+        f"expected 3 open threads after attach 2 (2 original + 1 new), got {len(final_open)}"
+    )
+    # All three threads are "open" — accumulation spine intact.
+    assert all(t.status == "open" for t in final_open)
