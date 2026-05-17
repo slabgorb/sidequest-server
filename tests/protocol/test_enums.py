@@ -94,6 +94,10 @@ def test_message_type_action_reveal_wire_string() -> None:
     assert MessageType.ACTION_REVEAL == "ACTION_REVEAL"
 
 
+def test_message_type_player_speech_wire_string() -> None:
+    assert MessageType.PLAYER_SPEECH == "PLAYER_SPEECH"
+
+
 def test_message_type_scenario_event_wire_string() -> None:
     assert MessageType.SCENARIO_EVENT == "SCENARIO_EVENT"
 
@@ -194,6 +198,13 @@ def test_message_type_narration_segment_wire_string() -> None:
     assert MessageType.NARRATION_SEGMENT == "NARRATION_SEGMENT"
 
 
+def test_message_type_dungeon_map_wire_string() -> None:
+    """Beneath Sünden BETTER fix (seam 3) — the NEW ADR-055 procedural
+    megadungeon map frame. Distinct from the port-deleted ADR-019
+    MAP_UPDATE (which is NOT revived)."""
+    assert MessageType.DUNGEON_MAP == "DUNGEON_MAP"
+
+
 def test_message_type_complete_count() -> None:
     """All 46 GameMessage variants must be represented.
 
@@ -209,10 +220,17 @@ def test_message_type_complete_count() -> None:
     bumped 44 → 45.
     ADR-105 B3 added NARRATION_SEGMENT (per-PC private-prose channel —
     the broadcast-layer perception firewall); bumped 45 → 46.
+    Beneath Sünden BETTER fix (seam 3) added DUNGEON_MAP — the NEW
+    ADR-055 procedural-megadungeon map frame (NOT a revival of the
+    port-deleted ADR-019 MAP_UPDATE); bumped 46 → 47.
+    Playtest 2026-05-17 added PLAYER_SPEECH — verbatim PC dialogue
+    surfaced to the MP party (the narrator can't echo player speech per
+    SOUL.md Agency, and ACTION_REVEAL is wiped on barrier-fire); bumped
+    47 → 48.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 46
+    assert len(MessageType) == 48
 
 
 # ===========================================================================

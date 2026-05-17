@@ -147,13 +147,16 @@ async def test_attach_is_idempotent_reuses_persisted_seed(
     assert map1 == map2, "reopen must NOT re-seed (idempotent bootstrap)"
 
 
-async def test_concurrent_attach_same_save_raises_loud_then_reattaches_after_detach(
+async def test_concurrent_attach_same_save_is_idempotent_then_reattaches_after_detach(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§14.D: a second attach for an already-attached save raises loud
-    (concurrent sessions on one save would double-register — a contract
-    violation, not an upsert). After detach, a fresh attach for that save
-    succeeds (sequential reopen is unaffected)."""
+    """§14.D: a second attach for an already-attached save is IDEMPOTENT
+    — it returns the EXISTING handle and adds NO second observer (no
+    double-register, no double-materialize). Was a hard RuntimeError, but
+    the MP deterministic URL means every join/reconnect re-enters attach
+    on the one shared save; raising crashed the connect (live playtest
+    2026-05-17). After detach, a fresh attach for that save succeeds
+    (sequential reopen is unaffected)."""
     from sidequest.dungeon import session_integration
     from tests.dungeon.test_materializer import _reflecting_sdk_client
 
@@ -173,10 +176,13 @@ async def test_concurrent_attach_same_save_raises_loud_then_reattaches_after_det
     assert h1 is not None
     assert frontier_hook.registered_observer_count() == 1
 
-    with pytest.raises(RuntimeError, match="already attached"):
-        await session_integration.attach_dungeon_to_session(
-            **dict(kw, snapshot=_snapshot())
-        )
+    h_re = await session_integration.attach_dungeon_to_session(
+        **dict(kw, snapshot=_snapshot())
+    )
+    assert h_re is h1, (
+        "idempotent re-attach must return the SAME live handle so "
+        "additional MP sockets share the one registered worker"
+    )
     assert frontier_hook.registered_observer_count() == 1
 
     await session_integration.detach_dungeon_from_session(h1)

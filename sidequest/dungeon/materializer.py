@@ -901,6 +901,16 @@ async def _stage_curate(
             tools=[],
             tool_dispatch=None,
             model=resolve_model(CallType.SCRATCH),
+            # The curate verdict is a full per-region monster-manual JSON
+            # for the whole expansion (race/cr_band/wandering_table with
+            # per-row telegraphs + big_bad). The SDK client's 4096-token
+            # default truncated it deterministically (~11.5 KB, mid
+            # wandering_table) → unparseable JSON → fatal CurationError →
+            # session could not start. Curation is enrichment, not a
+            # gate; give it the headroom to finish rather than degrade
+            # (No Silent Fallbacks — the verdict must be whole, not a
+            # stamped-curated raw manifest).
+            max_tokens=16384,
         )
     except LlmClientError as exc:
         span.set_attribute("curated", False)

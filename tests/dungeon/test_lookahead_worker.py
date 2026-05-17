@@ -277,6 +277,7 @@ def _yielding_concurrency_probe_client(probe: dict[str, int]) -> Any:
             *,
             model: str,
             max_iterations: int = 8,
+            max_tokens: int = 4096,
             on_text_delta: Any = None,
         ) -> ToolingResult:
             probe["live"] = probe.get("live", 0) + 1

@@ -156,6 +156,32 @@ class NarrationSegmentPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# SpokenLinePayload (playtest 2026-05-17 — MP dialogue visibility)
+# ---------------------------------------------------------------------------
+
+
+class SpokenLinePayload(ProtocolBase):
+    """One verbatim line a PC spoke aloud, attributed to that PC.
+
+    Surfaced into the shared transcript at barrier-fire so every player
+    sees what each PC said to NPCs/each other. The narrator must not
+    echo player speech (SOUL.md Agency) and ``ACTION_REVEAL`` is wiped
+    on dispatch, so without this the words vanished for peers (Keith +
+    Sebby, 2026-05-17). This is public table speech — broadcast to all,
+    deliberately NOT routed through the ADR-105 perception firewall or
+    the POV swap (it stays "Rux: ..." verbatim, not 2nd-person).
+    """
+
+    character_name: str
+    """The PC who spoke. Empty only if seat resolution failed upstream."""
+    text: NonBlankString
+    """The verbatim spoken line. Non-blank — empty utterances are
+    dropped by ``extract_spoken_lines`` before a payload is built."""
+    round: int = 0
+    """Round number, stamped server-side for client transcript ordering."""
+
+
+# ---------------------------------------------------------------------------
 # SecretNotePayload (Group G Task 6)
 # ---------------------------------------------------------------------------
 
@@ -774,6 +800,19 @@ class NarrationSegmentMessage(ProtocolBase):
     player_id: str = ""
 
 
+class PlayerSpeechMessage(ProtocolBase):
+    """GameMessage::PlayerSpeech wire representation (playtest 2026-05-17).
+
+    Verbatim PC-spoken dialogue broadcast to the whole MP party so peers
+    see what each PC said. Distinct from NARRATION (narrator voice) and
+    ACTION_REVEAL (ephemeral wait-phase strip, wiped on dispatch).
+    """
+
+    type: Literal[MessageType.PLAYER_SPEECH] = MessageType.PLAYER_SPEECH
+    payload: SpokenLinePayload
+    player_id: str = ""
+
+
 class NarrationEndMessage(ProtocolBase):
     """GameMessage::NarrationEnd wire representation."""
 
@@ -1034,6 +1073,78 @@ class TacticalGridMessage(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# DUNGEON_MAP — Beneath Sünden BETTER fix (seam 3). ADR-019 MAP_UPDATE was
+# deleted in the Rust→Python port; this is the NEW ADR-055 map frame (do
+# NOT revive MAP_UPDATE). Shapes mirror the UI ``MapState`` /
+# ``ExploredLocation`` (sidequest-ui/src/components/MapOverlay.tsx) so the
+# MapWidget's Automapper region-graph path consumes it with no adapter:
+# ``id`` is the EXACT region-graph node id (the join key the narrator's
+# constrained move vocabulary also uses), ``room_exits`` makes the widget
+# pick the graph layout, ``is_current_room`` marks the party's region.
+# ---------------------------------------------------------------------------
+
+
+class DungeonMapExit(ProtocolBase):
+    """One typed adjacency. ``target`` is the EXACT region-graph node id;
+    ``exit_type`` is the edge kind (corridor|stairs|shaft|chute|secret)."""
+
+    target: str
+    exit_type: str
+
+
+class DungeonMapLocation(ProtocolBase):
+    """One discovered region, in the UI ``ExploredLocation`` shape.
+
+    ``x``/``y`` are 0 — the procedural megadungeon has no cartesian
+    coordinates (spec: keyed by region id, never by floor); the
+    Automapper's layered BFS layout takes over when exit directions are
+    absent. ``room_exits`` (not ``connections``) is what makes the
+    MapWidget choose the graph renderer over the coordinate SVG.
+    """
+
+    id: str
+    name: str
+    x: float = 0.0
+    y: float = 0.0
+    type: str = "region"
+    connections: list[str] = Field(default_factory=list)
+    room_exits: list[DungeonMapExit] = Field(default_factory=list)
+    room_type: str = "normal"
+    is_current_room: bool = False
+
+
+class DungeonMapPayload(ProtocolBase):
+    """The discovered region graph projected for the UI Map tab.
+
+    Fog-of-war: ``explored`` carries only regions in
+    ``snapshot.discovered_regions`` (undiscovered neighbors stay hidden;
+    an edge toward one still renders as a way that direction, exactly as
+    a hand-drawn dungeon map works).
+    """
+
+    current_location: str
+    region: str
+    explored: list[DungeonMapLocation] = Field(default_factory=list)
+    fog_bounds: dict[str, int] = Field(
+        default_factory=lambda: {"width": 0, "height": 0}
+    )
+
+
+class DungeonMapMessage(ProtocolBase):
+    """GameMessage::DungeonMap — procedural megadungeon map frame.
+
+    Emitted every narration turn of a beneath_sunden session (idempotent;
+    the UI just replaces its MapState). Cures the 2026-05-17 "No map data
+    yet" defect — the materialized dungeon was never projected to the UI
+    after ADR-019 MAP_UPDATE was deleted in the port.
+    """
+
+    type: Literal[MessageType.DUNGEON_MAP] = MessageType.DUNGEON_MAP
+    payload: DungeonMapPayload
+    player_id: str = ""
+
+
+# ---------------------------------------------------------------------------
 # JOURNAL_REQUEST / JOURNAL_RESPONSE — ADR-100 Seam C (story 50-14)
 # ---------------------------------------------------------------------------
 
@@ -1076,6 +1187,7 @@ _Phase1Variant = Annotated[
     PlayerActionMessage
     | NarrationMessage
     | NarrationSegmentMessage
+    | PlayerSpeechMessage
     | NarrationEndMessage
     | SecretNoteMessage
     | ScrapbookEntryMessage
@@ -1104,6 +1216,7 @@ _Phase1Variant = Annotated[
     | OrbitalIntentMessage
     | OrbitalChartMessage
     | TacticalGridMessage
+    | DungeonMapMessage
     | JournalRequestMessage
     | JournalResponseMessage
     | YieldMessage,

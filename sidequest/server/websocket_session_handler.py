@@ -602,6 +602,130 @@ def _maybe_emit_tactical_grid(
     emit_fn(tactical_msg, "TACTICAL_GRID")  # type: ignore[operator]
 
 
+def _maybe_emit_dungeon_map(
+    handler: object,
+    *,
+    sd: _SessionData,
+    snapshot: GameSnapshot,
+    emit_fn: object,
+) -> None:
+    """Emit a DUNGEON_MAP frame for a beneath_sunden session (BETTER fix
+    seam 3). Projects the live region graph (discovered regions only —
+    fog of war) to the UI Map tab in the ``MapState``/``ExploredLocation``
+    shape so the MapWidget's Automapper region-graph path renders it with
+    no adapter. Cures the 2026-05-17 "No map data yet" defect: the
+    materialized dungeon was never projected to the UI after ADR-019
+    MAP_UPDATE was deleted in the port (this is the NEW ADR-055 message).
+
+    Called every narration turn (idempotent — the UI just replaces its
+    MapState). Clean no-op for every other world. OTEL: emits
+    ``dungeon.map_emitted`` on success / ``dungeon.map_skipped`` (with a
+    reason) otherwise, so the GM panel sees the UI seam engaged — never a
+    silent skip. A live turn never hard-fails on a dungeon defect.
+
+    Lazy imports: ``sidequest.dungeon`` depends on game models (the
+    frontier-hook lazy-import precedent)."""
+    from sidequest.dungeon.persistence import DatabaseError, DungeonStore
+    from sidequest.dungeon.region_projection import applies_to
+    from sidequest.dungeon.seed_bootstrap import ENTRANCE_ID
+    from sidequest.dungeon.themes import load_theme_palette
+    from sidequest.genre.loader import (
+        DEFAULT_GENRE_PACK_SEARCH_PATHS,
+        GenreLoader,
+    )
+    from sidequest.protocol.messages import (
+        DungeonMapExit,
+        DungeonMapLocation,
+        DungeonMapMessage,
+        DungeonMapPayload,
+    )
+
+    if not applies_to(sd.genre_slug, sd.world_slug):
+        return  # the per-turn dungeon.region_projection span already
+        # records the other-world no-op; a second event here is noise.
+
+    store = DungeonStore(sd.store.connection())
+    try:
+        graph = store.load_map(entrance_id=ENTRANCE_ID)
+    except DatabaseError as exc:
+        _watcher_publish(
+            "dungeon.map_skipped",
+            {"world": sd.world_slug, "reason": f"no_schema: {exc}"},
+            component="dungeon",
+            severity="warning",
+        )
+        logger.warning("dungeon.map_skipped no schema: %s", exc)
+        return
+    if not graph.nodes:
+        _watcher_publish(
+            "dungeon.map_skipped",
+            {"world": sd.world_slug, "reason": "empty_map"},
+            component="dungeon",
+            severity="warning",
+        )
+        logger.warning("dungeon.map_skipped empty dungeon_map")
+        return
+
+    loader = GenreLoader(search_paths=DEFAULT_GENRE_PACK_SEARCH_PATHS)
+    world_dir = loader.find(sd.genre_slug) / "worlds" / sd.world_slug
+    palette = load_theme_palette(world_dir.parent.parent)
+
+    current_region = snapshot.current_region or ""
+    discovered = [r for r in snapshot.discovered_regions if r in graph.nodes]
+    # Fog of war: never leak undiscovered regions. If discovered_regions
+    # is somehow empty but a current_region is bound, at least show that.
+    if not discovered and current_region in graph.nodes:
+        discovered = [current_region]
+
+    explored: list[DungeonMapLocation] = []
+    for rid in discovered:
+        node = graph.nodes[rid]
+        try:
+            display = palette.get(node.theme).display_name
+        except KeyError:
+            display = rid  # fail-soft label; the span/log below is loud
+        room_exits = [
+            DungeonMapExit(target=(e.b if e.a == rid else e.a), exit_type=e.kind)
+            for e in graph.edges
+            if rid in (e.a, e.b) and not e.hidden  # secrets stay off the map
+        ]
+        explored.append(
+            DungeonMapLocation(
+                id=rid,
+                name=display,
+                type="region",
+                connections=[x.target for x in room_exits],
+                room_exits=room_exits,
+                room_type="entrance" if rid == ENTRANCE_ID else "normal",
+                is_current_room=(rid == current_region),
+            )
+        )
+
+    payload = DungeonMapPayload(
+        current_location=current_region,
+        region=current_region,
+        explored=explored,
+    )
+    msg = DungeonMapMessage(payload=payload, player_id=getattr(sd, "player_id", ""))
+    _watcher_publish(
+        "dungeon.map_emitted",
+        {
+            "world": sd.world_slug,
+            "current_region": current_region,
+            "discovered_regions": len(explored),
+            "total_regions": len(graph.nodes),
+        },
+        component="dungeon",
+    )
+    logger.info(
+        "dungeon.map_emitted current=%s discovered=%d/%d",
+        current_region,
+        len(explored),
+        len(graph.nodes),
+    )
+    emit_fn(msg, "DUNGEON_MAP")  # type: ignore[operator]
+
+
 class WebSocketSessionHandler:
     """Per-connection session: state machine + dispatch.
 
@@ -3860,6 +3984,19 @@ class WebSocketSessionHandler:
                             actor=_acting_for_render_trigger,
                             emit_fn=_emit_shared_world_frame,
                         )
+                    # Beneath Sünden BETTER fix (seam 3): project the live
+                    # region graph to the UI Map tab every turn (NOT gated
+                    # on result.location — region moves arrive via the
+                    # current_region patch, not always a location change;
+                    # unconditional per-turn also covers turn 1 + resume,
+                    # curing "No map data yet"). Idempotent; clean no-op
+                    # for every non-beneath_sunden world.
+                    _maybe_emit_dungeon_map(
+                        self,
+                        sd=sd,
+                        snapshot=snapshot,
+                        emit_fn=_emit_shared_world_frame,
+                    )
                     # Story 45-1 — sealed-letter shared-world handshake.
                     # Build the canonical delta from the post-resolution
                     # snapshot and ride it on NARRATION_END so peers see

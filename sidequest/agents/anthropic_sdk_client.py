@@ -98,6 +98,7 @@ class AnthropicSdkClient:
         *,
         model: str,
         max_iterations: int = 8,
+        max_tokens: int = 4096,
         on_text_delta: Callable[[str], None] | None = None,
     ) -> ToolingResult:
         sdk_system = self._build_system_array(system_blocks)
@@ -130,7 +131,7 @@ class AnthropicSdkClient:
                     system=sdk_system,
                     messages=running_messages,
                     tools=sdk_tools,
-                    max_tokens=4096,
+                    max_tokens=max_tokens,
                     extra_headers=extra_headers,
                 )
                 usage = response.usage

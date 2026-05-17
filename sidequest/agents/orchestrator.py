@@ -686,6 +686,22 @@ class TurnContext:
     # None on legacy/fixture paths that never went through ``_build_turn_context``.
     snapshot: GameSnapshot | None = None
 
+    # Beneath Sünden per-turn region projection (the BETTER fix, seam 1+2).
+    # Re-derived every turn in ``_build_turn_context`` from the live
+    # ``DungeonStore.load_map`` (SQLite is the single source of truth — NOT
+    # mirrored onto the persisted snapshot, which has a documented divergence
+    # disease). When set, ``build_narrator_prompt`` renders it as a
+    # high-attention "you are here" section (gaslight discipline: a
+    # structured canonical-state section like the NPC roster, not appended
+    # exits: text) carrying the region's theme flavor AND the concrete
+    # adjacent region ids — the constrained move vocabulary that makes the
+    # narrator's ``current_region`` patch target a VALID graph node so the
+    # frontier look-ahead worker expands the dungeon. None for every
+    # non-beneath_sunden turn (zero-byte leak). Typed Any to keep this
+    # dataclass free of a sidequest.dungeon import (dungeon depends on game
+    # models — mirrors the ``encounter: Any`` / ``snapshot`` precedent).
+    region_projection: Any = None  # runtime: sidequest.dungeon.region_projection.RegionProjection | None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -1508,6 +1524,17 @@ class Orchestrator:
                 agent_name,
                 npc_pool=context.npc_pool,
                 npcs=context.npcs,
+            )
+
+        # Beneath Sünden per-turn region projection (BETTER fix, seam 1+2).
+        # Same Early-zone canonical-identity discipline as the NPC roster:
+        # "you are here" + the EXACT adjacent region ids (constrained move
+        # vocabulary). None for every non-beneath_sunden turn — zero-byte
+        # leak (register_region_section early-returns on None).
+        if context.region_projection is not None:
+            registry.register_region_section(
+                agent_name,
+                region_projection=context.region_projection,
             )
 
         # Chassis voices — chassis as named speakers with bond-tier name-form.
