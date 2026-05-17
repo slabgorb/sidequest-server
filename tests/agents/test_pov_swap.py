@@ -191,6 +191,69 @@ def test_comma_continuation_with_she_her():
     assert out == "You draw the knife, twist the blade, and step back."
 
 
+# ---------------------------------------------------------------------------
+# Subject-verb interrupter (sq-playtest 2026-05-17 / [BS-BUG-LOW])
+# ---------------------------------------------------------------------------
+#
+# Beneath Sünden 3-player MP, turn 2, Carl's own card rendered:
+#   "you works the drum with your hands, checking the rope…"
+# Second-person actor "You", third-person verb "works". Root cause: Pass 2
+# only conjugates the single token immediately after the name. When an
+# adverb / appositive / parenthetical sits between the subject and its
+# verb, that interrupter is captured instead of the verb, and the real
+# main verb is never visited by any conjugating pass. Pronoun-agnostic
+# (reproduces for he/him, she/her, they/them alike).
+
+
+def test_adverb_between_subject_and_verb_conjugates():
+    """The verbatim playtest repro: an adverb strands the main verb.
+    "Carl steadily works the drum with his hands, checking the rope."
+    must become "You steadily work the drum with your hands, checking
+    the rope." — not "You steadily works…".
+    """
+    text = "Carl steadily works the drum with his hands, checking the rope."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    assert out == "You steadily work the drum with your hands, checking the rope.", out
+    assert "works" not in out
+
+
+def test_appositive_between_subject_and_verb_conjugates():
+    """A comma appositive blocks Pass 2 (the comma defeats ``\\s+`` after
+    the name) and falls to the bare-name pass. The main verb after the
+    appositive must still be conjugated."""
+    text = "Carl, crouched at the rim, works the drum."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    assert out == "You, crouched at the rim, work the drum.", out
+    assert "works" not in out
+
+
+def test_parenthetical_between_subject_and_verb_conjugates():
+    """An em-dash parenthetical interrupter strands the verb the same way."""
+    text = "Carl — still braced — works the drum."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    assert out == "You — still braced — work the drum.", out
+    assert "works" not in out
+
+
+def test_interrupter_conjugation_they_them_parity():
+    """The defect is pronoun-set-agnostic — it must also be fixed for a
+    they/them PC (the playgroup's Katia profile)."""
+    text = "Sam carefully works the drum with their hands."
+    out, _ = swap_to_second_person(text, target_name="Sam", pronouns="they/them")
+    assert out == "You carefully work the drum with your hands.", out
+    assert "works" not in out
+
+
+def test_interrupter_pass_does_not_fire_for_other_actors():
+    """Defensive: a sentence with an interrupter that does NOT mention the
+    target is returned entirely unchanged — the new forward-scan must not
+    conjugate verbs in prose belonging to peers."""
+    text = "Donut, crouched at the rim, works the drum."
+    out, count = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    assert out == text
+    assert count == 0
+
+
 def test_he_him_pronoun_in_predicate_swaps():
     """After the subject is rewritten to 'you', subsequent pronoun
     references to the target also need swapping: 'Carl plants a boot...

@@ -201,6 +201,14 @@ def _rewrite_sentence(
     count = 0
     text = sentence
     had_subject_swap = False
+    # Pass 2b gating: whether the sentence subject was swapped to "You"
+    # (Pass 2 fired, or Pass 3 swapped a sentence-initial bare name), and
+    # whether Pass 2 actually found the real verb immediately adjacent to
+    # the name. When the subject swapped but no adjacent verb was found,
+    # the real verb is stranded behind an interrupter (adverb / appositive
+    # / parenthetical) and Pass 2b must conjugate it.
+    subj_swapped_at_start = False
+    pass2_found_adjacent_verb = False
 
     name_esc = re.escape(target_name)
 
@@ -221,10 +229,19 @@ def _rewrite_sentence(
     # verb-following-the-subject is reliably handled.
     # ------------------------------------------------------------------
     def _name_subj_sub(m: re.Match) -> str:
-        nonlocal count, had_subject_swap
+        nonlocal count, had_subject_swap, subj_swapped_at_start
+        nonlocal pass2_found_adjacent_verb
         had_subject_swap = True
         verb = m.group(1)
         at_start = (m.start() == 0) or _is_sentence_start_in(text, m.start())
+        if at_start:
+            subj_swapped_at_start = True
+        # If the token immediately after the name is itself a 3rd-person
+        # verb, Pass 2 conjugates the real verb here and there is no
+        # stranding — Pass 2b must NOT fire. If it's a non-verb (an
+        # adverb interrupter), the real verb is downstream and stranded.
+        if _looks_like_verb(verb):
+            pass2_found_adjacent_verb = True
         you = "You" if at_start else "you"
         conjugated = _conjugate(verb)
         # Count the subject swap; count the verb conjugation separately
@@ -242,12 +259,52 @@ def _rewrite_sentence(
     # vocative or trailing-clause uses like "...nodded at Carl."
     # ------------------------------------------------------------------
     def _name_bare_sub(m: re.Match) -> str:
-        nonlocal count
+        nonlocal count, subj_swapped_at_start
         count += 1
         at_start = (m.start() == 0) or _is_sentence_start_in(text, m.start())
+        # A sentence-initial bare name is the grammatical subject. Pass 2
+        # was blocked here (a comma/dash appositive defeats its ``\s+``),
+        # so record the subject swap for Pass 2b. Mid-sentence bare names
+        # (object / vocative) are NOT subjects — don't flag them.
+        if at_start:
+            subj_swapped_at_start = True
         return "You" if at_start else "you"
 
     text = re.sub(rf"\b{name_esc}\b", _name_bare_sub, text)
+
+    # ------------------------------------------------------------------
+    # Pass 2b: subject-verb interrupter. Pass 2 only conjugates the token
+    # immediately after the name; an adverb / appositive / parenthetical
+    # between the subject and its verb leaves the real main verb stranded
+    # in 3rd-person form ("You steadily works…" / "You, crouched at the
+    # rim, works…" / "You — still braced — works…"). When the sentence
+    # subject was swapped to "You" but Pass 2 did NOT find the real verb
+    # adjacent, scan past the bounded interrupter and conjugate the first
+    # stranded verb. (sq-playtest 2026-05-17 / [BS-BUG-LOW])
+    # ------------------------------------------------------------------
+    if subj_swapped_at_start and not pass2_found_adjacent_verb:
+        interrupter_pat = re.compile(
+            r"^(\s*You\b)"
+            r"("
+            r",[^,]*?,"  # , appositive ,
+            r"|\s*[—–-][^—–-]*?[—–-]"  # — parenthetical — (em/en dash or hyphen)
+            r"|\s+\([^)]*?\)"  # ( parenthetical )
+            r"|(?:\s+\w+)+?"  # leading adverb(s)
+            r")\s+(\w+)"
+        )
+
+        def _interrupter_verb_sub(m: re.Match) -> str:
+            nonlocal count
+            verb = m.group(3)
+            if not _looks_like_verb(verb):
+                return m.group(0)
+            conjugated = _conjugate(verb)
+            if conjugated == verb:
+                return m.group(0)
+            count += 1
+            return f"{m.group(1)}{m.group(2)} {conjugated}"
+
+        text = interrupter_pat.sub(_interrupter_verb_sub, text, count=1)
 
     # ------------------------------------------------------------------
     # Pass 4: reflexive ("himself"/"herself"/"themself"/"themselves") -> "yourself"

@@ -47,8 +47,17 @@ async def initialized_tracer() -> AsyncIterator[None]:
 # loads). They are SKIPPED — deliberately and visibly — pending a re-point
 # to beneath_sunden or a dedicated test-fixture world. This single block is
 # the reversible, documented record of that debt; nothing is buried.
+# NOTE (2026-05-17, [BS-BUG-LOW]): agents/test_pov_swap.py was REMOVED
+# from this set. It is a pure unit suite for swap_to_second_person — a
+# world-agnostic string transform with generic names and no genre/world
+# fixtures, snapshots, or on-disk world loads. Its only caverns_sunden
+# tie is a docstring noting where the bug was originally found; PR #312's
+# name-grep swept it in over-broadly. pov_swap is live in the
+# beneath_sunden playtest right now, so its regression coverage must run
+# (CLAUDE.md: no skipping tests for live subsystems). Re-included
+# deliberately and visibly, in the spirit of PR #312's own reversible-
+# with-reason record.
 _CAVERNS_SUNDEN_DEPRECATED_TESTS = frozenset({
-    "agents/test_pov_swap.py",
     "audio/test_library_backend_r2_only.py",
     "cli/test_encountergen.py",
     "game/test_disposition_call_site_migration.py",
