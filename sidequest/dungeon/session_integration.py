@@ -26,6 +26,7 @@ from sidequest.dungeon.lookahead_worker import (
 from sidequest.dungeon.materializer import materialize
 from sidequest.dungeon.persistence import DungeonStore
 from sidequest.dungeon.seed_bootstrap import (
+    ENTRANCE_ID,
     build_entrance_seed_graph,
     build_expansion_one_request,
     select_entrance_theme_id,
@@ -165,8 +166,24 @@ async def attach_dungeon_to_session(
             _span.set_attribute("outcome", "already_seeded")
         _span.set_attribute(
             "regions",
-            len(persistence.load_map(entrance_id="entrance").nodes),
+            len(persistence.load_map(entrance_id=ENTRANCE_ID).nodes),
         )
+
+        # Bind the session's region position to the REAL materialized
+        # dungeon entrance. Without this the procedural regions
+        # (entrance / exp00N.rN) live only in dungeon_map and are never
+        # bound to snap.current_region — region_init only handles static
+        # world.yaml cartography, so beneath_sunden's location never
+        # advances off "" and the narrator improvises geography (playtest
+        # 2026-05-17). Save-is-truth: only bind on a session that has no
+        # real region yet (fresh campaign); a resumed save keeps its
+        # frozen position. dedup-append mirrors region_init /
+        # frontier_hook discovered_regions semantics.
+        if not snapshot.current_region:
+            snapshot.current_region = ENTRANCE_ID
+            if ENTRANCE_ID not in snapshot.discovered_regions:
+                snapshot.discovered_regions.append(ENTRANCE_ID)
+            _span.set_attribute("bound_current_region", ENTRANCE_ID)
 
         handle = register_lookahead_worker(
             persistence=persistence,
