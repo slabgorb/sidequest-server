@@ -51,6 +51,12 @@ class MessageType(StrEnum):
     CHAPTER_MARKER = "CHAPTER_MARKER"
     ERROR = "ERROR"
     ACTION_REVEAL = "ACTION_REVEAL"
+    # Playtest 2026-05-17: verbatim PC-spoken dialogue, attributed to the
+    # speaking PC, surfaced into the shared MP transcript. The narrator
+    # cannot echo it (SOUL.md Agency) and ACTION_REVEAL is wiped on
+    # barrier-fire, so peers never saw what a PC said aloud. This is
+    # public table speech — NOT routed through the perception firewall.
+    PLAYER_SPEECH = "PLAYER_SPEECH"
     SCENARIO_EVENT = "SCENARIO_EVENT"
     ACHIEVEMENT_EARNED = "ACHIEVEMENT_EARNED"
     JOURNAL_REQUEST = "JOURNAL_REQUEST"
@@ -89,6 +95,13 @@ class MessageType(StrEnum):
     # routes cavern rooms to TacticalGridRenderer and settlement rooms
     # to SettlementRoomView.
     TACTICAL_GRID = "TACTICAL_GRID"
+    # Beneath Sünden BETTER fix (seam 3). Procedural megadungeon map
+    # frame: the live region graph (discovered regions + current region +
+    # typed adjacencies) projected to the UI Map tab. ADR-019 MAP_UPDATE
+    # was deleted in the Rust→Python port; ADR-055 needs a NEW message —
+    # this is it (do NOT revive MAP_UPDATE). The UI MapWidget routes this
+    # through its Automapper region-graph path.
+    DUNGEON_MAP = "DUNGEON_MAP"
 
 
 class NarratorVerbosity(StrEnum):

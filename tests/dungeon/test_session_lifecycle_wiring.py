@@ -131,24 +131,31 @@ async def test_session_lifecycle_registers_worker_and_dungeon_grows(
             "ADR-106 lie-detector signal: dungeon does not grow)"
         )
 
-        # §10(f): a second attach for the SAME live save raises loud and
-        # adds no second observer (the §14.D save-keyed dedup — the merged
-        # worker's identity-dedup does NOT hold across sessions).
-        with pytest.raises(RuntimeError, match="already attached"):
-            await session_integration.attach_dungeon_to_session(
-                store=store,
-                snapshot=GameSnapshot(
-                    genre_slug="caverns_and_claudes",
-                    world_slug="beneath_sunden",
-                ),
-                genre_pack=_real_pack(),
+        # §10(f) — IDEMPOTENT re-attach (was: hard RuntimeError). The MP
+        # deterministic URL means every join/reconnect re-enters attach on
+        # the SAME live save; a hard raise crashed the connect (live
+        # playtest 2026-05-17). A second attach for the same save must now
+        # return the EXISTING handle and add NO second observer (the
+        # §14.D save-keyed dedup still holds — no double-register, no
+        # double-materialize; it just no longer crashes the join).
+        second = await session_integration.attach_dungeon_to_session(
+            store=store,
+            snapshot=GameSnapshot(
                 genre_slug="caverns_and_claudes",
                 world_slug="beneath_sunden",
-                world_dir=_beneath_sunden_world_dir(),
-            )
+            ),
+            genre_pack=_real_pack(),
+            genre_slug="caverns_and_claudes",
+            world_slug="beneath_sunden",
+            world_dir=_beneath_sunden_world_dir(),
+        )
+        assert second is handle, (
+            "idempotent re-attach must return the SAME live handle so "
+            "additional MP sockets share the one registered worker"
+        )
         assert frontier_hook.registered_observer_count() == 1, (
-            "the concurrent-same-save attempt double-registered — the "
-            "§14.D save-keyed guard did not hold"
+            "the concurrent-same-save re-attach double-registered — the "
+            "§14.D save-keyed dedup did not hold"
         )
     finally:
         await session_integration.detach_dungeon_from_session(handle)

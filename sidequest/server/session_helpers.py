@@ -175,6 +175,158 @@ def _resolve_acting_character_name(sd: _SessionData, room: SessionRoom | None) -
     return snapshot.characters[0].core.name
 
 
+def _project_current_region(sd: _SessionData, snapshot: GameSnapshot) -> object | None:
+    """Beneath Sünden BETTER fix (seam 1+2) — per-turn region projection.
+
+    Re-derive the party's current region from the live ``DungeonStore``
+    (SQLite is the single source of truth — never mirrored onto the
+    persisted snapshot, which has a documented divergence disease). The
+    result rides ``TurnContext.region_projection`` and renders as the
+    Early-zone "you are here" section + the constrained move vocabulary.
+
+    Returns ``None`` for every non-beneath_sunden turn AND for the
+    loud-but-non-fatal failure modes (no schema, empty map, blank
+    current_region, phantom region, missing theme). Every path emits
+    exactly one ``dungeon.region_projection`` event so the GM panel can
+    tell "narrator was fed the real region" from "narrator improvised"
+    (the OTEL lie-detector mandate). A live turn must never hard-fail on
+    a dungeon defect — the region_init wired-call-site precedent: log
+    loud, emit OTEL, continue.
+
+    Lazy imports: ``sidequest.dungeon`` depends on game models, so a
+    top-level import here would invert the layering (the
+    ``session._apply_world_patch_inner`` frontier-hook lazy-import
+    precedent).
+    """
+    from sidequest.dungeon.region_projection import applies_to, project_region
+    from sidequest.telemetry.spans import dungeon_region_projection_span
+
+    current_region = snapshot.current_region or ""
+    with dungeon_region_projection_span(current_region=current_region) as span:
+        if not applies_to(sd.genre_slug, sd.world_slug):
+            span.set_attribute("outcome", "no_dungeon")
+            span.set_attribute(
+                "reason",
+                f"other_world genre={sd.genre_slug!r} world={sd.world_slug!r}",
+            )
+            return None
+
+        from sidequest.dungeon.persistence import DatabaseError, DungeonStore
+        from sidequest.dungeon.seed_bootstrap import ENTRANCE_ID
+        from sidequest.dungeon.themes import load_theme_palette
+        from sidequest.genre.loader import (
+            DEFAULT_GENRE_PACK_SEARCH_PATHS,
+            GenreLoader,
+        )
+
+        store = DungeonStore(sd.store.connection())
+        try:
+            graph = store.load_map(entrance_id=ENTRANCE_ID)
+        except DatabaseError as exc:
+            span.set_attribute("outcome", "no_dungeon")
+            span.set_attribute("reason", f"no_dungeon_schema: {exc}")
+            logger.warning(
+                "dungeon.region_projection no dungeon schema "
+                "(genre=%s world=%s): %s",
+                sd.genre_slug,
+                sd.world_slug,
+                exc,
+            )
+            return None
+
+        if not graph.nodes:
+            span.set_attribute("outcome", "no_dungeon")
+            span.set_attribute("reason", "empty_map")
+            logger.warning(
+                "dungeon.region_projection empty dungeon_map for a "
+                "beneath_sunden session — the bootstrap materialize did "
+                "not persist any regions (genre=%s world=%s)",
+                sd.genre_slug,
+                sd.world_slug,
+            )
+            return None
+
+        if not current_region or current_region not in graph.nodes:
+            # Two faces of ONE disease: a fully materialized dungeon whose
+            # current_region is not a real graph node — either blank (the
+            # #314 entrance-bind seam never fired; OQ-1's 2026-05-17
+            # verification proved a slug_resume connect returns before
+            # connect.py's attach call site, so a RESUMED beneath_sunden
+            # save has a materialized dungeon but a blank current_region
+            # forever) OR a PHANTOM (narration title-parsing wrote a prose
+            # name like 'ropefoot' into current_region — not a node id;
+            # this fired dungeon.region_projection FAILED every single
+            # turn until the constrained-move-vocab seam lands). Both
+            # cases mean the same thing here and have the same only-safe
+            # truth: bind the graph entrance (the BFS root). #314 lives at
+            # a seam the resume branch never reaches; THIS seam runs every
+            # narration turn on every connect branch, so it is the correct
+            # place to self-heal. NOT a silent fallback — the span carries
+            # bound_entrance=true with the healed-from value and the log
+            # is error-level so the GM panel shows the recovery fired.
+            _unbound_from = current_region or "<blank>"
+            entrance = graph.entrance_id
+            if entrance not in graph.nodes:
+                span.set_attribute("outcome", "no_dungeon")
+                span.set_attribute(
+                    "reason",
+                    f"unbound_region AND entrance {entrance!r} absent from "
+                    f"graph (have: {sorted(graph.nodes)}) — corrupt seed",
+                )
+                logger.error(
+                    "dungeon.region_projection UNBOUND + entrance %r not "
+                    "in graph — corrupt dungeon, cannot self-heal",
+                    entrance,
+                )
+                return None
+            snapshot.current_region = entrance
+            if entrance not in snapshot.discovered_regions:
+                snapshot.discovered_regions.append(entrance)
+            span.set_attribute("bound_entrance", True)
+            span.set_attribute("healed_from", _unbound_from)
+            logger.error(
+                "dungeon.region_projection SELF-HEAL: beneath_sunden save "
+                "had a materialized dungeon (%d regions) but current_region "
+                "%r was not a graph node (blank, or a narration-title "
+                "phantom the constrained-move-vocab seam does not yet "
+                "prevent) — bound current_region=%r at the per-turn "
+                "projection seam so the narrator gets real geography this "
+                "turn instead of failing every turn",
+                len(graph.nodes),
+                _unbound_from,
+                entrance,
+            )
+            current_region = entrance
+
+        loader = GenreLoader(search_paths=DEFAULT_GENRE_PACK_SEARCH_PATHS)
+        world_dir = loader.find(sd.genre_slug) / "worlds" / sd.world_slug
+        # pack root holds themes/ — mirrors session_integration._theme_pack_root
+        palette = load_theme_palette(world_dir.parent.parent)
+
+        try:
+            proj = project_region(graph, current_region, palette)
+        except (ValueError, KeyError) as exc:
+            # current_region set but not a graph node, or its theme id is
+            # absent from the palette — a real seed/binding bug. Loud,
+            # but never hard-fail a live turn (region_init precedent).
+            span.set_attribute("outcome", "no_dungeon")
+            span.set_attribute("reason", f"projection_failed: {exc}")
+            logger.error(
+                "dungeon.region_projection FAILED region=%r: %s",
+                current_region,
+                exc,
+            )
+            return None
+
+        span.set_attribute("outcome", "projected")
+        span.set_attribute("region_id", proj.region_id)
+        span.set_attribute("theme_id", proj.theme_id)
+        if proj.depth_score is not None:
+            span.set_attribute("depth_score", proj.depth_score)
+        span.set_attribute("exit_count", len(proj.exits))
+        return proj
+
+
 def _build_turn_context(
     sd: _SessionData,
     *,
@@ -515,6 +667,13 @@ def _build_turn_context(
         # Story 50-4: thread the live snapshot so build_narrator_prompt can
         # render + clear pending_time_skip_summary (one-shot lifecycle).
         snapshot=snapshot,
+        # Beneath Sünden BETTER fix (seam 1+2): per-turn region projection
+        # from the live DungeonStore. None for every non-beneath_sunden
+        # turn (zero-byte leak) and for loud-but-non-fatal dungeon defects
+        # (each emits a dungeon.region_projection span). This is what stops
+        # the narrator improvising geography and gives it the real
+        # adjacent region ids as the constrained move vocabulary.
+        region_projection=_project_current_region(sd, snapshot),
     )
 
 

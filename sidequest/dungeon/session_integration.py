@@ -118,13 +118,37 @@ async def attach_dungeon_to_session(
         conn = store.connection()
         save_key = _save_key(conn)
         if save_key in _ATTACHED_SAVES:
-            raise RuntimeError(
-                f"a look-ahead worker is already attached for save {save_key!r} "
-                "— concurrent sessions on one save would double-register and "
-                "double-materialize the dungeon. This is a contract violation, "
-                "not an upsert (No Silent Fallbacks); the playgroup runs one "
-                "shared session per save. detach the prior session first."
+            # IDEMPOTENT re-attach (was a hard RuntimeError — it crashed
+            # the connect for every MP join/reconnect). The deterministic
+            # MP URL means N players + reconnects all connect to ONE save;
+            # the original guard assumed strictly sequential reopen with a
+            # detach between, which MP drop-in violates by design. The
+            # seam's own docstring already calls it "idempotent" — the
+            # raise contradicted that. Return the EXISTING handle: the
+            # look-ahead worker is registered exactly once (no
+            # double-register, no double-materialize — we return before
+            # both), and additional sockets share the live session's one
+            # worker. Loud, not silent: the span carries
+            # outcome=already_attached so the GM panel sees the re-attach
+            # (No Silent Fallbacks — observable, not a swallowed upsert).
+            # KNOWN follow-up (post-game, not refcounted under fire):
+            # detach is first-socket-wins; if a player leaves mid-session
+            # the shared worker drains for the rest. Acceptable for the
+            # submit-and-wait playgroup; refcounted teardown is the
+            # proper fix and is tracked in the pingpong.
+            existing = _ATTACHED_SAVES[save_key]
+            _span.set_attribute("outcome", "already_attached")
+            _span.set_attribute(
+                "reason",
+                f"save {save_key!r} already has a live look-ahead worker "
+                "(MP join / reconnect on the shared save) — returning the "
+                "existing handle idempotently",
             )
+            _span.set_attribute(
+                "regions",
+                len(DungeonStore(conn).load_map(entrance_id=ENTRANCE_ID).nodes),
+            )
+            return existing
         persistence = DungeonStore(conn)
         persistence.ensure_schema()  # outside any txn (executescript implicit COMMIT)
 

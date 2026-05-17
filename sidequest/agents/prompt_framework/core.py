@@ -485,6 +485,127 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
             ),
         )
 
+    def register_region_section(
+        self,
+        agent_name: str,
+        *,
+        region_projection: object,
+    ) -> None:
+        """Inject the party's current dungeon region into the narrator prompt.
+
+        Beneath Sünden BETTER fix (seam 1+2). ``region_projection`` is a
+        ``sidequest.dungeon.region_projection.RegionProjection`` (typed
+        ``object`` here to keep the prompt framework free of a
+        ``sidequest.dungeon`` import — dungeon depends on game models).
+
+        Gaslight discipline (the doctrine reference is
+        ``world_materialization._apply_npc`` → ``snap.npcs`` →
+        ``register_npc_roster_section``): the narrator sees ONE structured
+        canonical-state block describing where the party is and the exact
+        ways out — it never learns this is a re-projected procedural graph.
+        The exit ids are the **constrained move vocabulary**: the narrator
+        is told to put one of these EXACT ids in its ``current_region``
+        patch, which is what makes the frontier look-ahead worker expand
+        the real dungeon instead of the narrator inventing scene titles.
+
+        Early zone (not Valley): location is acute, load-bearing state —
+        the exact discipline the NPC roster fix established. Empty exits
+        is valid (a dead-end region) and still renders so the narrator
+        does not invent corridors out of a sealed chamber.
+        """
+        if region_projection is None:
+            return
+
+        rp = region_projection
+        lines = [
+            "## YOU ARE HERE — Current Region (canonical; do not contradict)",
+            f"Region: {rp.theme_display} [{rp.region_id}]",
+            f"Register: {rp.register}",
+            f"Flavor: {rp.flavor}",
+        ]
+        if rp.motifs:
+            lines.append("Motifs: " + ", ".join(rp.motifs))
+        if rp.depth_score is not None:
+            lines.append(
+                f"Depth: {rp.depth_score:.1f} "
+                "(deeper = graver, more lethal in tone)"
+            )
+
+        visible = [e for e in rp.exits if not e.hidden]
+        hidden = [e for e in rp.exits if e.hidden]
+        if visible:
+            lines.append("Exits from this region (describe these as the way out):")
+            for e in visible:
+                tag = " (a shortcut back toward the surface)" if e.shortcut else ""
+                lines.append(f"- {e.kind} → {e.to_region_id}{tag}")
+        else:
+            lines.append(
+                "Exits from this region: none obvious — this is a dead end "
+                "or sealed chamber. Do NOT invent a corridor out; the way "
+                "forward is back the way the party came, or a discovery."
+            )
+        if hidden:
+            lines.append(
+                "Concealed ways (do NOT volunteer; only if the party "
+                "actively searches and finds one):"
+            )
+            for e in hidden:
+                lines.append(f"- {e.kind} → {e.to_region_id} [hidden]")
+
+        example_id = (visible or hidden)[0].to_region_id if (visible or hidden) else rp.region_id
+        lines.append(
+            "MOVEMENT RULE: when the party leaves this region, set "
+            "current_region in the game_patch to one of the EXACT region "
+            f"ids listed above (e.g. {example_id}). Never invent a region "
+            "id or a scene-title slug — only these ids advance the real map."
+        )
+
+        # Beneath Sünden is a LETHAL megadungeon, not a scenic walk
+        # (genre truth: grave, Moria-as-tragedy, no winking). The curated
+        # bestiary is already in this prompt (the Monster Manual section);
+        # this directive is what makes the narrator USE it — without it the
+        # narrator was running a quiet, empty delve. SOUL doctrine made
+        # explicit at the load-bearing seam: Living World (the dark acts on
+        # its own — it hunts, it does not wait for the party), Genre Truth
+        # (lethal consequences), Cut the Dull Bits (a delve beat with no
+        # complication is not a scene). Gaslight discipline: this is a GM
+        # directive inside the canonical region block, the same register as
+        # the MOVEMENT RULE above — the narrator never learns it is a
+        # re-projected graph.
+        depth = rp.depth_score if rp.depth_score is not None else 0.0
+        pressure = (
+            "near the threshold — but Sünden is wrong even at its mouth "
+            "(the Watcher waited at Moria's gate): the dark reaches UP for "
+            "those who linger"
+            if depth < 1.0
+            else "deep — the press of stone and the things that own it is "
+            "constant; survival, not scenery, is the question every beat"
+        )
+        lines.append(
+            "THE DUNGEON IS ALIVE AND HOSTILE (act on this every turn): "
+            f"the party is {pressure}. Draw on the Monster Manual already "
+            "in this prompt — its wandering horrors, its apex dweller — and "
+            "make the dark PUSH BACK: tracks then sound then the thing "
+            "itself; pursuit, ambush from a side passage, a scavenger drawn "
+            "by blood or light, the deep stirring at noise. Telegraph "
+            "(Diamonds and Coal — bait the hook, then let it bite), escalate "
+            "with depth, and never let a delve beat pass with no pressure, "
+            "discovery, or cost. This is not a monster-mash: it is grave, "
+            "earned, Moria-as-tragedy dread that PAYS OFF. If the last beats "
+            "were quiet, the next must not be — something in Sünden has "
+            "found them."
+        )
+
+        self.register_section(
+            agent_name,
+            PromptSection.new(
+                "current_region",
+                "\n".join(lines),
+                AttentionZone.Early,
+                SectionCategory.State,
+            ),
+        )
+
     def register_chassis_voice_section(
         self,
         agent_name: str,
