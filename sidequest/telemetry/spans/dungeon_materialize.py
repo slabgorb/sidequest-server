@@ -59,11 +59,23 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE] = SpanRoute(
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_DESIGN] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # report.as_dict() keys are the byte-pinned attribute contract (Plan 7 Task 2).
+    # error/failing are the ExpansionGenerationError lie-detector markers: they
+    # read None on the success path (graceful-get idiom — harmless) and surface
+    # the generation failure on the GM panel on the failure path.
     extract=lambda s: {
         "field": "dungeon_map",
         "op": "materialize.design",
         "expansion_id": _attr("expansion_id")(s),
-        "stage": "design",
+        "attempts": _attr("attempts")(s),
+        "stitch_edges": _attr("stitch_edges")(s),
+        "loops_into_explored": _attr("loops_into_explored")(s),
+        "hidden_edges": _attr("hidden_edges")(s),
+        "shortcut_edges": _attr("shortcut_edges")(s),
+        "new_regions": _attr("new_regions")(s),
+        "invariants_passed": _attr("invariants_passed")(s),
+        "error": _attr("error")(s),
+        "failing": _attr("failing")(s),
     },
 )
 
@@ -157,10 +169,17 @@ def dungeon_materialize_design_span(
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Open the ``dungeon.materialize.design`` child span."""
+    """Open the ``dungeon.materialize.design`` child span.
+
+    No ``stage`` attribute is pre-baked here: the design stage itself writes
+    exactly ``report.as_dict()`` onto the span after ``generate_expansion``
+    returns (byte-pinned GM-panel contract, Plan 7 Task 2).  The only
+    pre-baked attribute is ``expansion_id``; the stage's ``set_attribute``
+    calls overwrite it with the same value from the report.
+    """
     with Span.open(
         SPAN_DUNGEON_MATERIALIZE_DESIGN,
-        {"expansion_id": expansion_id, "stage": "design", **attrs},
+        {"expansion_id": expansion_id, **attrs},
         tracer_override=_tracer,
     ) as span:
         yield span
