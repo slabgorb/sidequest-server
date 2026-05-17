@@ -30,20 +30,25 @@ from opentelemetry import trace as _otel_trace
 from sidequest.agents.claude_client import ClaudeClient, ClaudeClientError
 from sidequest.dungeon.interiors import generate_interior
 from sidequest.dungeon.interiors.grid import Grid
-from sidequest.dungeon.persistence import DungeonStore, FrontierEdge
+from sidequest.dungeon.persistence import DungeonStore, FrontierEdge, PersistError
 from sidequest.dungeon.region_graph import (
+    DepthReport,
     Expansion,
     ExpansionGenerationError,
     GenerationReport,
     JaquaysConfig,
     RegionGraph,
+    assign_depth_scores,
+    attach_expansion,
     generate_expansion,
 )
+from sidequest.dungeon.setpiece_attach import AttachReport, attach_set_piece
 from sidequest.dungeon.themes import ThemePalette
 from sidequest.game.cookbook.assemble import assemble_region
 from sidequest.game.cookbook.loader import CookbookBundle
 from sidequest.game.cookbook.models import RegionContentManifest
 from sidequest.game.creature_core import EdgePool, creature_edge_pool_from_hp
+from sidequest.game.session import GameSnapshot
 from sidequest.telemetry.spans.dungeon_materialize import (
     dungeon_materialize_attach_span,
     dungeon_materialize_commit_span,
@@ -54,6 +59,7 @@ from sidequest.telemetry.spans.dungeon_materialize import (
 )
 
 __all__ = [
+    "AttachResult",
     "CuratedCreature",
     "MaterializationRequest",
     "RegionCuration",
@@ -885,9 +891,220 @@ async def _stage_curate(
     )
 
 
-def _stage_attach(request: MaterializationRequest, **kwargs: Any) -> Any:
-    """Plan 7 Task 5: attach stage — region-graph attach + depth scoring."""
-    raise NotImplementedError("_stage_attach not implemented until Plan 7 Task 5")
+@dataclass(frozen=True, slots=True)
+class AttachResult:
+    """In-memory result of the attach stage (Plan 7 Task 5).
+
+    A frozen, slotted value object — same idiom as Task 1's
+    ``MaterializationRequest`` / Task 3's ``RegionFill`` / Task 4's
+    ``RegionCuration``. Carries the two things Task 6 (commit) needs and
+    must NEVER recompute (spec §7 save-is-truth freeze):
+
+    * ``depth_report`` — the :class:`DepthReport` from
+      ``assign_depth_scores`` (the byte-pinned ``dungeon.materialize.attach``
+      span contract; the depth_score gradient is already frozen onto
+      ``graph.nodes`` in place — this is the summary report).
+    * ``attach_reports`` — one :class:`AttachReport` per (region, set_piece)
+      that was attached. Each carries ``report.rolled`` (a
+      ``RolledSetPiece``) — the spec §7 FREEZE TARGET Task 6 persists into
+      the save and NEVER recomputes from seed.
+
+    Note: ``frozen`` blocks field reassignment but ``attach_reports`` is a
+    mutable list; treat it as read-only by convention (same
+    false-immutability caveat as ``RegionFill.grid`` /
+    ``RegionCuration``'s dict fields).
+
+    The attach stage does NOT commit and does NOT roll back — Task 6 owns
+    the transaction boundary (spec §7.5). Threads written by
+    ``attach_set_piece`` live in the caller's UNCOMMITTED connection.
+    """
+
+    depth_report: DepthReport
+    attach_reports: list[AttachReport]
+
+
+def _stage_attach(
+    request: MaterializationRequest,
+    *,
+    graph: RegionGraph | None,
+    expansion: Expansion | None,
+    palette: ThemePalette | None,
+    curation: RegionCuration | None,
+    snapshot: GameSnapshot | None,
+    pack_tropes: Any,
+    persistence: DungeonStore | None,
+    span: _otel_trace.Span,
+) -> AttachResult:
+    """Plan 7 Task 5: attach stage — region-graph attach + depth scoring +
+    the Plan 6 set-piece / trope / quest seam.
+
+    Ordering (the plan owns this — Plan 6/5 spans nest INSIDE this span):
+      1. ``attach_expansion(graph, expansion)`` — mutates + re-verifies the
+         GLOBAL connected + loopful invariants. If it raises (a global
+         invariant violation), the WHOLE materialization aborts: NO depth
+         scoring, NO set-piece attach, NO partial state. The failure marker
+         is routed onto the span before re-raise (lie-detector visibility).
+      2. ``assign_depth_scores(graph, campaign_seed=...)`` → ``DepthReport``.
+         The entrance scores to EXACTLY ``0.0`` (no jitter at the origin);
+         an already-scored region is FROZEN (never recomputed — the save is
+         truth, spec §7; ``assign_depth_scores`` enforces this). The span's
+         attributes are set to EXACTLY ``DepthReport.as_dict()``'s 4 keys
+         (byte-pinned GM-panel contract — NOT ``AttachReport``; that is
+         Plan 6's nested ``setpiece.attach`` span).
+      3. For every region in ``expansion.new_nodes``, resolve
+         ``theme = palette.themes[node.theme]`` (loud raise if absent — no
+         silent default theme) and for every ``set_piece in
+         theme.set_pieces`` call Plan 6's single coalescence entry point
+         ``attach_set_piece(...)`` with ``started_at_depth_score`` = the
+         region's depth_score AFTER step 2, ``manifest`` = the curate
+         stage's per-region ``RegionContentManifest``, accumulating
+         ``threads_already_lit`` across ALL set-pieces in the WHOLE
+         expansion. ``attach_set_piece`` emits its own
+         ``setpiece.attach``/``trope.start``/``quest.seed`` spans and Plan 5
+         emits ``ledger.add`` — Plan 7 does NOT re-emit them; they nest
+         INSIDE this ``dungeon.materialize.attach`` span automatically.
+
+    Invariants (No Silent Fallbacks):
+    - ``graph``/``expansion``/``palette``/``curation``/``snapshot``/
+      ``persistence`` must be real objects — ``None`` is rejected loudly.
+      ``pack_tropes`` is a duck-typed object (``.tropes``) threaded from the
+      session (Task 7 sources it in production) — REQUIRED, no default.
+    - A region whose ``theme`` is absent from ``palette.themes`` → loud
+      ``ValueError`` (no skip, no default theme).
+    - A region absent from ``curation.region_manifests`` → loud
+      ``KeyError`` via ``RegionCuration``'s fail-loud contract is NOT used
+      here (it has no manifests accessor); we index ``region_manifests``
+      directly and a ``KeyError`` propagates loudly (curate must cover
+      every region — pipeline-ordering contract).
+    - ``attach_expansion`` / ``assign_depth_scores`` / ``attach_set_piece``
+      loud raises propagate unchanged after a routed failure marker is set.
+
+    Returns an :class:`AttachResult` carrying the ``DepthReport`` and the
+    per-(region, set_piece) ``AttachReport``s (each with ``.rolled`` — the
+    spec §7 freeze target Task 6 persists, NEVER recomputed here). The
+    attach stage does NOT commit / does NOT roll back / does NOT apply to a
+    save — that is Task 6 (commit).
+    """
+    if graph is None:
+        raise ValueError(
+            "_stage_attach requires a real RegionGraph — "
+            "graph=None is not valid (No Silent Fallbacks)"
+        )
+    if expansion is None:
+        raise ValueError(
+            "_stage_attach requires a real Expansion — "
+            "expansion=None is not valid (No Silent Fallbacks)"
+        )
+    if palette is None:
+        raise ValueError(
+            "_stage_attach requires a real ThemePalette — "
+            "palette=None is not valid (No Silent Fallbacks)"
+        )
+    if curation is None:
+        raise ValueError(
+            "_stage_attach requires the curate stage result — "
+            "curation=None is not valid (No Silent Fallbacks)"
+        )
+    if snapshot is None:
+        raise ValueError(
+            "_stage_attach requires a real GameSnapshot — "
+            "snapshot=None is not valid (No Silent Fallbacks). Production "
+            "sourcing is the Task-7 session-wiring concern."
+        )
+    if pack_tropes is None:
+        raise ValueError(
+            "_stage_attach requires the resolved genre-pack tropes — "
+            "pack_tropes=None is not valid (No Silent Fallbacks). "
+            "Production sourcing is the Task-7 session-wiring concern."
+        )
+    if persistence is None:
+        raise ValueError(
+            "_stage_attach requires a real DungeonStore — "
+            "persistence=None is not valid (No Silent Fallbacks)"
+        )
+
+    # Step 1: attach_expansion — mutates + re-verifies the GLOBAL
+    # connected + loopful invariants. A loud raise here ABORTS the whole
+    # materialization: no depth scoring, no set-piece attach, no partial
+    # state. Route the failure marker onto the span before re-raise.
+    try:
+        attach_expansion(graph, expansion)
+    except (ValueError, KeyError) as exc:
+        span.set_attribute("error", str(exc))
+        span.set_attribute("reason", f"attach_expansion: {exc}")
+        raise
+
+    # Step 2: assign_depth_scores — entrance == 0.0 (no jitter), frozen
+    # (already-scored regions never recomputed — spec §7). A to-be-scored
+    # region unreachable on the ordinary route raises loudly.
+    try:
+        depth_report = assign_depth_scores(
+            graph, campaign_seed=request.campaign_seed
+        )
+    except (ValueError, KeyError) as exc:
+        span.set_attribute("error", str(exc))
+        span.set_attribute("reason", f"assign_depth_scores: {exc}")
+        raise
+
+    # Byte-pinned span attribute contract: EXACTLY DepthReport.as_dict()'s
+    # 4 scalar keys (NOT AttachReport — that is Plan 6's nested span).
+    for k, v in depth_report.as_dict().items():
+        span.set_attribute(k, v)
+
+    # Step 3: for each region's theme, call Plan 6's coalescence entry point.
+    # threads_already_lit accumulates across ALL set-pieces in the WHOLE
+    # expansion (expansion-level budget — initialised once, never per-region).
+    attach_reports: list[AttachReport] = []
+    threads_already_lit = 0
+    try:
+        for node in expansion.new_nodes:
+            if node.theme not in palette.themes:
+                raise ValueError(
+                    f"region {node.id!r} references theme {node.theme!r} "
+                    f"which is absent from the palette (have: "
+                    f"{sorted(palette.themes)}). No silent default theme."
+                )
+            theme = palette.themes[node.theme]
+            # curate must cover every region (pipeline-ordering contract);
+            # a missing manifest is a loud KeyError, not a silent default.
+            manifest = curation.region_manifests[node.id]
+            # depth_score AFTER assign_depth_scores ran (REQUIRED, no
+            # default — Decision I in setpiece_attach).
+            started_at_depth_score = graph.nodes[node.id].depth_score
+            if started_at_depth_score is None:
+                raise ValueError(
+                    f"region {node.id!r} has no depth_score after "
+                    f"assign_depth_scores — cannot attach set-pieces "
+                    f"(No Silent Fallbacks)"
+                )
+            for set_piece in theme.set_pieces:
+                report = attach_set_piece(
+                    campaign_seed=request.campaign_seed,
+                    expansion_id=request.expansion_id,
+                    region_id=node.id,
+                    setpiece_id=set_piece.id,
+                    set_piece=set_piece,
+                    trope_components=set_piece.trope_components,
+                    quest_components=set_piece.quest_components,
+                    pack_tropes=pack_tropes,
+                    snapshot=snapshot,
+                    manifest=manifest,
+                    store=persistence,
+                    threads_lit_per_expansion=request.burst_magnitude,
+                    threads_already_lit=threads_already_lit,
+                    started_at_depth_score=started_at_depth_score,
+                )
+                threads_already_lit += report.threads_written
+                attach_reports.append(report)
+    except (ValueError, KeyError, PersistError) as exc:
+        span.set_attribute("error", str(exc))
+        span.set_attribute("reason", f"attach_set_piece: {exc}")
+        raise
+
+    return AttachResult(
+        depth_report=depth_report,
+        attach_reports=attach_reports,
+    )
 
 
 def _stage_commit(request: MaterializationRequest, **kwargs: Any) -> Any:
@@ -907,6 +1124,8 @@ async def materialize(
     bundle: Any,
     palette: Any,
     persistence: DungeonStore,
+    snapshot: GameSnapshot,
+    pack_tropes: Any,
     claude_client: ClaudeClient | None = None,
     is_first_band_entry: bool = True,
 ) -> None:
@@ -939,6 +1158,20 @@ async def materialize(
     persistence:
         The ``DungeonStore`` operating on the live save-DB connection
         (caller owns the transaction boundary, spec §7.5).
+    snapshot:
+        The live ``GameSnapshot`` — the attach stage's
+        ``attach_set_piece`` call mutates ``snapshot.active_tropes`` for
+        every started trope component (ADR-018 seam). REQUIRED, no silent
+        default. Production sourcing (the live session snapshot) is the
+        Task-7 session-wiring concern; Task 5 binds the API.
+        (Reconcile seam: ``snapshot``.)
+    pack_tropes:
+        The resolved genre-pack tropes (a duck-typed object with
+        ``.tropes``, ADR-018) threaded into the attach stage's
+        ``attach_set_piece`` call so trope_ids resolve against the pack.
+        REQUIRED, no silent default. Production sourcing (the resolved
+        genre-pack) is the Task-7 session-wiring concern; Task 5 binds the
+        API. (Reconcile seam: ``pack_tropes``.)
     claude_client:
         Injected ``ClaudeClient`` for the curate stage's one-shot
         ``claude -p`` pass. ``None`` → a real ``ClaudeClient()`` is
@@ -978,7 +1211,7 @@ async def materialize(
         with dungeon_materialize_curate_span(
             expansion_id=request.expansion_id
         ) as curate_span:
-            await _stage_curate(
+            curation = await _stage_curate(
                 request,
                 bundle=bundle,
                 palette=palette,
@@ -989,8 +1222,31 @@ async def materialize(
                 span=curate_span,
             )
 
-        with dungeon_materialize_attach_span(expansion_id=request.expansion_id):
-            _stage_attach(request, graph=graph)
+        with dungeon_materialize_attach_span(
+            expansion_id=request.expansion_id
+        ) as attach_span:
+            attach_result = _stage_attach(
+                request,
+                graph=graph,
+                expansion=expansion,
+                palette=palette,
+                curation=curation,
+                snapshot=snapshot,
+                pack_tropes=pack_tropes,
+                persistence=persistence,
+                span=attach_span,
+            )
 
         with dungeon_materialize_commit_span(expansion_id=request.expansion_id):
-            _stage_commit(request, graph=graph, persistence=persistence)
+            # Thread the attach stage's AttachResult into commit: its
+            # ``attach_reports[].rolled`` is the spec §7 freeze target Task
+            # 6 must PERSIST and NEVER recompute (save-is-truth). Discarding
+            # it here would force Task 6 to re-roll. ``_stage_commit`` is
+            # still the deferred NotImplementedError seam with ``**kwargs``,
+            # so ``attach_result=`` is accepted but never read until Task 6.
+            _stage_commit(
+                request,
+                graph=graph,
+                persistence=persistence,
+                attach_result=attach_result,
+            )

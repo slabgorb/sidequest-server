@@ -130,13 +130,32 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE] = SpanRoute(
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_ATTACH] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # DepthReport.as_dict()'s 4 keys are the byte-pinned attribute contract
+    # (Plan 3 pinned them for THIS consumer; Plan 7 Task 5). NOT
+    # AttachReport — that is Plan 6's nested setpiece.attach span (routed
+    # in dungeon_setpiece.py; Plan 7 does NOT re-route it). error/reason
+    # are the routed failure markers: they read None on the success path
+    # (graceful-get idiom — harmless) and surface an attach_expansion
+    # global-invariant violation / unreachable-region / attach_set_piece
+    # (PersistError, trope_id-not-in-pack) failure on the GM panel on the
+    # failure path (the Task-2 lesson: a set-but-not-routed marker is a
+    # defect — route it).
     extract=lambda s: {
         "field": "dungeon_map",
         "op": "materialize.attach",
         "expansion_id": _attr("expansion_id")(s),
         "stage": "attach",
+        "regions_scored": _attr("regions_scored")(s),
+        "depth_min": _attr("depth_min")(s),
+        "depth_max": _attr("depth_max")(s),
+        "depth_mean": _attr("depth_mean")(s),
+        "error": _attr("error")(s),
+        "reason": _attr("reason")(s),
     },
 )
+# Note: "stage" above is a routed CONSTANT (the GM-panel column), not a
+# span attribute lookup — the span no longer pre-bakes a "stage" attr so
+# the stage can write EXACTLY DepthReport.as_dict()'s 4 keys (byte-pinned).
 
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_COMMIT] = SpanRoute(
     event_type="state_transition",
@@ -250,10 +269,19 @@ def dungeon_materialize_attach_span(
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Open the ``dungeon.materialize.attach`` child span."""
+    """Open the ``dungeon.materialize.attach`` child span.
+
+    No ``stage`` attribute is pre-baked here (same deliberate choice as
+    ``dungeon_materialize_design_span``): the attach stage itself writes
+    exactly ``DepthReport.as_dict()``'s 4 keys onto the span on success
+    (byte-pinned GM-panel contract, Plan 7 Task 5 — Plan 3 pinned the key
+    set for THIS consumer), and a routed ``error``/``reason`` failure
+    marker on the failure path. The only pre-baked attribute is
+    ``expansion_id`` (pipeline scaffold, like the design span).
+    """
     with Span.open(
         SPAN_DUNGEON_MATERIALIZE_ATTACH,
-        {"expansion_id": expansion_id, "stage": "attach", **attrs},
+        {"expansion_id": expansion_id, **attrs},
         tracer_override=_tracer,
     ) as span:
         yield span

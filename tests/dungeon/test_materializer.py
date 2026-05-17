@@ -221,11 +221,12 @@ class TestMaterializePipelineSpans:
     async def test_materialize_raises_not_implemented_error(self) -> None:
         """materialize() propagates NotImplementedError from the first
         still-deferred stage it hits. The boundary moves forward as each
-        stage lands: design/fill/curate are implemented (Tasks 2–4), so
-        the error now comes from _stage_attach (Task 5, still deferred).
-        A real bundle + look-bound palette + reflecting curation client
-        are required so curate runs end-to-end and the pipeline genuinely
-        reaches the attach boundary."""
+        stage lands: design/fill/curate/attach are implemented (Tasks
+        2–5), so the error now comes from _stage_commit (Task 6, still
+        deferred). A real bundle + look-bound palette + reflecting curation
+        client are required so curate runs end-to-end; the `_curate_inputs`
+        palette theme has no set_pieces so attach's set-piece loop is a
+        no-op and the pipeline genuinely reaches the commit boundary."""
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import materialize
         from sidequest.dungeon.persistence import DungeonStore
@@ -244,13 +245,15 @@ class TestMaterializePipelineSpans:
         try:
             req = self._build_request()
             graph = _make_seed_graph("entrance")
-            with pytest.raises(NotImplementedError, match="attach"):
+            with pytest.raises(NotImplementedError, match="commit"):
                 await materialize(
                     req,
                     graph=graph,
                     bundle=bundle,
                     palette=palette,
                     persistence=store,
+                    snapshot=_fresh_snapshot(),
+                    pack_tropes=_attach_pack("cave_in"),
                     claude_client=_reflecting_claude_client(),
                 )
         finally:
@@ -258,7 +261,7 @@ class TestMaterializePipelineSpans:
 
     async def test_parent_span_opens_before_any_stage(self) -> None:
         """dungeon.materialize parent span must be emitted even when a
-        still-deferred stage raises NotImplementedError (now attach)."""
+        still-deferred stage raises NotImplementedError (now commit)."""
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import materialize
         from sidequest.dungeon.persistence import DungeonStore
@@ -278,13 +281,15 @@ class TestMaterializePipelineSpans:
         try:
             req = self._build_request()
             graph = _make_seed_graph("entrance")
-            with pytest.raises(NotImplementedError, match="attach"):
+            with pytest.raises(NotImplementedError, match="commit"):
                 await materialize(
                     req,
                     graph=graph,
                     bundle=bundle,
                     palette=palette,
                     persistence=store,
+                    snapshot=_fresh_snapshot(),
+                    pack_tropes=_attach_pack("cave_in"),
                     claude_client=_reflecting_claude_client(),
                 )
         finally:
@@ -361,7 +366,20 @@ class TestMaterializePipelineSpans:
         _mat_module._stage_commit = _noop  # type: ignore[assignment]
         try:
             req = self._build_request()
-            await materialize(req, graph=None, bundle=None, palette=None, persistence=store)
+            # snapshot/pack_tropes are required materialize() params (Task
+            # 5); the attach stage is monkeypatched to a no-op here so the
+            # values are never read — passing real-shaped placeholders keeps
+            # the signature satisfied while the test asserts ONLY span
+            # nesting/order (unchanged Task-1 contract).
+            await materialize(
+                req,
+                graph=None,
+                bundle=None,
+                palette=None,
+                persistence=store,
+                snapshot=_fresh_snapshot(),
+                pack_tropes=_attach_pack("cave_in"),
+            )
         finally:
             _mat_module._stage_design = original_design  # type: ignore[assignment]
             _mat_module._stage_fill = original_fill  # type: ignore[assignment]
@@ -1227,14 +1245,20 @@ class TestStageFill:
         try:
             req = _make_request_task3()
             graph = _make_seed_graph("entrance")
-            # design + fill + curate now run; attach is still deferred.
-            with pytest.raises(NotImplementedError, match="attach"):
+            # design + fill + curate + attach now run (Tasks 2–5); the
+            # deferral boundary moved forward to commit (Task 6, still
+            # deferred). The `_curate_inputs` palette theme has no
+            # set_pieces, so attach's set-piece loop is a no-op — attach
+            # still attaches+depth-scores the graph successfully.
+            with pytest.raises(NotImplementedError, match="commit"):
                 await materialize(
                     req,
                     graph=graph,
                     bundle=bundle,
                     palette=palette,
                     persistence=store,
+                    snapshot=_fresh_snapshot(),
+                    pack_tropes=_attach_pack("cave_in"),
                     claude_client=_reflecting_claude_client(),
                 )
         finally:
@@ -1716,15 +1740,699 @@ class TestStageCurate:
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
-            # design + fill + curate now run; attach is still deferred.
-            with pytest.raises(NotImplementedError, match="attach"):
+            # design + fill + curate + attach now run (Tasks 2–5); the
+            # deferral boundary moved forward to commit (Task 6).
+            with pytest.raises(NotImplementedError, match="commit"):
                 await materialize(
                     request,
                     graph=graph,
                     bundle=bundle,
                     palette=palette,
                     persistence=store,
+                    snapshot=_fresh_snapshot(),
+                    pack_tropes=_attach_pack("cave_in"),
                     claude_client=reflecting,
                 )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+
+# ===========================================================================
+# Task 5: Stage 4 attach — attach_expansion + assign_depth_scores + Plan 6
+#         set-piece/trope/quest seam
+# ===========================================================================
+#
+# The 3 plan bullets:
+#  1. the `attach` span attributes equal DepthReport.as_dict() exactly;
+#     entrance region depth is 0.0; a pre-scored region is NOT recomputed.
+#  2. (binds to Plan 6's merged API) started trope/quest threads land in the
+#     open-complication ledger with origin region + status; thread count
+#     scales with burst_magnitude.
+#  3. attach_expansion's loud global-invariant failure aborts the whole
+#     materialization (no partial commit).
+
+
+def _theme_with_set_piece(
+    theme_id: str,
+    *,
+    trope_ids: tuple[str, ...] = ("cave_in",),
+    quest_ids: tuple[str, ...] = ("deny_the_altar",),
+) -> Any:
+    """A real DungeonTheme (cellular/organic) carrying ONE real SetPiece
+    with trope + quest components. No mocking of the dungeon layer — real
+    pydantic value objects only."""
+    from sidequest.dungeon.setpieces import SetPiece
+    from sidequest.dungeon.themes import (
+        Adjacency,
+        DepthBand,
+        DungeonTheme,
+        InteriorSpec,
+        NarratorFlavor,
+    )
+
+    sp = SetPiece.model_validate(
+        {
+            "id": f"{theme_id}_altar",
+            "name": "The Sünden Altar",
+            "telegraph": "A black altar slick with old blood.",
+            "outcome": "The ceiling groans and the dark answers.",
+            "slots": [
+                {"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}
+            ],
+            "trope_components": [{"trope_id": t, "params": {}} for t in trope_ids],
+            "quest_components": [{"quest_id": q, "params": {}} for q in quest_ids],
+        }
+    )
+    return DungeonTheme(
+        id=theme_id,
+        display_name=theme_id.replace("_", " ").title(),
+        generator_class="organic",
+        interior=InteriorSpec(algorithm="cellular", braid_ratio=0.0),
+        depth_band=DepthBand(min=0.0, max=None),
+        narrator=NarratorFlavor(register="grave", flavor="dread whispers"),
+        adjacency=Adjacency(),
+        set_pieces=[sp],
+    )
+
+
+def _expansion_off_seed(
+    *, theme_id: str, expansion_id: int = 1, entrance_id: str = "entrance"
+) -> Any:
+    """Two new regions hung off the entrance with a loop edge (so the
+    attached graph is connected AND loopful — attach_expansion's two
+    global invariants both hold)."""
+    from sidequest.dungeon.region_graph import Expansion, RegionEdge, RegionNode
+
+    r0 = f"exp{expansion_id:03d}.r0"
+    r1 = f"exp{expansion_id:03d}.r1"
+    nodes = [
+        RegionNode(id=r0, expansion_id=expansion_id, theme=theme_id),
+        RegionNode(id=r1, expansion_id=expansion_id, theme=theme_id),
+    ]
+    edges = [
+        RegionEdge(a=entrance_id, b=r0, kind="corridor"),
+        RegionEdge(a=r0, b=r1, kind="corridor"),
+        RegionEdge(a=r1, b=entrance_id, kind="stairs"),  # closes a loop
+    ]
+    return Expansion(expansion_id=expansion_id, new_nodes=nodes, new_edges=edges)
+
+
+def _manifest_for(region_id: str) -> Any:
+    """A real RegionContentManifest (reduced Task 3 does not resolve refs
+    against it; attach_set_piece accepts it unchanged)."""
+    from sidequest.game.cookbook.models import RegionContentManifest
+
+    return RegionContentManifest(
+        race="dwarf",
+        cr_band="mid",
+        size_budget={"rooms": 6},
+        wandering_table=[{"name": "Zombie", "cr": 0.25, "weight": 3, "count": "1d4"}],
+        loot_table=[{"name": "Grave Silver", "item_type": "treasure"}],
+        special_rooms=[],
+        big_bad=None,
+    )
+
+
+def _curation_for(expansion: Any) -> Any:
+    """A real RegionCuration whose region_manifests cover every region in
+    the expansion (the curate→attach thread the coordinator carries)."""
+    from sidequest.dungeon.materializer import RegionCuration
+
+    rids = [n.id for n in expansion.new_nodes]
+    return RegionCuration(
+        region_manifests={rid: _manifest_for(rid) for rid in rids},
+        region_creatures={rid: [] for rid in rids},
+        region_big_bad={rid: None for rid in rids},
+        region_look={rid: "delvehold" for rid in rids},
+        curated=True,
+        raw_seed_reproducible=False,
+    )
+
+
+def _attach_pack(*trope_ids: str) -> Any:
+    """Pack-shaped object carrying .tropes (duck type attach_set_piece /
+    start_trope_components use)."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        tropes=[SimpleNamespace(id=t) for t in trope_ids]
+    )
+
+
+def _fresh_snapshot() -> Any:
+    """Minimal GameSnapshot with empty active_tropes (mirrors
+    tests/dungeon/test_setpiece_attach.py::_fresh_snapshot)."""
+    from sidequest.game.session import GameSnapshot
+
+    return GameSnapshot(genre_slug="caverns_and_claudes", world_slug="test_world")
+
+
+# ---------------------------------------------------------------------------
+# Task 5 Test 1: attach span == DepthReport.as_dict() exactly; entrance 0.0;
+#                pre-scored region NOT recomputed (freeze).
+# ---------------------------------------------------------------------------
+
+
+class TestStageAttach:
+    async def test_attach_span_equals_depth_report_and_freeze_holds(self) -> None:
+        import dataclasses
+
+        import sidequest.dungeon.materializer as _mat
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.region_graph import RegionGraph, RegionNode
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans import SPAN_ROUTES
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_ATTACH,
+            dungeon_materialize_attach_span,
+        )
+
+        theme_id = "sunken_crypt"
+        palette = ThemePalette(themes={theme_id: _theme_with_set_piece(theme_id)})
+
+        # Seed graph: the entrance is UNSCORED (depth_score=None) so
+        # assign_depth_scores will score it to exactly 0.0; plus a
+        # pre-existing PROVISIONED region with a frozen depth_score that
+        # must NOT be recomputed.
+        graph = RegionGraph(entrance_id="entrance")
+        graph.add_node(RegionNode(id="entrance", expansion_id=0, theme=theme_id))
+        graph.add_node(
+            RegionNode(
+                id="frozen_old",
+                expansion_id=0,
+                theme=theme_id,
+                depth_score=999.0,
+            )
+        )
+        # frozen_old must be reachable on the ordinary route, else
+        # assign_depth_scores raises before it can freeze — connect it.
+        from sidequest.dungeon.region_graph import RegionEdge
+
+        graph.add_edge(RegionEdge(a="entrance", b="frozen_old", kind="corridor"))
+
+        expansion = _expansion_off_seed(theme_id=theme_id, expansion_id=1)
+        curation = _curation_for(expansion)
+        snapshot = _fresh_snapshot()
+        pack = _attach_pack("cave_in")
+
+        conn = _mem_conn()
+        from sidequest.dungeon.persistence import DungeonStore
+
+        store = DungeonStore(conn)
+        store.ensure_schema()
+
+        request = MaterializationRequest_build(
+            campaign_seed=7, expansion_id=1, spawn_depth_score=0.0
+        )
+
+        exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            with dungeon_materialize_attach_span(
+                expansion_id=request.expansion_id
+            ) as span:
+                result = _mat._stage_attach(
+                    request,
+                    graph=graph,
+                    expansion=expansion,
+                    palette=palette,
+                    curation=curation,
+                    snapshot=snapshot,
+                    pack_tropes=pack,
+                    persistence=store,
+                    span=span,
+                )
+        finally:
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+        # The DepthReport carried out for Task 6.
+        from sidequest.dungeon.region_graph import DepthReport
+
+        assert isinstance(result.depth_report, DepthReport)
+        report_dict = result.depth_report.as_dict()
+        assert set(report_dict.keys()) == {
+            "regions_scored",
+            "depth_min",
+            "depth_max",
+            "depth_mean",
+        }
+
+        # The attach span's STAGE-WRITTEN attributes == DepthReport.as_dict()
+        # EXACTLY (byte-pinned). The attach span helper pre-bakes only the
+        # `expansion_id` pipeline scaffold (same deliberate choice as the
+        # design span helper, which omits `stage` so the stage owns the
+        # exact attribute set); the stage writes EXACTLY the 4 DepthReport
+        # keys on success — no `stage` attr, no extra keys.
+        finished = exporter.get_finished_spans()
+        attach_spans = [
+            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH
+        ]
+        assert attach_spans, "dungeon.materialize.attach span not emitted"
+        span_attrs = dict(attach_spans[0].attributes or {})
+        stage_written = {
+            k: v for k, v in span_attrs.items() if k != "expansion_id"
+        }
+        assert set(stage_written.keys()) == set(report_dict.keys()), (
+            f"attach span stage-written key-set mismatch (must be EXACTLY "
+            f"DepthReport.as_dict()).\n"
+            f"  Stage-written keys: {sorted(stage_written)}\n"
+            f"  DepthReport keys: {sorted(report_dict)}"
+        )
+        for k, v in report_dict.items():
+            assert span_attrs[k] == v, (
+                f"span[{k!r}]={span_attrs[k]!r}, expected {v!r}"
+            )
+
+        # The routed extract surfaces the 4 DepthReport keys + a null
+        # failure marker on the success path (graceful-get idiom).
+        route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_ATTACH]
+        fields = route.extract(attach_spans[0])  # type: ignore[arg-type]
+        for k in report_dict:
+            assert fields[k] == report_dict[k]
+        assert fields.get("error") is None
+        assert fields.get("reason") is None
+
+        # Entrance region depth is EXACTLY 0.0 (no jitter at the origin).
+        assert graph.nodes["entrance"].depth_score == 0.0
+
+        # FREEZE: the pre-scored region was NOT recomputed.
+        assert graph.nodes["frozen_old"].depth_score == 999.0
+
+        # Sanity: only the two new regions + entrance were scored
+        # (frozen_old was already scored, so it is excluded).
+        assert result.depth_report.regions_scored == 3
+
+        # report.rolled carried for Task 6 (freeze target — never recomputed).
+        assert result.attach_reports
+        for ar in result.attach_reports:
+            assert ar.rolled is not None
+            assert isinstance(dataclasses.asdict(ar.rolled), dict)
+
+    # -----------------------------------------------------------------------
+    # Task 5 Test 2: threads land in the REAL DungeonStore with origin
+    #                region + open status; count scales with burst_magnitude.
+    # -----------------------------------------------------------------------
+
+    def _run_attach(
+        self,
+        *,
+        burst_magnitude: int,
+        trope_ids: tuple[str, ...],
+        quest_ids: tuple[str, ...],
+    ) -> tuple[Any, Any]:
+        """Run _stage_attach end-to-end against a real DungeonStore and
+        return (store, AttachResult). burst_magnitude == the
+        threads_lit_per_expansion budget the attach stage passes through."""
+        import sidequest.dungeon.materializer as _mat
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.persistence import DungeonStore
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_attach_span,
+        )
+
+        theme_id = "deep_ossuary"
+        palette = ThemePalette(
+            themes={
+                theme_id: _theme_with_set_piece(
+                    theme_id, trope_ids=trope_ids, quest_ids=quest_ids
+                )
+            }
+        )
+        graph = _make_seed_graph("entrance")
+        # Re-theme the entrance so palette.themes[node.theme] resolves for
+        # any pre-existing node (the seed entrance theme is "tomb").
+        from sidequest.dungeon.region_graph import RegionNode
+
+        graph.nodes["entrance"] = RegionNode(
+            id="entrance", expansion_id=0, theme=theme_id
+        )
+        expansion = _expansion_off_seed(theme_id=theme_id, expansion_id=1)
+        curation = _curation_for(expansion)
+        snapshot = _fresh_snapshot()
+        pack = _attach_pack(*trope_ids)
+
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        store.ensure_schema()
+
+        request = MaterializationRequest_build(
+            campaign_seed=7,
+            expansion_id=1,
+            spawn_depth_score=0.0,
+        )
+        # Override burst_magnitude (the attach stage passes it through as
+        # threads_lit_per_expansion). Rebuild via dataclasses.replace since
+        # MaterializationRequest is frozen.
+        import dataclasses
+
+        request = dataclasses.replace(request, burst_magnitude=burst_magnitude)
+
+        exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            with dungeon_materialize_attach_span(
+                expansion_id=request.expansion_id
+            ) as span:
+                result = _mat._stage_attach(
+                    request,
+                    graph=graph,
+                    expansion=expansion,
+                    palette=palette,
+                    curation=curation,
+                    snapshot=snapshot,
+                    pack_tropes=pack,
+                    persistence=store,
+                    span=span,
+                )
+        finally:
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+        return store, result
+
+    async def test_threads_in_real_store_with_origin_and_status(self) -> None:
+        store, result = self._run_attach(
+            burst_magnitude=10,
+            trope_ids=("cave_in", "dripping_water"),
+            quest_ids=("deny_the_altar",),
+        )
+
+        open_threads = store.open_threads()
+        assert open_threads, "no open complication threads written to the store"
+        new_region_ids = {"exp001.r0", "exp001.r1"}
+        for thread in open_threads:
+            assert thread.status == "open"
+            assert thread.origin_region_id in new_region_ids
+            assert thread.kind in ("trope", "quest")
+            # started_at_depth_score frozen from the post-depth-scoring graph
+            # (REQUIRED, no default).
+            assert thread.started_at_depth_score is not None
+
+        # report.threads_written sums to the persisted open-thread count
+        # (lie detector: spans/reports vs ledger rows).
+        total_written = sum(r.threads_written for r in result.attach_reports)
+        assert total_written == len(open_threads)
+
+    async def test_thread_count_scales_with_burst_magnitude(self) -> None:
+        """Raising burst_magnitude (→ threads_lit_per_expansion) yields MORE
+        started threads, up to the available components. Binds the real
+        Plan 6 attach_set_piece budget API."""
+        # 3 trope + 3 quest components per set-piece, 2 regions → up to 12
+        # threads available; budget 1 caps low, budget 100 lets them all in.
+        tropes = ("cave_in", "dripping_water", "ghost_light")
+        quests = ("deny_the_altar", "find_the_relic", "free_the_captive")
+
+        store_low, _ = self._run_attach(
+            burst_magnitude=1, trope_ids=tropes, quest_ids=quests
+        )
+        store_high, _ = self._run_attach(
+            burst_magnitude=100, trope_ids=tropes, quest_ids=quests
+        )
+
+        low_count = len(store_low.open_threads())
+        high_count = len(store_high.open_threads())
+        assert high_count > low_count, (
+            f"thread count must scale with burst_magnitude: "
+            f"burst=1 → {low_count} threads, burst=100 → {high_count}"
+        )
+
+    async def test_thread_budget_caps_cumulatively_across_regions(self) -> None:
+        """The threads_lit_per_expansion budget is EXPANSION-level, not
+        per-region: it accumulates across ALL regions/set-pieces in the
+        whole expansion (threads_already_lit initialised ONCE before the
+        region loop, never reset per region).
+
+        2 regions, each set-piece has tropes=("a","b") quests=() → 2
+        components/set-piece × 2 regions = 4 components available; budget 3
+        (burst_magnitude=3 → threads_lit_per_expansion=3). Correct
+        cumulative accumulation caps at EXACTLY 3 (region0 consumes 2 of 3,
+        region1 gets only the remaining 1). A per-region budget reset (the
+        exact silent budget violation) would wrongly yield 4 (region1
+        restarts the full budget). The `== 3` is the load-bearing pin."""
+        store, _result = self._run_attach(
+            burst_magnitude=3,
+            trope_ids=("a", "b"),
+            quest_ids=(),
+        )
+
+        open_threads = store.open_threads()
+        assert len(open_threads) == 3, (
+            f"expansion-level budget must cap CUMULATIVELY across regions: "
+            f"4 components available, budget 3 → EXACTLY 3 threads "
+            f"(region0 takes 2, region1 takes the remaining 1). Got "
+            f"{len(open_threads)} — a count of 4 means the accumulator was "
+            f"reset per-region (silent budget violation)."
+        )
+
+    # -----------------------------------------------------------------------
+    # Task 5 Test 3: attach_expansion's loud global-invariant failure aborts
+    #                the WHOLE materialization — no depth scoring, no
+    #                set-piece attach, span carries the routed failure
+    #                marker, NO partial state.
+    # -----------------------------------------------------------------------
+
+    async def test_attach_expansion_invariant_failure_aborts_with_no_partial_state(
+        self,
+    ) -> None:
+        import sidequest.dungeon.materializer as _mat
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.persistence import DungeonStore
+        from sidequest.dungeon.region_graph import (
+            Expansion,
+            RegionGraph,
+            RegionNode,
+        )
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans import SPAN_ROUTES
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_ATTACH,
+            dungeon_materialize_attach_span,
+        )
+
+        theme_id = "broken_vault"
+        palette = ThemePalette(
+            themes={theme_id: _theme_with_set_piece(theme_id)}
+        )
+
+        # Seed graph: just the entrance (UNSCORED).
+        graph = RegionGraph(entrance_id="entrance")
+        graph.add_node(
+            RegionNode(id="entrance", expansion_id=0, theme=theme_id)
+        )
+
+        # A degenerate expansion: a new region with NO edge connecting it
+        # to the explored graph → attach_expansion's global "connected"
+        # invariant raises loudly (No Silent Fallbacks).
+        orphan = RegionNode(id="exp001.r0", expansion_id=1, theme=theme_id)
+        bad_expansion = Expansion(
+            expansion_id=1, new_nodes=[orphan], new_edges=[]
+        )
+        curation = _curation_for(bad_expansion)
+        snapshot = _fresh_snapshot()
+        pack = _attach_pack("cave_in")
+
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        store.ensure_schema()
+
+        request = MaterializationRequest_build(
+            campaign_seed=7, expansion_id=1, spawn_depth_score=0.0
+        )
+
+        exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            # Loud global-invariant raise — NOT swallowed, NOT
+            # NotImplementedError. (span + pytest.raises combined into one
+            # `with` — the Task-2 precedent idiom at
+            # test_design_stage_propagates_expansion_generation_error_with_span.)
+            with pytest.raises(
+                ValueError, match="disconnected"
+            ) as exc_info, dungeon_materialize_attach_span(
+                expansion_id=request.expansion_id
+            ) as span:
+                _mat._stage_attach(
+                    request,
+                    graph=graph,
+                    expansion=bad_expansion,
+                    palette=palette,
+                    curation=curation,
+                    snapshot=snapshot,
+                    pack_tropes=pack,
+                    persistence=store,
+                    span=span,
+                )
+        finally:
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+        assert not isinstance(exc_info.value, NotImplementedError)
+
+        # NO depth scoring ran: the orphan node (even though add_node ran
+        # inside attach_expansion before the connected check) has NO
+        # depth_score, and the entrance is still UNSCORED.
+        assert graph.nodes["entrance"].depth_score is None
+        assert graph.nodes["exp001.r0"].depth_score is None
+
+        # NO set-piece attach ran: zero ledger rows written (No partial
+        # state — abort BEFORE any thread write).
+        assert store.open_threads() == []
+
+        # The span carries the ROUTED failure marker (lie-detector
+        # visibility — the GM panel must see the abort, the Task-2 lesson).
+        finished = exporter.get_finished_spans()
+        attach_spans = [
+            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH
+        ]
+        assert attach_spans, "attach span not emitted on the failure path"
+        route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_ATTACH]
+        fields = route.extract(attach_spans[0])  # type: ignore[arg-type]
+        assert fields.get("error") is not None
+        assert fields.get("reason") is not None
+        assert "attach_expansion" in str(fields["reason"])
+        # The byte-pinned DepthReport keys were NEVER written (abort before
+        # assign_depth_scores) — they read None via the graceful-get idiom.
+        assert fields.get("regions_scored") is None
+        assert fields.get("depth_min") is None
+
+    # -----------------------------------------------------------------------
+    # Task 5 wiring: the coordinator threads _stage_attach's AttachResult
+    # into _stage_commit (spec §7 freeze target — Task 6 must persist
+    # attach_reports[].rolled and NEVER recompute it). FAILS if the
+    # coordinator discards the AttachResult (the pre-fix state).
+    # -----------------------------------------------------------------------
+
+    async def test_coordinator_threads_attach_result_into_commit(self) -> None:
+        """materialize() must pass the SAME AttachResult instance
+        _stage_attach returned into _stage_commit as ``attach_result`` —
+        carrying attach_reports whose entries have ``.rolled`` (the spec §7
+        freeze target Task 6 persists, never recomputed). Decisive: this
+        fails if the coordinator drops the attach return on the floor.
+
+        Non-brittle for Task 6: asserts ONLY the threaded object identity +
+        ``.rolled`` presence, never commit internals (which don't exist
+        until Task 6)."""
+        import sidequest.dungeon.materializer as _mat_module
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.materializer import AttachResult, materialize
+        from sidequest.dungeon.persistence import DungeonStore
+        from sidequest.dungeon.region_graph import RegionNode
+        from sidequest.dungeon.themes import ThemePalette
+
+        # A palette whose single set-piece-bearing theme is eligible at the
+        # frontier depth, bound to a real cookbook look so curate's
+        # look-resolution + assemble_region pass. `cellular` → look
+        # `hollowing` in the real beneath_sunden looks.yaml.
+        theme_id = "wired_crypt"
+        base_theme = _theme_with_set_piece(theme_id)
+        palette = ThemePalette(themes={theme_id: base_theme})
+
+        graph = _make_seed_graph("entrance")
+        # Re-theme the seed entrance so palette.themes[node.theme] resolves
+        # for the pre-existing node too (seed entrance theme is "tomb").
+        graph.nodes["entrance"] = RegionNode(
+            id="entrance", expansion_id=0, theme=theme_id
+        )
+
+        bundle = _real_cookbook_bundle()
+        snapshot = _fresh_snapshot()
+        pack = _attach_pack("cave_in")
+        request = MaterializationRequest_build(
+            campaign_seed=7, expansion_id=1, spawn_depth_score=0.0
+        )
+
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        store.ensure_schema()
+
+        # Capture the REAL AttachResult _stage_attach produces (wrap the
+        # real stage — do NOT stub it; we want the genuine freeze targets).
+        real_stage_attach = _mat_module._stage_attach
+        original_commit = _mat_module._stage_commit
+        captured: dict[str, Any] = {}
+
+        def _wrapped_attach(*args: Any, **kwargs: Any) -> Any:
+            result = real_stage_attach(*args, **kwargs)
+            captured["attach_result"] = result
+            return result
+
+        # Capture _stage_commit's kwargs and DO NOT raise (so the
+        # coordinator runs to completion and we can assert the thread).
+        def _capturing_commit(*args: Any, **kwargs: Any) -> None:
+            captured["commit_kwargs"] = kwargs
+
+        _mat_module._stage_attach = _wrapped_attach  # type: ignore[assignment]
+        _mat_module._stage_commit = _capturing_commit  # type: ignore[assignment]
+
+        _exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            await materialize(
+                request,
+                graph=graph,
+                bundle=bundle,
+                palette=palette,
+                persistence=store,
+                snapshot=snapshot,
+                pack_tropes=pack,
+                claude_client=_reflecting_claude_client(),
+            )
+        finally:
+            _mat_module._stage_attach = real_stage_attach  # type: ignore[assignment]
+            _mat_module._stage_commit = original_commit  # type: ignore[assignment]
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+        # _stage_attach genuinely ran and produced a real AttachResult with
+        # the spec §7 freeze targets.
+        assert "attach_result" in captured, "_stage_attach was never called"
+        produced = captured["attach_result"]
+        assert isinstance(produced, AttachResult)
+        assert produced.attach_reports, (
+            "attach produced no AttachReports — the set-piece-bearing theme "
+            "must yield at least one (rolled freeze target)"
+        )
+        for ar in produced.attach_reports:
+            assert ar.rolled is not None
+
+        # THE WIRING ASSERTION: _stage_commit received the SAME AttachResult
+        # instance (identity) as ``attach_result``. Fails if the coordinator
+        # discards _stage_attach's return (pre-fix state).
+        assert "commit_kwargs" in captured, "_stage_commit was never reached"
+        commit_kwargs = captured["commit_kwargs"]
+        assert "attach_result" in commit_kwargs, (
+            "_stage_commit did NOT receive attach_result — the coordinator "
+            "discarded the AttachResult (spec §7 freeze target lost; Task 6 "
+            "would be forced to re-roll, violating save-is-truth)"
+        )
+        assert commit_kwargs["attach_result"] is produced, (
+            "_stage_commit received a DIFFERENT object than _stage_attach "
+            "produced — the freeze targets must be threaded by identity"
+        )
+
+
+def MaterializationRequest_build(
+    *, campaign_seed: int, expansion_id: int, spawn_depth_score: float
+) -> Any:
+    """Build a MaterializationRequest whose frontier_edge.spawn_depth_score
+    is `spawn_depth_score` (entrance-at-0.0 Seed=Expansion-0 contract)."""
+    from sidequest.dungeon.materializer import MaterializationRequest
+    from sidequest.dungeon.persistence import FrontierEdge
+
+    fe = FrontierEdge(
+        frontier_edge_id="fe1",
+        from_region_id="entrance",
+        heading="north",
+        spawn_depth_score=spawn_depth_score,
+    )
+    return MaterializationRequest.build(
+        campaign_seed=campaign_seed,
+        expansion_id=expansion_id,
+        frontier_edge=fe,
+        frontier=[fe],
+        attach_region_ids=["entrance"],
+        heading="north",
+        burst_magnitude=3,
+        lookahead_breadth=2,
+    )
