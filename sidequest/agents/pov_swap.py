@@ -140,6 +140,28 @@ def _split_by_dialogue(text: str) -> list[tuple[str, str]]:
     return parts
 
 
+def extract_spoken_lines(text: str) -> list[str]:
+    """Return the verbatim contents of each double-quoted span in ``text``.
+
+    Used to surface player-spoken dialogue into the shared MP transcript
+    (playtest 2026-05-17): the quoted spans are what the PC actually said
+    aloud; stage direction outside the quotes is the player narrating
+    their own action and is excluded. Inner whitespace is stripped and
+    empty quotes are dropped — an empty utterance is not speech.
+
+    Reuses :func:`_split_by_dialogue` so the dialogue regex stays
+    single-sourced with the POV-swap path.
+    """
+    lines: list[str] = []
+    for kind, segment in _split_by_dialogue(text):
+        if kind != "dialogue":
+            continue
+        inner = segment[1:-1].strip()
+        if inner:
+            lines.append(inner)
+    return lines
+
+
 def _split_into_sentences(prose: str) -> list[str]:
     """Split a prose region into sentences, keeping each sentence's
     trailing punctuation attached.

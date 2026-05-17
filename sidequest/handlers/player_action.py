@@ -75,6 +75,54 @@ def _broadcast_cleared_to_party(
         )
 
 
+def _broadcast_player_speech_to_party(
+    room: object,
+    pending: list[tuple[str, object]],
+    *,
+    round_no: int,
+) -> None:
+    """Surface each PC's verbatim spoken dialogue to the whole party.
+
+    Playtest 2026-05-17 (Keith + Sebby): a player who typed quoted
+    dialogue to an NPC was the only one who ever saw those words. The
+    narrator cannot echo player speech (SOUL.md Agency) and the
+    ACTION_REVEAL strip is wiped by ``_broadcast_cleared_to_party`` on
+    barrier-fire, so peers lost the line entirely. Called at dispatch,
+    just before the cleared broadcast: for every drained pending action
+    that contains quoted spans, emit one PLAYER_SPEECH per span,
+    attributed to the speaking PC, to every socket (exclude_socket_id
+    =None — the speaker's own transcript shows their line too). Actions
+    with no quotes produce nothing — that was narration, not speech.
+    """
+    from sidequest.agents.pov_swap import extract_spoken_lines
+    from sidequest.protocol.messages import PlayerSpeechMessage, SpokenLinePayload
+
+    for pid, p in pending:
+        character_name = getattr(p, "character_name", "")
+        action = getattr(p, "action", "")
+        spoken = extract_spoken_lines(action)
+        for idx, line in enumerate(spoken):
+            payload = SpokenLinePayload(
+                character_name=character_name,
+                text=line,
+                round=round_no,
+            )
+            msg = PlayerSpeechMessage(payload=payload, player_id=pid)
+            room.broadcast(msg, exclude_socket_id=None)
+            _watcher_publish(
+                "mp.player_speech",
+                {
+                    "slug": room.slug,
+                    "player_id": pid,
+                    "character_name": character_name,
+                    "round": round_no,
+                    "line_index": idx,
+                    "text_length": len(line),
+                },
+                component="multiplayer",
+            )
+
+
 class PlayerActionHandler:
     """Handle a PLAYER_ACTION message (player narration submission).
 
@@ -362,18 +410,27 @@ class PlayerActionHandler:
                 )
                 timings.record_phase("mp_barrier_wait", wait_ms)
 
-            # ADR-036 Action Visibility Model: clear all peer reveal rows
-            # before narrator dispatch. Send to everyone — even the last
-            # submitter, whose own row needs to clear.
-            party_members = [
-                {"player_id": pid, "character_name": p.character_name} for pid, p in pending
-            ]
-            _broadcast_cleared_to_party(
+            # Playtest 2026-05-17: surface each PC's verbatim spoken
+            # dialogue to the whole party before the narrator dispatch,
+            # so peers see what was said aloud (the narrator can't echo
+            # it per SOUL.md Agency).
+            _broadcast_player_speech_to_party(
                 session._room,
-                party_members,
+                pending,
                 round_no=snapshot.turn_manager.round,
-                reason="dispatch",
             )
+
+            # Playtest 2026-05-17 (Keith): sealed reveals are NOT cleared
+            # at barrier-fire. Wiping them here blanked the whole table
+            # for the entire narrator-thinking gap right after everyone
+            # sealed. The sealed turns now stay visible until the turn
+            # resolves — the client flushes the reveal strip on
+            # NARRATION_END (the round boundary). ADR-051's round counter
+            # does not advance every turn, so the client's round-advance
+            # failsafe alone cannot clear per-turn; NARRATION_END is the
+            # reliable per-turn signal. The disconnect-path
+            # _broadcast_cleared_to_party (session_room.py) is unaffected
+            # — a vanished player's stale row should still clear at once.
 
             _watcher_publish(
                 "mp.round_dispatched",
