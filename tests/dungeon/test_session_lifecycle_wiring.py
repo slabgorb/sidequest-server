@@ -130,6 +130,26 @@ async def test_session_lifecycle_registers_worker_and_dungeon_grows(
             "seam fired but the session never registered a consumer (the "
             "ADR-106 lie-detector signal: dungeon does not grow)"
         )
+
+        # §10(f): a second attach for the SAME live save raises loud and
+        # adds no second observer (the §14.D save-keyed dedup — the merged
+        # worker's identity-dedup does NOT hold across sessions).
+        with pytest.raises(RuntimeError, match="already attached"):
+            await session_integration.attach_dungeon_to_session(
+                store=store,
+                snapshot=GameSnapshot(
+                    genre_slug="caverns_and_claudes",
+                    world_slug="beneath_sunden",
+                ),
+                genre_pack=_real_pack(),
+                genre_slug="caverns_and_claudes",
+                world_slug="beneath_sunden",
+                world_dir=_beneath_sunden_world_dir(),
+            )
+        assert frontier_hook.registered_observer_count() == 1, (
+            "the concurrent-same-save attempt double-registered — the "
+            "§14.D save-keyed guard did not hold"
+        )
     finally:
         await session_integration.detach_dungeon_from_session(handle)
         _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]

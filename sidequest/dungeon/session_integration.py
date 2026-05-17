@@ -43,6 +43,35 @@ _WORLD = "beneath_sunden"
 # 63-bit seed: positive, fits a SQLite INTEGER, ample entropy.
 _SEED_BITS = 63
 
+# §14.D cross-session double-register guard. register_lookahead_worker
+# builds a NEW handle -> NEW bound _observer each call, so frontier_hook's
+# identity-dedup does NOT hold across sessions: two concurrent sessions on
+# one save would double-register and double-materialize. The hard
+# constraint forbids touching lookahead_worker.py/frontier_hook.py, so the
+# guard lives here, in the seam we own — keyed by save identity. Concurrent
+# attach for an already-attached save is a contract violation, not a silent
+# upsert (No Silent Fallbacks). The real playgroup runs ONE shared session
+# per save (submit-and-wait); sequential reopen clears the key in detach.
+_ATTACHED_SAVES: dict[str, LookaheadWorkerHandle] = {}
+
+
+def _save_key(conn: Any) -> str:
+    """Stable per-save identity. Real saves: the sqlite main DB file path
+    (two WS sessions on one save file open distinct connections to the
+    SAME path -> same key -> guard fires). In-memory stores have no file
+    -> fall back to the connection object's id (each in-memory store is a
+    distinct connection, never sharing a file -> no false collision).
+    """
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+    except Exception as exc:  # pragma: no cover - sqlite always supports this
+        raise RuntimeError(
+            f"could not resolve save identity for the dungeon attach guard: {exc}"
+        ) from exc
+    # PRAGMA database_list row: (seq, name, file). file is '' for :memory:.
+    db_file = row[2] if row is not None and len(row) >= 3 else ""
+    return db_file if db_file else f"mem:{id(conn)}"
+
 
 def _theme_pack_root(world_dir: Path) -> Path:
     """The genre-pack dir holding ``themes/`` (Plan 4 layout
@@ -70,6 +99,15 @@ async def attach_dungeon_to_session(
         return None
 
     conn = store.connection()
+    save_key = _save_key(conn)
+    if save_key in _ATTACHED_SAVES:
+        raise RuntimeError(
+            f"a look-ahead worker is already attached for save {save_key!r} "
+            "— concurrent sessions on one save would double-register and "
+            "double-materialize the dungeon. This is a contract violation, "
+            "not an upsert (No Silent Fallbacks); the playgroup runs one "
+            "shared session per save. detach the prior session first."
+        )
     persistence = DungeonStore(conn)
     persistence.ensure_schema()  # outside any txn (executescript implicit COMMIT)
 
@@ -107,7 +145,7 @@ async def attach_dungeon_to_session(
             claude_client=claude_client,
         )
 
-    return register_lookahead_worker(
+    handle = register_lookahead_worker(
         persistence=persistence,
         bundle=bundle,
         palette=palette,
@@ -115,6 +153,11 @@ async def attach_dungeon_to_session(
         claude_client=claude_client,
         campaign_seed=campaign_seed,
     )
+    # Claim the save AFTER a successful register: a bootstrap/register
+    # failure must leave no key behind (a later retry must be able to
+    # attach). save-is-truth.
+    _ATTACHED_SAVES[save_key] = handle
+    return handle
 
 
 async def detach_dungeon_from_session(
@@ -126,5 +169,12 @@ async def detach_dungeon_from_session(
     room owns the store lifecycle (spec §8 / dossier §9)."""
     if handle is None:
         return
+    # Clear the §14.D save claim (reverse-lookup by handle identity — the
+    # registry holds exactly one entry per live save; detach takes only the
+    # handle, and LookaheadWorkerHandle is untouchable per the hard
+    # constraint, so we cannot stash the key on it).
+    for key, claimed in list(_ATTACHED_SAVES.items()):
+        if claimed is handle:
+            del _ATTACHED_SAVES[key]
     handle.unregister()
     await handle.drain()

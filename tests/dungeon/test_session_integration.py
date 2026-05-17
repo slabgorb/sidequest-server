@@ -145,3 +145,47 @@ async def test_attach_is_idempotent_reuses_persisted_seed(
 
     assert seed1 == seed2, "reopen must reuse the frozen campaign_seed"
     assert map1 == map2, "reopen must NOT re-seed (idempotent bootstrap)"
+
+
+async def test_concurrent_attach_same_save_raises_loud_then_reattaches_after_detach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§14.D: a second attach for an already-attached save raises loud
+    (concurrent sessions on one save would double-register — a contract
+    violation, not an upsert). After detach, a fresh attach for that save
+    succeeds (sequential reopen is unaffected)."""
+    from sidequest.dungeon import session_integration
+    from tests.dungeon.test_materializer import _reflecting_sdk_client
+
+    monkeypatch.setattr(
+        session_integration, "build_llm_client", _reflecting_sdk_client
+    )
+    store = _sqlite_store()
+    kw = dict(
+        store=store,
+        snapshot=_snapshot(),
+        genre_pack=_real_pack(),
+        genre_slug="caverns_and_claudes",
+        world_slug="beneath_sunden",
+        world_dir=_beneath_sunden_world_dir(),
+    )
+    h1 = await session_integration.attach_dungeon_to_session(**kw)
+    assert h1 is not None
+    assert frontier_hook.registered_observer_count() == 1
+
+    with pytest.raises(RuntimeError, match="already attached"):
+        await session_integration.attach_dungeon_to_session(
+            **dict(kw, snapshot=_snapshot())
+        )
+    assert frontier_hook.registered_observer_count() == 1
+
+    await session_integration.detach_dungeon_from_session(h1)
+    assert frontier_hook.registered_observer_count() == 0
+
+    h2 = await session_integration.attach_dungeon_to_session(
+        **dict(kw, snapshot=_snapshot())
+    )
+    assert h2 is not None
+    assert frontier_hook.registered_observer_count() == 1
+    await session_integration.detach_dungeon_from_session(h2)
+    assert frontier_hook.registered_observer_count() == 0
