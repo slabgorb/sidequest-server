@@ -248,16 +248,11 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
     assert frontier_a, "expansion 1 commit did not derive any frontier edges"
     target_region = frontier_a[0].from_region_id  # a real exp001.r* region
 
-    snap_a = GameSnapshot(
-        genre_slug="caverns_and_claudes", world_slug="beneath_sunden"
-    )
+    snap_a = GameSnapshot(genre_slug="caverns_and_claudes", world_slug="beneath_sunden")
     snap_a.current_region = "entrance"
     snap_a.apply_world_patch(WorldStatePatch(current_region=target_region))
     # No worker registered: only the original expansion 1 exists.
-    exp_ids_a = {
-        n.expansion_id
-        for n in store_a.load_map(entrance_id="entrance").nodes.values()
-    }
+    exp_ids_a = {n.expansion_id for n in store_a.load_map(entrance_id="entrance").nodes.values()}
     assert 2 not in exp_ids_a, (
         "a look-ahead expansion 2 was committed with NO worker registered "
         "— the wiring test is circular / the seam fires without a consumer"
@@ -283,9 +278,7 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
         lookahead_breadth=1,
     )
     try:
-        snap_b = GameSnapshot(
-            genre_slug="caverns_and_claudes", world_slug="beneath_sunden"
-        )
+        snap_b = GameSnapshot(genre_slug="caverns_and_claudes", world_slug="beneath_sunden")
         snap_b.current_region = "entrance"
         # THE PRODUCTION PATH: a narrator-shaped WorldStatePatch moving the
         # party into a region with rooted unexpanded frontier edges, applied
@@ -301,10 +294,7 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
     finally:
         obs.unregister()
 
-    exp_ids_b = {
-        n.expansion_id
-        for n in store_b.load_map(entrance_id="entrance").nodes.values()
-    }
+    exp_ids_b = {n.expansion_id for n in store_b.load_map(entrance_id="entrance").nodes.values()}
     assert 2 in exp_ids_b, (
         "the look-ahead worker did NOT materialize the next expansion from "
         "the real apply_world_patch region-transition path — Task 7's "

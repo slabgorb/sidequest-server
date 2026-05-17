@@ -412,8 +412,7 @@ class TestMaterializePipelineSpans:
         for child_name in expected_children:
             child_spans = [s for s in finished if s.name == child_name]
             assert child_spans, (
-                f"Stage span {child_name!r} not emitted. "
-                f"All span names: {span_names}"
+                f"Stage span {child_name!r} not emitted. All span names: {span_names}"
             )
 
         # Each child's parent must be the dungeon.materialize parent span
@@ -421,8 +420,7 @@ class TestMaterializePipelineSpans:
         for child_name in expected_children:
             child_span = next(s for s in finished if s.name == child_name)
             assert child_span.parent is not None, (
-                f"{child_name!r} has no parent — it must be nested under "
-                f"dungeon.materialize"
+                f"{child_name!r} has no parent — it must be nested under dungeon.materialize"
             )
             assert child_span.parent.span_id == parent_context_span_id, (
                 f"{child_name!r}.parent.span_id != dungeon.materialize span_id — "
@@ -642,9 +640,7 @@ class TestStageDesign:
                     f"span[{k!r}] = {span_attrs[k]!r}, expected JSON of {v!r}"
                 )
             else:
-                assert span_attrs[k] == v, (
-                    f"span[{k!r}] = {span_attrs[k]!r}, expected {v!r}"
-                )
+                assert span_attrs[k] == v, f"span[{k!r}] = {span_attrs[k]!r}, expected {v!r}"
 
         # Success path: the routed extract's failure markers read None
         # (graceful-get idiom — harmless; no error/failing attrs were set).
@@ -692,7 +688,10 @@ class TestStageDesign:
 
         _mat_module.generate_expansion = _always_fail  # type: ignore[assignment]
         try:
-            with pytest.raises(ExpansionGenerationError) as exc_info, dungeon_materialize_design_span(expansion_id=request.expansion_id) as span:
+            with (
+                pytest.raises(ExpansionGenerationError) as exc_info,
+                dungeon_materialize_design_span(expansion_id=request.expansion_id) as span,
+            ):
                 _mat_module._stage_design(request, graph=graph, palette=palette, span=span)
         finally:
             _mat_module.generate_expansion = original_gen  # type: ignore[assignment]
@@ -722,11 +721,8 @@ class TestStageDesign:
             f"Routed extract must surface 'error' on the failure path "
             f"(GM-panel lie-detector); got fields: {fields}"
         )
-        assert fields.get("failing") == json.dumps(
-            ["two_independent_entries"], sort_keys=True
-        ), (
-            f"Routed extract must surface 'failing' on the failure path; "
-            f"got fields: {fields}"
+        assert fields.get("failing") == json.dumps(["two_independent_entries"], sort_keys=True), (
+            f"Routed extract must surface 'failing' on the failure path; got fields: {fields}"
         )
 
     # ---- Test 3: theme_pool is depth-filtered ----
@@ -776,8 +772,7 @@ class TestStageDesign:
             f"got pool: {pool}"
         )
         assert DEEP_ID in pool, (
-            f"Deep theme {DEEP_ID!r} (unbounded) must be in theme_pool; "
-            f"got pool: {pool}"
+            f"Deep theme {DEEP_ID!r} (unbounded) must be in theme_pool; got pool: {pool}"
         )
 
     # ---- Test 4: empty theme_pool raises loudly ----
@@ -812,7 +807,10 @@ class TestStageDesign:
         # depth_score=50.0 — far beyond the theme's band
         request = self._make_request(depth_score=50.0)
 
-        with pytest.raises(ValueError, match="[Tt]heme|depth|empty"), dungeon_materialize_design_span(expansion_id=request.expansion_id) as span:
+        with (
+            pytest.raises(ValueError, match="[Tt]heme|depth|empty"),
+            dungeon_materialize_design_span(expansion_id=request.expansion_id) as span,
+        ):
             _mat_module._stage_design(request, graph=graph, palette=palette, span=span)
 
 
@@ -934,16 +932,12 @@ class TestStageFill:
             "t_built": _theme_for_class("t_built", "built"),
         }
         palette = ThemePalette(themes=themes)
-        expansion = _expansion_with_themes(
-            "t_organic", "t_laby", "t_struct", "t_built"
-        )
+        expansion = _expansion_with_themes("t_organic", "t_laby", "t_struct", "t_built")
         request = _make_request_task3()
 
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
-            with dungeon_materialize_fill_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
                 result = _mat_module._stage_fill(
                     request, expansion=expansion, palette=palette, span=span
                 )
@@ -960,9 +954,7 @@ class TestStageFill:
         # The routed span payload (what the GM panel renders) must surface
         # the per-region algorithm — not just the in-memory result.
         finished = exporter.get_finished_spans()
-        fill_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL
-        ]
+        fill_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL]
         assert fill_spans, "dungeon.materialize.fill span not emitted"
         route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL]
         fields = route.extract(fill_spans[0])  # type: ignore[arg-type]
@@ -1014,21 +1006,15 @@ class TestStageFill:
         try:
             with (
                 pytest.raises(ValueError, match="unknown interior algorithm"),
-                dungeon_materialize_fill_span(
-                    expansion_id=request.expansion_id
-                ) as span,
+                dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span,
             ):
-                _mat_module._stage_fill(
-                    request, expansion=expansion, palette=palette, span=span
-                )
+                _mat_module._stage_fill(request, expansion=expansion, palette=palette, span=span)
         finally:
             _spans_mod.tracer = original_tracer_fn
 
         # The fill span must carry the failure marker (lie-detector visibility)
         finished = exporter.get_finished_spans()
-        fill_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL
-        ]
+        fill_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL]
         assert fill_spans, "fill span must be emitted even on failure"
         route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL]
         fields = route.extract(fill_spans[0])  # type: ignore[arg-type]
@@ -1053,20 +1039,14 @@ class TestStageFill:
         try:
             with (
                 pytest.raises(ValueError, match="t_absent"),
-                dungeon_materialize_fill_span(
-                    expansion_id=request.expansion_id
-                ) as span,
+                dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span,
             ):
-                _mat_module._stage_fill(
-                    request, expansion=expansion, palette=palette, span=span
-                )
+                _mat_module._stage_fill(request, expansion=expansion, palette=palette, span=span)
         finally:
             _spans_mod.tracer = original_tracer_fn
 
         finished = exporter.get_finished_spans()
-        fill_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL
-        ]
+        fill_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL]
         assert fill_spans
         attrs = dict(fill_spans[0].attributes or {})
         assert "error" in attrs
@@ -1093,9 +1073,7 @@ class TestStageFill:
 
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
-            with dungeon_materialize_fill_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
                 result = _mat_module._stage_fill(
                     request, expansion=expansion, palette=palette, span=span
                 )
@@ -1107,15 +1085,10 @@ class TestStageFill:
         assert by_region["exp001.r1"].braid_ratio == 0.3
 
         finished = exporter.get_finished_spans()
-        fill_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL
-        ]
+        fill_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_FILL]
         route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL]
         fields = route.extract(fill_spans[0])  # type: ignore[arg-type]
-        ratio_by_region = {
-            r["region_id"]: r["braid_ratio"]
-            for r in json.loads(fields["regions"])
-        }
+        ratio_by_region = {r["region_id"]: r["braid_ratio"] for r in json.loads(fields["regions"])}
         assert ratio_by_region == {"exp001.r0": 0.0, "exp001.r1": 0.3}, (
             "span must record the actually-applied braid_ratio per region "
             "(0.0 trap, 0.3 maze) — proving no silent default"
@@ -1130,18 +1103,14 @@ class TestStageFill:
             dungeon_materialize_fill_span,
         )
 
-        palette = ThemePalette(
-            themes={"t_organic": _theme_for_class("t_organic", "organic")}
-        )
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
 
         def _run() -> Any:
             expansion = _expansion_with_themes("t_organic")
             request = _make_request_task3(campaign_seed=99, expansion_id=2)
             _exp, orig, mod = _setup_otel_task3()
             try:
-                with dungeon_materialize_fill_span(
-                    expansion_id=request.expansion_id
-                ) as span:
+                with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
                     return _mat_module._stage_fill(
                         request, expansion=expansion, palette=palette, span=span
                     )
@@ -1169,9 +1138,7 @@ class TestStageFill:
         orig_h = _mat_module.DEFAULT_INTERIOR_HEIGHT
         _mat_module.DEFAULT_INTERIOR_WIDTH = 7  # type: ignore[misc]
         _mat_module.DEFAULT_INTERIOR_HEIGHT = 7  # type: ignore[misc]
-        palette = ThemePalette(
-            themes={"t_built": _theme_for_class("t_built", "built")}
-        )
+        palette = ThemePalette(themes={"t_built": _theme_for_class("t_built", "built")})
         expansion = _expansion_with_themes("t_built")
         request = _make_request_task3()
         try:
@@ -1180,13 +1147,9 @@ class TestStageFill:
                     ValueError,
                     match="roomcorridor.*floor|ROOMCORRIDOR_MIN_DIM|7",
                 ),
-                dungeon_materialize_fill_span(
-                    expansion_id=request.expansion_id
-                ) as span,
+                dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span,
             ):
-                _mat_module._stage_fill(
-                    request, expansion=expansion, palette=palette, span=span
-                )
+                _mat_module._stage_fill(request, expansion=expansion, palette=palette, span=span)
         finally:
             _mat_module.DEFAULT_INTERIOR_WIDTH = orig_w  # type: ignore[misc]
             _mat_module.DEFAULT_INTERIOR_HEIGHT = orig_h  # type: ignore[misc]
@@ -1201,9 +1164,7 @@ class TestStageFill:
             dungeon_materialize_fill_span,
         )
 
-        palette = ThemePalette(
-            themes={"t_organic": _theme_for_class("t_organic", "organic")}
-        )
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
         expansion = _expansion_with_themes("t_organic")
         request = _make_request_task3()
 
@@ -1215,13 +1176,9 @@ class TestStageFill:
         try:
             with (
                 pytest.raises(ValueError, match="24301|fixed point|0x5EED"),
-                dungeon_materialize_fill_span(
-                    expansion_id=request.expansion_id
-                ) as span,
+                dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span,
             ):
-                _mat_module._stage_fill(
-                    request, expansion=expansion, palette=palette, span=span
-                )
+                _mat_module._stage_fill(request, expansion=expansion, palette=palette, span=span)
         finally:
             _mat_module._region_interior_seed = orig_mixer  # type: ignore[assignment]
 
@@ -1500,9 +1457,7 @@ class TestStageCurate:
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         _mat.assemble_region = _spy  # type: ignore[assignment]
         try:
-            with dungeon_materialize_curate_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
                 # Capture the pre-curation manifest the stage assembled so
                 # the determinism assertion is up-to-the-seam.
                 m0 = original(
@@ -1591,9 +1546,12 @@ class TestStageCurate:
 
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
-            with pytest.raises(Exception) as exc_info, dungeon_materialize_curate_span(  # noqa: PT011
-                expansion_id=request.expansion_id
-            ) as span:
+            with (
+                pytest.raises(Exception) as exc_info,
+                dungeon_materialize_curate_span(  # noqa: PT011
+                    expansion_id=request.expansion_id
+                ) as span,
+            ):
                 await _mat._stage_curate(
                     request,
                     bundle=bundle,
@@ -1611,9 +1569,7 @@ class TestStageCurate:
         assert not isinstance(exc_info.value, NotImplementedError)
 
         finished = exporter.get_finished_spans()
-        curate_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE
-        ]
+        curate_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE]
         assert curate_spans, "curate span must be emitted even on failure"
         route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE]
         fields = route.extract(curate_spans[0])  # type: ignore[arg-type]
@@ -1643,9 +1599,7 @@ class TestStageCurate:
         # passes is_first_band_entry=True, so the manifest is GUARANTEED a
         # big_bad — both the wandering table AND a big_bad cross the
         # CR→Edge seam (verified: race=dwarf yields big_bad 'Wight').
-        request, palette, expansion, fill_result, look = _curate_inputs(
-            depth_score=0.5
-        )
+        request, palette, expansion, fill_result, look = _curate_inputs(depth_score=0.5)
         rid0 = expansion.new_nodes[0].id
 
         from sidequest.dungeon.materializer import assemble_region
@@ -1670,9 +1624,7 @@ class TestStageCurate:
 
         _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
-            with dungeon_materialize_curate_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
                 result = await _mat._stage_curate(
                     request,
                     bundle=bundle,
@@ -1694,8 +1646,7 @@ class TestStageCurate:
         assert creatures, "curated region must carry its creatures"
         for c in creatures:
             assert isinstance(c.edge, EdgePool), (
-                f"every corpus creature must emerge with an EdgePool; "
-                f"{c.name!r} has {type(c.edge)}"
+                f"every corpus creature must emerge with an EdgePool; {c.name!r} has {type(c.edge)}"
             )
             assert c.edge.max >= 1 and c.edge.current == c.edge.max
             # No raw cr/hp may leak onto the curated creature object.
@@ -1739,9 +1690,7 @@ class TestStageCurate:
         # pre-existing node too (mirrors the Task-5 coordinator-threads
         # precedent).
         graph = _make_seed_graph("entrance")
-        graph.nodes["entrance"] = RegionNode(
-            id="entrance", expansion_id=0, theme=theme_id
-        )
+        graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
 
         # The REAL _stage_design generates region ids dynamically, so the
         # curation verdict cannot be precomputed. The reflecting client
@@ -1814,9 +1763,7 @@ def _theme_with_set_piece(
             "name": "The Sünden Altar",
             "telegraph": "A black altar slick with old blood.",
             "outcome": "The ceiling groans and the dark answers.",
-            "slots": [
-                {"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}
-            ],
+            "slots": [{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}],
             "trope_components": [{"trope_id": t, "params": {}} for t in trope_ids],
             "quest_components": [{"quest_id": q, "params": {}} for q in quest_ids],
         }
@@ -1892,9 +1839,7 @@ def _attach_pack(*trope_ids: str) -> Any:
     start_trope_components use)."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(
-        tropes=[SimpleNamespace(id=t) for t in trope_ids]
-    )
+    return SimpleNamespace(tropes=[SimpleNamespace(id=t) for t in trope_ids])
 
 
 def _fresh_snapshot() -> Any:
@@ -1967,9 +1912,7 @@ class TestStageAttach:
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
-            with dungeon_materialize_attach_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_attach_span(expansion_id=request.expansion_id) as span:
                 result = _mat._stage_attach(
                     request,
                     graph=graph,
@@ -2003,14 +1946,10 @@ class TestStageAttach:
         # exact attribute set); the stage writes EXACTLY the 4 DepthReport
         # keys on success — no `stage` attr, no extra keys.
         finished = exporter.get_finished_spans()
-        attach_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH
-        ]
+        attach_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH]
         assert attach_spans, "dungeon.materialize.attach span not emitted"
         span_attrs = dict(attach_spans[0].attributes or {})
-        stage_written = {
-            k: v for k, v in span_attrs.items() if k != "expansion_id"
-        }
+        stage_written = {k: v for k, v in span_attrs.items() if k != "expansion_id"}
         assert set(stage_written.keys()) == set(report_dict.keys()), (
             f"attach span stage-written key-set mismatch (must be EXACTLY "
             f"DepthReport.as_dict()).\n"
@@ -2018,9 +1957,7 @@ class TestStageAttach:
             f"  DepthReport keys: {sorted(report_dict)}"
         )
         for k, v in report_dict.items():
-            assert span_attrs[k] == v, (
-                f"span[{k!r}]={span_attrs[k]!r}, expected {v!r}"
-            )
+            assert span_attrs[k] == v, f"span[{k!r}]={span_attrs[k]!r}, expected {v!r}"
 
         # The routed extract surfaces the 4 DepthReport keys + a null
         # failure marker on the success path (graceful-get idiom).
@@ -2073,9 +2010,7 @@ class TestStageAttach:
         theme_id = "deep_ossuary"
         palette = ThemePalette(
             themes={
-                theme_id: _theme_with_set_piece(
-                    theme_id, trope_ids=trope_ids, quest_ids=quest_ids
-                )
+                theme_id: _theme_with_set_piece(theme_id, trope_ids=trope_ids, quest_ids=quest_ids)
             }
         )
         graph = _make_seed_graph("entrance")
@@ -2083,9 +2018,7 @@ class TestStageAttach:
         # any pre-existing node (the seed entrance theme is "tomb").
         from sidequest.dungeon.region_graph import RegionNode
 
-        graph.nodes["entrance"] = RegionNode(
-            id="entrance", expansion_id=0, theme=theme_id
-        )
+        graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
         expansion = _expansion_off_seed(theme_id=theme_id, expansion_id=1)
         curation = _curation_for(expansion)
         snapshot = _fresh_snapshot()
@@ -2111,9 +2044,7 @@ class TestStageAttach:
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
-            with dungeon_materialize_attach_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with dungeon_materialize_attach_span(expansion_id=request.expansion_id) as span:
                 result = _mat._stage_attach(
                     request,
                     graph=graph,
@@ -2161,12 +2092,8 @@ class TestStageAttach:
         tropes = ("cave_in", "dripping_water", "ghost_light")
         quests = ("deny_the_altar", "find_the_relic", "free_the_captive")
 
-        store_low, _ = self._run_attach(
-            burst_magnitude=1, trope_ids=tropes, quest_ids=quests
-        )
-        store_high, _ = self._run_attach(
-            burst_magnitude=100, trope_ids=tropes, quest_ids=quests
-        )
+        store_low, _ = self._run_attach(burst_magnitude=1, trope_ids=tropes, quest_ids=quests)
+        store_high, _ = self._run_attach(burst_magnitude=100, trope_ids=tropes, quest_ids=quests)
 
         low_count = len(store_low.open_threads())
         high_count = len(store_high.open_threads())
@@ -2229,23 +2156,17 @@ class TestStageAttach:
         )
 
         theme_id = "broken_vault"
-        palette = ThemePalette(
-            themes={theme_id: _theme_with_set_piece(theme_id)}
-        )
+        palette = ThemePalette(themes={theme_id: _theme_with_set_piece(theme_id)})
 
         # Seed graph: just the entrance (UNSCORED).
         graph = RegionGraph(entrance_id="entrance")
-        graph.add_node(
-            RegionNode(id="entrance", expansion_id=0, theme=theme_id)
-        )
+        graph.add_node(RegionNode(id="entrance", expansion_id=0, theme=theme_id))
 
         # A degenerate expansion: a new region with NO edge connecting it
         # to the explored graph → attach_expansion's global "connected"
         # invariant raises loudly (No Silent Fallbacks).
         orphan = RegionNode(id="exp001.r0", expansion_id=1, theme=theme_id)
-        bad_expansion = Expansion(
-            expansion_id=1, new_nodes=[orphan], new_edges=[]
-        )
+        bad_expansion = Expansion(expansion_id=1, new_nodes=[orphan], new_edges=[])
         curation = _curation_for(bad_expansion)
         snapshot = _fresh_snapshot()
         pack = _attach_pack("cave_in")
@@ -2266,11 +2187,10 @@ class TestStageAttach:
             # NotImplementedError. (span + pytest.raises combined into one
             # `with` — the Task-2 precedent idiom at
             # test_design_stage_propagates_expansion_generation_error_with_span.)
-            with pytest.raises(
-                ValueError, match="disconnected"
-            ) as exc_info, dungeon_materialize_attach_span(
-                expansion_id=request.expansion_id
-            ) as span:
+            with (
+                pytest.raises(ValueError, match="disconnected") as exc_info,
+                dungeon_materialize_attach_span(expansion_id=request.expansion_id) as span,
+            ):
                 _mat._stage_attach(
                     request,
                     graph=graph,
@@ -2300,9 +2220,7 @@ class TestStageAttach:
         # The span carries the ROUTED failure marker (lie-detector
         # visibility — the GM panel must see the abort, the Task-2 lesson).
         finished = exporter.get_finished_spans()
-        attach_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH
-        ]
+        attach_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_ATTACH]
         assert attach_spans, "attach span not emitted on the failure path"
         route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_ATTACH]
         fields = route.extract(attach_spans[0])  # type: ignore[arg-type]
@@ -2349,9 +2267,7 @@ class TestStageAttach:
         graph = _make_seed_graph("entrance")
         # Re-theme the seed entrance so palette.themes[node.theme] resolves
         # for the pre-existing node too (seed entrance theme is "tomb").
-        graph.nodes["entrance"] = RegionNode(
-            id="entrance", expansion_id=0, theme=theme_id
-        )
+        graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
 
         bundle = _real_cookbook_bundle()
         snapshot = _fresh_snapshot()
@@ -2476,9 +2392,7 @@ def _seed_graph_themed(theme_id: str) -> Any:
     from sidequest.dungeon.region_graph import RegionNode
 
     graph = _make_seed_graph("entrance")
-    graph.nodes["entrance"] = RegionNode(
-        id="entrance", expansion_id=0, theme=theme_id
-    )
+    graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
     return graph
 
 
@@ -2560,9 +2474,7 @@ class TestStageCommit:
         assert reloaded.nodes["entrance"].expansion_id == 0
         assert reloaded.nodes["entrance"].depth_score == 0.0
         # Generated expansion regions present (expansion_id == 1).
-        gen_regions = [
-            n for n in reloaded.nodes.values() if n.expansion_id == 1
-        ]
+        gen_regions = [n for n in reloaded.nodes.values() if n.expansion_id == 1]
         assert gen_regions, "generated expansion regions not persisted"
 
         # New unexpanded frontier edges were derived from the attached
@@ -2654,9 +2566,7 @@ class TestStageCommit:
             "orphan complication-ledger rows survived — the attach-written "
             "threads were not rolled back with the rest of the txn"
         )
-        assert store.load_mutations() == [], (
-            "orphan setpiece-state mutation rows survived rollback"
-        )
+        assert store.load_mutations() == [], "orphan setpiece-state mutation rows survived rollback"
 
     async def test_generator_version_bump_does_not_regenerate_frozen_region(
         self,
@@ -2701,19 +2611,13 @@ class TestStageCommit:
         store.ensure_schema()
 
         # Commit expansion 1 under the current generator version.
-        await _materialize_full(
-            graph=graph, palette=palette, store=store, expansion_id=1
-        )
+        await _materialize_full(graph=graph, palette=palette, store=store, expansion_id=1)
         committed_versions = {
             r["region_id"]: r["generator_version"]
-            for r in conn.execute(
-                "SELECT region_id, generator_version FROM dungeon_map"
-            ).fetchall()
+            for r in conn.execute("SELECT region_id, generator_version FROM dungeon_map").fetchall()
         }
         assert committed_versions, "no generator_version stamped"
-        assert set(committed_versions.values()) == {
-            _persistence_mod.GENERATOR_VERSION
-        }
+        assert set(committed_versions.values()) == {_persistence_mod.GENERATOR_VERSION}
 
         # FREEZE: re-committing the SAME expansion_id (same region ids on a
         # fresh graph) must raise PersistError — the region is on disk and
@@ -2728,9 +2632,7 @@ class TestStageCommit:
             )
         after_refreeze = {
             r["region_id"]: r["generator_version"]
-            for r in conn.execute(
-                "SELECT region_id, generator_version FROM dungeon_map"
-            ).fetchall()
+            for r in conn.execute("SELECT region_id, generator_version FROM dungeon_map").fetchall()
         }
         assert after_refreeze == committed_versions, (
             "a frozen region's bytes changed on a refused re-commit — the "
@@ -2748,9 +2650,7 @@ class TestStageCommit:
         _persistence_mod.GENERATOR_VERSION = "plan5.v999-BUMPED"
         try:
             live = store.load_map(entrance_id="entrance")
-            exp1_ids = [
-                n.id for n in live.nodes.values() if n.expansion_id == 1
-            ]
+            exp1_ids = [n.id for n in live.nodes.values() if n.expansion_id == 1]
             assert len(exp1_ids) >= 1
             # Two new regions wired to >=2 explored regions (entrance + an
             # expansion-1 region) so attach_expansion's connected+loopful
@@ -2764,8 +2664,7 @@ class TestStageCommit:
                 new_edges=[
                     RegionEdge(a="entrance", b="exp002.r0", kind="corridor"),
                     RegionEdge(a="exp002.r0", b="exp002.r1", kind="stairs"),
-                    RegionEdge(a="exp002.r1", b=anchor, kind="secret",
-                               hidden=True),
+                    RegionEdge(a="exp002.r1", b=anchor, kind="secret", hidden=True),
                 ],
             )
             live.add_node(r0)
@@ -2790,9 +2689,7 @@ class TestStageCommit:
             original_tracer_fn = _spans_module.tracer
             _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
             try:
-                with dungeon_materialize_commit_span(
-                    expansion_id=2
-                ) as span2:
+                with dungeon_materialize_commit_span(expansion_id=2) as span2:
                     _stage_commit(
                         request2,
                         graph=live,
@@ -2807,8 +2704,7 @@ class TestStageCommit:
             exp2_versions = {
                 r["generator_version"]
                 for r in conn.execute(
-                    "SELECT generator_version FROM dungeon_map "
-                    "WHERE expansion_id = 2"
+                    "SELECT generator_version FROM dungeon_map WHERE expansion_id = 2"
                 ).fetchall()
             }
             assert exp2_versions == {"plan5.v999-BUMPED"}, (
@@ -2820,8 +2716,7 @@ class TestStageCommit:
             exp1_versions = {
                 r["generator_version"]
                 for r in conn.execute(
-                    "SELECT generator_version FROM dungeon_map "
-                    "WHERE expansion_id IN (0, 1)"
+                    "SELECT generator_version FROM dungeon_map WHERE expansion_id IN (0, 1)"
                 ).fetchall()
             }
             assert exp1_versions == {original_version}, (
@@ -2879,9 +2774,7 @@ class TestStageCommit:
 
         finished = exporter.get_finished_spans()
 
-        commit_spans = [
-            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_COMMIT
-        ]
+        commit_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_COMMIT]
         assert commit_spans, "dungeon.materialize.commit span not emitted"
         crow = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_COMMIT].extract(
             commit_spans[0]  # type: ignore[arg-type]
@@ -2894,9 +2787,7 @@ class TestStageCommit:
         assert crow.get("error") is None
         assert crow.get("reason") is None
 
-        expand_spans = [
-            s for s in finished if s.name == SPAN_FRONTIER_EXPAND
-        ]
+        expand_spans = [s for s in finished if s.name == SPAN_FRONTIER_EXPAND]
         assert expand_spans, (
             "frontier.expand not emitted — the commit stage must emit one "
             "per new unexpanded frontier edge (spec §8)"
