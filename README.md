@@ -26,7 +26,7 @@ From the orchestrator root: `just server`, `just server-test`, `just server-chec
 - **uv** — Dependency management; `pyproject.toml` is the source of truth
 - **Python 3.12+**
 
-LLM calls go through the **Claude CLI** subprocess (`claude -p`, ADR-001) — no Anthropic SDK in the dependency graph. Media generation goes over a Unix socket to `sidequest-daemon` (ADR-035).
+Narrator LLM calls go through the **Anthropic Python SDK** by default (`anthropic>=0.40`, ADR-101, supersedes ADR-001) — prompt caching, native tool-use, per-call model routing. `SIDEQUEST_LLM_BACKEND` selects the backend (default `anthropic_sdk`); `claude -p` (`claude_client.py`) and Ollama remain opt-in non-default backends, and `claude -p` still serves some non-narrator jobs. Media generation goes over a Unix socket to `sidequest-daemon` (ADR-035).
 
 ## Package layout
 
@@ -35,7 +35,7 @@ sidequest/
 ├── protocol/         # GameMessage, typed payloads (pydantic v2)
 ├── server/           # FastAPI app, WebSocket, dispatch, sessions, watcher
 ├── handlers/         # Per-message-type dispatch handlers
-├── agents/           # claude -p subprocess orchestration (narrator + auxiliaries)
+├── agents/           # Anthropic SDK narrator (default) + claude -p/Ollama opt-in, auxiliaries
 ├── game/             # State, characters, encounters, tropes, turns, persistence (~70 modules)
 ├── genre/            # YAML loader, layered genre/world pack models
 ├── audio/            # Server-side music + SFX coordination
@@ -84,7 +84,7 @@ Run via `uv run python -m sidequest.cli.<name>` or the installed console scripts
 
 ## Key ADRs
 
-- **ADR-098** Stateless narrator turns — `claude -p` invoked fresh each turn with a bounded prompt (no `--resume`, no `narrator_session_id`). Supersedes ADR-066's persistent-session model and the §8 warm-reboot recovery path. Streaming narration is default-on (`SIDEQUEST_NARRATOR_STREAMING=1`).
+- **ADR-098** Stateless narrator turns — the narrator is invoked fresh each turn with a bounded prompt (no `--resume`, no `narrator_session_id`); on the default `anthropic_sdk` backend (ADR-101) this is a single SDK call per turn. Supersedes ADR-066's persistent-session model and the §8 warm-reboot recovery path. Streaming narration is opt-in and **default-off** (`SIDEQUEST_NARRATOR_STREAMING=1` enables it and routes to the legacy `claude -p` path).
 - **ADR-067** Unified narrator agent — one narrator handles exploration, dialogue, combat, and chase narration. Auxiliary subsystem agents (chassis_voice, distinctive_detail, npc_agency, reflect_absence) run off the critical path.
 - **ADR-059** Monster Manual — NPCs and encounters pre-generated server-side via CLI and injected into the narrator's `<game_state>` block. Narrator-side tool calling was abandoned (currently drift — ADR-087 P0 RESTORE).
 - **ADR-038** WebSocket transport — reader/writer task split, broadcast channels.

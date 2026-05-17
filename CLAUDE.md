@@ -64,8 +64,13 @@ The Rust codebase is preserved read-only at <https://github.com/slabgorb/sideque
 for historical reference; older ADRs that show Rust code are historical illustration
 only — see `orc-quest/docs/adr/README.md` for the translation table. New backend code
 goes in Python. Media services (`sidequest-daemon`) remain Python for inference
-library maturity (Z-Image / ACE-Step). Claude calls go through Python subprocesses
-to the Claude CLI per ADR-001. TTS was removed from the system in 2026-04.
+library maturity (Z-Image / ACE-Step). The narrator LLM path uses the **Anthropic
+Python SDK** by default per **ADR-101** (which supersedes ADR-001): backend
+selection is `SIDEQUEST_LLM_BACKEND`, defaulting to `anthropic_sdk` — see
+`sidequest/agents/llm_factory.py` and `sidequest/agents/anthropic_sdk_client.py`.
+The `claude -p` CLI subprocess (`claude_client.py`) and Ollama remain opt-in
+non-default backends, and `claude -p` still serves some non-narrator jobs (e.g.
+the dungeon "curate" stage). TTS was removed from the system in 2026-04.
 
 ## OTEL Observability Principle
 
@@ -109,7 +114,7 @@ sidequest/
 ├── protocol/         # GameMessage discriminated union, typed payloads
 ├── server/           # FastAPI app, WebSocket, dispatch, sessions, watcher
 ├── handlers/         # Per-message-type dispatch handlers
-├── agents/           # claude -p subprocess (unified narrator + auxiliaries)
+├── agents/           # Anthropic SDK narrator (default) + claude -p/Ollama opt-in backends
 ├── game/             # ~70 modules — state, combat, chase, NPCs, OCEAN, lore, etc.
 ├── genre/            # YAML loader, layered genre/world pack models
 ├── audio/            # Music + SFX coordination
@@ -138,10 +143,10 @@ sidequest.server
 
 | Domain | ADRs |
 |--------|------|
-| Core architecture | 001 (Claude CLI only), 002 (SOUL principles), 005 (background-first), 006 (graceful degradation) |
+| Core architecture | **101 (Anthropic SDK as narrator backend — supersedes 001)**, 001 (Claude CLI only — *superseded by 101*), 002 (SOUL principles), 005 (background-first), 006 (graceful degradation) |
 | Genre packs | 003 (pack architecture), 004 (lazy binding) |
-| Prompt engineering | 008 (three-tier taxonomy), 009 (attention-aware zones), 066 (persistent Opus sessions, Full/Delta tier) |
-| Agent system | 011 (JSON patches), 012 (session mgmt), 057 (narrator-crunch separation), 059 (monster manual server-side pregen), 067 (unified narrator agent — supersedes 010) |
+| Prompt engineering | 008 (three-tier taxonomy), 009 (attention-aware zones), 066 (persistent Opus sessions, Full/Delta tier — *superseded by 098*) |
+| Agent system | 011 (JSON patches), 012 (session mgmt), 057 (narrator-crunch separation), 059 (monster manual server-side pregen), 067 (unified narrator agent — supersedes 010), **098 (stateless narrator turns — supersedes 066)**, **102 (tool-use protocol for structured output — supersedes 039)** |
 | Characters | 007 (unified model), 014 (diamonds/coal), 015 (builder FSM), 016 (three-mode chargen), 080 (unified narrative weight) |
 | Encounters | 033 (confrontation engine), 077 (dogfight subsystem), 078 (edge/composure combat), 093 (confrontation difficulty calibration) |
 | World / NPCs | 018 (trope engine), 020 (NPC disposition), 022 (world maturity), 042 (OCEAN evolution), 055 (room graph navigation), 091 (culture-corpus Markov naming) |
@@ -149,9 +154,9 @@ sidequest.server
 | Narrative pacing | 024 (dual-track tension), 025 (pacing detection), 050 (image pacing throttle), 051 (two-tier turn counter — see DRIFT) |
 | Session persistence | 023 (state + recap) |
 | Protocol | 026 (client state mirror), 027 (reactive state messaging), 074 (dice resolution protocol), 076 (narration protocol collapse post-TTS) |
-| Multiplayer | 028 (perception rewriter), 036 (multiplayer turn coordination), 037 (shared/per-player state split), 053 (scenario system) |
+| Multiplayer | 028 (perception rewriter — *superseded by 104*), 036 (multiplayer turn coordination), 037 (shared/per-player state split), 053 (scenario system), 104 (perception filtering at the tool layer), 105 (broadcast-layer perception firewall) |
 | Transport / IPC | 035 (Unix socket IPC for Python sidecar), 038 (WebSocket transport), 046 (GPU memory budget), 047 (prompt injection sanitization) |
-| Telemetry | 031 (game watcher semantic telemetry), 058 (Claude subprocess OTEL passthrough), 090 (OTEL dashboard restoration) |
+| Telemetry | 031 (game watcher semantic telemetry), 058 (Claude subprocess OTEL passthrough — *superseded by 103*), 090 (OTEL dashboard restoration), 103 (native OTEL via tool registry) |
 | Media | 048 (lore RAG store, cross-process embedding), 050 (image pacing throttle), 086 (image-composition taxonomy) |
 | Tooling / harness | 092 (scene harness HTTP endpoint — dev-gated) |
 | Project lifecycle | 082 (port back to Python), 085 (tracker hygiene during port), 087 (post-port subsystem restoration) |
