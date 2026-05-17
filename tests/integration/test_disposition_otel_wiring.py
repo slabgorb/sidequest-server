@@ -104,7 +104,7 @@ async def test_npc_disposition_shift_publishes_state_transition(
 
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
-        world_slug="caverns_sunden",
+        world_slug="beneath_sunden",
         characters=[_make_pc("Hero")],
         npcs=[_make_npc("Bartender", disposition=10)],
     )
@@ -135,7 +135,7 @@ async def test_disposition_clamps_at_bounds_and_emits_actual_after(
 
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
-        world_slug="caverns_sunden",
+        world_slug="beneath_sunden",
         characters=[_make_pc("Hero")],
         npcs=[_make_npc("Friend", disposition=95)],
     )

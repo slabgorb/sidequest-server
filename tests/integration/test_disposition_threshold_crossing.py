@@ -112,7 +112,7 @@ async def _wait_for_event(
 def _apply_shift(npc_name: str, *, before: int, delta: int) -> tuple[GameSnapshot, int]:
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
-        world_slug="caverns_sunden",
+        world_slug="beneath_sunden",
         characters=[_make_pc("Hero")],
         npcs=[_make_npc(npc_name, disposition=before)],
     )
