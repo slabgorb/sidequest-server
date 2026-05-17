@@ -1265,6 +1265,7 @@ def _reflecting_sdk_client() -> Any:
             *,
             model: str,
             max_iterations: int = 8,
+            max_tokens: int = 4096,
             on_text_delta: Any = None,
         ) -> ToolingResult:
             prompt = messages[0].content
