@@ -48,6 +48,7 @@ from .dice import *  # noqa: F401, F403
 from .disposition import *  # noqa: F401, F403
 from .dogfight import *  # noqa: F401, F403
 from .dungeon_persist import *  # noqa: F401, F403
+from .dungeon_setpiece import *  # noqa: F401, F403
 from .emitter import Emitter  # noqa: F401
 from .encounter import *  # noqa: F401, F403
 from .interior import *  # noqa: F401, F403
