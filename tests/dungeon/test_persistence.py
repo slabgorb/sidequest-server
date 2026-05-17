@@ -367,8 +367,17 @@ def test_commit_and_ledger_emit_spans() -> None:
             captured.extend(s.name for s in spans)
             return super().export(spans)
 
+    from tests.dungeon.conftest import reset_otel_provider
+
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(_Capture()))
+    # OTEL 1.x gates set_tracer_provider behind a once-only guard. In a
+    # full-suite run an earlier conftest's init_tracer() already won that
+    # guard, so this set_tracer_provider() would be a silent no-op and the
+    # _Capture exporter never installs. Reset the guard first (test-infra
+    # only — production init_tracer() is the single legitimate runtime
+    # caller). See tests/dungeon/conftest.py for the full rationale.
+    reset_otel_provider()
     trace.set_tracer_provider(provider)
 
     g = _seed_graph()

@@ -570,13 +570,26 @@ def seed_quest_components(
 
 @dataclass
 class AttachReport:
-    """Span-ready contract — Plan 7's materializer turns this into
-    ``setpiece.attach`` OTEL attributes (mirrors GenerationReport.as_dict()
-    from invariants.py and DepthReport.as_dict() from depth.py).
+    """Structured attach output.
 
-    Key-set LOCKED (Decision K): any addition or removal breaks Plan 7's
-    attach span and the GM panel. Pinned by
-    test_attach_report_as_dict_key_set_locked.
+    TWO distinct surfaces, deliberately NOT the same shape:
+
+    * ``as_dict()`` — the byte-pinned, key-LOCKED ``setpiece.attach`` /
+      Plan-7 ``attach``-span OTEL contract (Decision K). EXACTLY the five
+      flat scalar keys ``{setpiece_id, region_id, tropes_started,
+      quests_seeded, threads_written}`` — mirrors GenerationReport.as_dict()
+      (invariants.py) and DepthReport.as_dict() (depth.py). ``rolled`` is
+      NOT in ``as_dict()``: a RolledSetPiece is a nested structure, not a
+      flat OTEL span attribute, and adding it would pollute the locked span
+      contract and break the GM panel. Any addition/removal here breaks
+      Plan 7's attach span — pinned by
+      test_attach_report_as_dict_key_set_locked.
+
+    * ``.rolled`` — the deterministic RolledSetPiece for these inputs.
+      spec §7 requires Plan 7 to FREEZE the exact rolled result into the
+      save and NEVER recompute it; if Task 4 discarded it Plan 7 could not
+      freeze it. This field carries it out so Plan 7's commit can persist
+      it. Read off the report object directly — NOT via ``as_dict()``.
     """
 
     setpiece_id: str
@@ -584,8 +597,20 @@ class AttachReport:
     tropes_started: int
     quests_seeded: int
     threads_written: int  # = tropes_started + quests_seeded
+    # spec §7 freeze target — NOT in as_dict(). default_factory mirrors the
+    # DepthReport/GenerationReport plain-dataclass-with-defaults precedent;
+    # attach_set_piece ALWAYS supplies the real rolled value (production never
+    # relies on the empty default — it is a data-carrier construction
+    # convenience, not a silent fallback in any live code path).
+    rolled: RolledSetPiece = field(default_factory=RolledSetPiece)
 
     def as_dict(self) -> dict:
+        """The LOCKED flat OTEL span contract (Decision K).
+
+        EXACTLY the five scalar keys — ``rolled`` is intentionally absent
+        (it is a nested structure Plan 7 freezes off ``.rolled``, not a
+        flat span attribute). Mirrors DepthReport.as_dict() precisely.
+        """
         return {
             "setpiece_id": self.setpiece_id,
             "region_id": self.region_id,
@@ -688,24 +713,35 @@ def attach_set_piece(
                                    region/depth context and threads this value.
 
     Returns:
-        AttachReport with locked key set (Decision K):
-        setpiece_id, region_id, tropes_started, quests_seeded, threads_written.
+        AttachReport. ``as_dict()`` is the locked flat span contract
+        (Decision K): setpiece_id, region_id, tropes_started, quests_seeded,
+        threads_written. ``report.rolled`` carries the deterministic
+        RolledSetPiece Plan 7 freezes into the save (spec §7, never
+        recomputed) — read off the object, NOT via as_dict().
 
     Raises:
         ValueError: if any TropeComponent.trope_id is not in pack_tropes
                     (content authoring bug — start_trope_components raises
                     loudly with a trope.start(failed=True) span).
-        PersistError: if a duplicate thread_id is written (genuine re-attach
-                      of the same set-piece — freeze-violation signal from
-                      Plan 5's open_thread; do NOT swallow).
+        PersistError: if a duplicate thread_id is written. A genuine
+                      re-attach with identical inputs on the same store
+                      raises PersistError on the FIRST duplicate thread_id
+                      (trope component_index 0) BEFORE any new rows land —
+                      partial writes cannot occur (Decision J: the caller
+                      owns the txn; re-attach is the caller's mistake and
+                      the loud raise is the spec §7 freeze-violation signal,
+                      NOT swallowed).
 
     This is the Plan-7 contract. Task 5 adds the mandatory wiring test
     binding to this signature.
     """
     from sidequest.telemetry.spans.dungeon_setpiece import setpiece_attach_span  # noqa: PLC0415
 
-    # Step 1: Roll all component slots.
-    roll_set_piece(
+    # Step 1: Roll all component slots. The RolledSetPiece is the
+    # deterministic attach output spec §7 requires Plan 7 to FREEZE into
+    # the save and NEVER recompute — it is carried out on AttachReport.rolled
+    # (NOT discarded; NOT in as_dict() — see AttachReport docstring).
+    rolled = roll_set_piece(
         campaign_seed=campaign_seed,
         expansion_id=expansion_id,
         region_id=region_id,
@@ -771,10 +807,11 @@ def attach_set_piece(
         store.open_thread(thread)
         threads_written += 1
 
-    # Quest pending: component_index is offset past the trope count so that
-    # a trope and a quest at the same list position within their respective
-    # lists get distinct thread_ids (the discriminator is also prefixed by
-    # kind="quest" vs "trope", so this is belt-and-braces).
+    # Quest pending: component_index restarts at 0 (enumerate over the
+    # quest pending list). A trope and a quest at the SAME list position
+    # still get distinct thread_ids because _thread_id_seed mixes the
+    # kind discriminator ("trope" vs "quest") into the blake2b input —
+    # there is NO numeric offset; the kind field is what separates them.
     for component_index, (component, origin_region_id) in enumerate(quest_result.pending):
         thread_id = _thread_id_seed(
             campaign_seed,
@@ -809,7 +846,10 @@ def attach_set_piece(
         tropes_started=trope_result.tropes_started,
         quests_seeded=quest_result.quests_seeded,
         threads_written=threads_written,
+        rolled=rolled,  # spec §7 freeze target — Plan 7 persists this
     )
+    # report.as_dict() is the LOCKED 5-key flat span contract — rolled is
+    # intentionally absent from it (a nested struct is not a flat OTEL attr).
     with setpiece_attach_span(**report.as_dict()):
         pass
 

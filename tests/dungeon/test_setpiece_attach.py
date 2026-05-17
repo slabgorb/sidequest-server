@@ -1458,12 +1458,19 @@ def test_attach_report_as_dict_key_set_locked() -> None:
     assert d["threads_written"] == 3
 
 
-def test_attach_report_as_dict_matches_fields() -> None:
-    """as_dict() returns EXACTLY the dataclass fields — no hidden values,
-    no omissions (spec §7.1 'fully legible, no hidden counters')."""
+def test_attach_report_as_dict_is_the_scalar_fields_minus_rolled() -> None:
+    """as_dict() returns EXACTLY the flat SCALAR dataclass fields — every
+    field EXCEPT ``rolled`` (spec §7.1 'fully legible, no hidden counters'
+    for the OTEL span; ``rolled`` is a nested RolledSetPiece structure that
+    is deliberately NOT a flat span attribute — it is Plan 7's freeze target,
+    read off ``report.rolled`` directly). This pins the two-surface design:
+    every scalar field IS in as_dict(); the one structured field is NOT."""
     import dataclasses  # noqa: PLC0415
 
-    from sidequest.dungeon.setpiece_attach import AttachReport  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        AttachReport,
+        RolledSetPiece,
+    )
 
     report = AttachReport(
         setpiece_id="sp1",
@@ -1471,10 +1478,21 @@ def test_attach_report_as_dict_matches_fields() -> None:
         tropes_started=0,
         quests_seeded=0,
         threads_written=0,
+        rolled=RolledSetPiece(slots={"layout": "pit"}),
     )
-    field_names = {f.name for f in dataclasses.fields(report)}
-    assert set(report.as_dict().keys()) == field_names, (
-        "as_dict() keys do not match dataclass field names"
+    all_field_names = {f.name for f in dataclasses.fields(report)}
+    scalar_field_names = all_field_names - {"rolled"}
+
+    assert set(report.as_dict().keys()) == scalar_field_names, (
+        "as_dict() keys must equal the scalar dataclass fields (all fields except 'rolled')"
+    )
+    # rolled is a real dataclass field but intentionally absent from the
+    # locked flat span contract.
+    assert "rolled" in all_field_names, (
+        "rolled must be a real AttachReport dataclass field (spec §7 freeze target Plan 7 reads)"
+    )
+    assert "rolled" not in report.as_dict(), (
+        "rolled must NOT pollute the locked flat OTEL span contract"
     )
 
 
@@ -1701,3 +1719,135 @@ def test_attach_set_piece_setpiece_attach_span_routed() -> None:
     assert SPAN_SETPIECE_ATTACH in SPAN_ROUTES, (
         "setpiece.attach has no SPAN_ROUTES entry — GM panel would miss it"
     )
+
+
+def test_attach_set_piece_re_attach_raises_persist_error() -> None:
+    """Re-attach with identical inputs on the same store raises Plan 5's
+    PersistError (duplicate thread_id = the spec §7 freeze-violation signal).
+    NOT swallowed. Decision J: caller owns the txn; re-attach is the caller's
+    mistake and the loud raise is the correct signal — and it raises on the
+    FIRST open_thread (trope index 0) BEFORE any new rows land, so there is
+    no partial-write problem (no validate-all-first pass needed)."""
+    from sidequest.dungeon.persistence import PersistError  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("cave_in"))
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+    conn, store = _store_with_schema()
+
+    # First attach succeeds and is committed (the save is now truth, spec §7).
+    snap_a = _fresh_snapshot()
+    attach_set_piece(
+        campaign_seed=99,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="frozen_piece",
+        set_piece=set_piece,
+        trope_components=_make_components("cave_in"),
+        quest_components=_make_quest_components("escape"),
+        pack_tropes=pack,
+        snapshot=snap_a,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=12.0,
+    )
+    conn.commit()
+    rows_before_reattach = len(store.open_threads())
+    assert rows_before_reattach == 2  # 1 trope + 1 quest
+
+    # Re-attach with IDENTICAL inputs — Plan 5's open_thread raises
+    # PersistError on the duplicate thread_id. Specifically PersistError
+    # (the freeze-violation signal), not a generic Exception.
+    snap_b = _fresh_snapshot()
+    with pytest.raises(PersistError):
+        attach_set_piece(
+            campaign_seed=99,
+            expansion_id=1,
+            region_id="exp001.r0",
+            setpiece_id="frozen_piece",
+            set_piece=set_piece,
+            trope_components=_make_components("cave_in"),
+            quest_components=_make_quest_components("escape"),
+            pack_tropes=pack,
+            snapshot=snap_b,
+            manifest=_FakeManifest(),
+            store=store,
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+            started_at_depth_score=12.0,
+        )
+
+    # The raise landed on the FIRST duplicate (trope index 0) before any new
+    # rows could be inserted — no partial write. Roll back the caller's txn
+    # (Decision J: caller owns it) and confirm the original committed rows
+    # are still the only rows.
+    conn.rollback()
+    assert len(store.open_threads()) == rows_before_reattach, (
+        "re-attach left partial rows — open_thread must raise on the first "
+        "duplicate before any new insert lands (Decision J)"
+    )
+
+
+def test_attach_report_rolled_is_the_deterministic_rolled_set_piece() -> None:
+    """AttachReport.rolled carries the deterministic RolledSetPiece for the
+    inputs (spec §7 freeze target Plan 7 persists and never recomputes), and
+    `rolled` is NOT in as_dict() (the locked flat span contract stays
+    unpolluted). Uses the exact Task 1 determinism expectations:
+    test_determinism_against_hardcoded_expected_value pinned
+    campaign_seed=42, expansion_id=3, region_id="exp003.r7",
+    setpiece_id="false_floor" over _MULTI_OPTION_SET_PIECE →
+    {layout: corridor, loot: gold_coins}."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("cave_in"))
+    conn, store = _store_with_schema()
+    snapshot = _fresh_snapshot()
+
+    report = attach_set_piece(
+        campaign_seed=42,
+        expansion_id=3,
+        region_id="exp003.r7",
+        setpiece_id="false_floor",
+        set_piece=_MULTI_OPTION_SET_PIECE,
+        trope_components=_make_components("cave_in"),
+        quest_components=[],
+        pack_tropes=pack,
+        snapshot=snapshot,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=30.0,
+    )
+
+    # report.rolled is the deterministic RolledSetPiece — same pinned values
+    # as Task 1's test_determinism_against_hardcoded_expected_value.
+    assert isinstance(report.rolled, RolledSetPiece)
+    assert set(report.rolled.slots.keys()) == {"layout", "loot"}
+    assert report.rolled.slots["layout"] == "corridor"
+    assert report.rolled.slots["loot"] == "gold_coins"
+
+    # It must equal a direct roll_set_piece() with the same inputs (the
+    # value Plan 7 freezes into the save, spec §7).
+    direct = roll_set_piece(
+        campaign_seed=42,
+        expansion_id=3,
+        region_id="exp003.r7",
+        setpiece_id="false_floor",
+        set_piece=_MULTI_OPTION_SET_PIECE,
+    )
+    assert report.rolled == direct
+
+    # And it must NOT leak into the locked flat span contract.
+    assert "rolled" not in report.as_dict(), (
+        "rolled polluted the locked setpiece.attach span contract"
+    )
+    assert set(report.as_dict().keys()) == {
+        "setpiece_id",
+        "region_id",
+        "tropes_started",
+        "quests_seeded",
+        "threads_written",
+    }
