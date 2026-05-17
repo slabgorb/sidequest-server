@@ -49,19 +49,31 @@ def test_implements_tooling_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(client, ToolingLlmClient)
 
 
-def test_default_cache_ttl_is_5_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_cache_ttl_is_1_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Submit-and-wait MP cadence exceeds the 5m window; the operative
+    default is 1h so the ~30k stable system prefix amortizes across an
+    ~85-turn session instead of being re-written almost every turn."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-1")
+    monkeypatch.delenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", raising=False)
     client = AnthropicSdkClient()
-    assert client.cache_ttl == "5m"
+    assert client.cache_ttl == "1h"
 
 
-def test_1_hour_cache_ttl_now_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """1h was removed: the extended-cache-ttl beta header was never sent, so the
-    API rejected it at call time. 1h is now treated like any other invalid TTL."""
+def test_opt_into_1_hour_cache_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """1h is restored as a valid TTL (paired with the extended-cache-ttl
+    beta header on the request — see the wiring tests below)."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-1")
     monkeypatch.setenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", "1h")
-    with pytest.raises(AnthropicSdkConfigError):
-        AnthropicSdkClient()
+    client = AnthropicSdkClient()
+    assert client.cache_ttl == "1h"
+
+
+def test_explicit_5m_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """5m stays selectable for operators who want the short window."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-1")
+    monkeypatch.setenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", "5m")
+    client = AnthropicSdkClient()
+    assert client.cache_ttl == "5m"
 
 
 def test_invalid_cache_ttl_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,6 +191,118 @@ async def test_complete_with_tools_cache_control_on_last_block(
     assert system[0]["cache_control"]["type"] == "ephemeral"
     assert system[1]["cache_control"]["type"] == "ephemeral"
     assert "cache_control" not in system[2]
+
+
+def _one_block_call(client: AnthropicSdkClient, fake: _FakeAsyncSdk):
+    """Drive a single end_turn call and return the recorded create() kwargs."""
+    return fake.messages.calls[0]
+
+
+async def test_cache_control_marker_carries_1h_ttl_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cache_control echoes self.cache_ttl — a 1h client emits ttl:'1h'."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = _FakeAsyncSdk(
+        responses=[
+            _SdkResponse(
+                content=[_SdkContentTextBlock(type="text", text="ok")],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=10, output_tokens=2),
+                model="claude-sonnet-4-6",
+            )
+        ]
+    )
+    client = AnthropicSdkClient(sdk=fake, cache_ttl="1h")
+    await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="stable scaffold", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    call = _one_block_call(client, fake)
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+async def test_cache_control_marker_carries_5m_ttl_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No special-casing: an explicit 5m client emits ttl:'5m' (a valid
+    value to the API), not a bare ephemeral marker."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = _FakeAsyncSdk(
+        responses=[
+            _SdkResponse(
+                content=[_SdkContentTextBlock(type="text", text="ok")],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=10, output_tokens=2),
+                model="claude-sonnet-4-6",
+            )
+        ]
+    )
+    client = AnthropicSdkClient(sdk=fake, cache_ttl="5m")
+    await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="stable scaffold", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    call = _one_block_call(client, fake)
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
+
+
+async def test_extended_cache_ttl_beta_header_sent_when_1h(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ttl:'1h' requires the extended-cache-ttl beta header or the API
+    rejects the request — assert it rides every messages.create call."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = _FakeAsyncSdk(
+        responses=[
+            _SdkResponse(
+                content=[_SdkContentTextBlock(type="text", text="ok")],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=10, output_tokens=2),
+                model="claude-sonnet-4-6",
+            )
+        ]
+    )
+    client = AnthropicSdkClient(sdk=fake, cache_ttl="1h")
+    await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="stable scaffold", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    call = _one_block_call(client, fake)
+    assert call["extra_headers"]["anthropic-beta"] == "extended-cache-ttl-2025-04-11"
+
+
+async def test_no_beta_header_on_5m(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """5m needs no beta — the 5m request path stays identical to today."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = _FakeAsyncSdk(
+        responses=[
+            _SdkResponse(
+                content=[_SdkContentTextBlock(type="text", text="ok")],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=10, output_tokens=2),
+                model="claude-sonnet-4-6",
+            )
+        ]
+    )
+    client = AnthropicSdkClient(sdk=fake, cache_ttl="5m")
+    await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="stable scaffold", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    call = _one_block_call(client, fake)
+    extra = call.get("extra_headers") or {}
+    assert "anthropic-beta" not in extra
 
 
 async def test_complete_with_tools_runs_tool_loop(
