@@ -176,3 +176,138 @@ def test_frontier_crossing_promotes_region_to_active() -> None:
     # the region_init contract).
     assert snap.discovered_regions[0] == "entrance"
     assert snap.discovered_regions.count("exp001.r0") == 1
+
+
+# ---------------------------------------------------------------------------
+# Plan 7 Task 7 — async look-ahead WORKER wiring test.
+#
+# CLAUDE.md "Every Test Suite Needs a Wiring Test": this proves Task 7's
+# async look-ahead worker is invoked FROM Task 6's REAL production
+# region-transition producer (apply_world_patch → notify_region_transition),
+# NOT called directly by the test. Real DungeonStore on a real connection,
+# real materialize() pipeline through Tasks 1–6, real frontier_hook
+# producer. The ONLY mock is the claude -p curation subprocess.
+# ---------------------------------------------------------------------------
+
+
+def _mem_conn() -> Any:
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+async def _seed_expansion_one(store: Any) -> Any:
+    """Run the REAL five-stage coordinator for expansion 1 against a real
+    DungeonStore so the store carries a committed seed (entrance, exp 0) +
+    expansion 1's regions + REAL unexpanded frontier edges rooted at
+    exp001.r* (Task 6's commit derived them). Returns the theme_id used so
+    the caller can resolve the same palette for the look-ahead expansion."""
+    from tests.dungeon.test_materializer import (
+        _commit_palette,
+        _materialize_full,
+        _seed_graph_themed,
+    )
+
+    theme_id = "lookahead_wire_crypt"
+    palette = _commit_palette(theme_id)
+    graph = _seed_graph_themed(theme_id)
+    await _materialize_full(graph=graph, palette=palette, store=store)
+    return theme_id, palette
+
+
+async def test_lookahead_worker_materializes_from_real_region_transition() -> None:
+    """Drive the REAL production region-transition (a WorldStatePatch with
+    ``current_region`` applied through ``GameSnapshot.apply_world_patch``,
+    the exact code path the narrator/monster-manual-inject use) and assert
+    Task 7's async look-ahead worker materialized the next expansion FROM
+    that path — observed via real committed store state, NOT by the test
+    calling the worker/materialize directly.
+
+    Teeth: with the worker NOT registered, crossing the frontier commits
+    NO new expansion (the seam is wired-but-unconsumed). Not circular: the
+    test never calls the worker or materialize() — it drives
+    apply_world_patch and inspects the real DungeonStore."""
+    from sidequest.dungeon.lookahead_worker import register_lookahead_worker
+    from sidequest.dungeon.persistence import DungeonStore
+    from sidequest.game.session import GameSnapshot, WorldStatePatch
+    from tests.dungeon.test_materializer import (
+        _attach_pack,
+        _real_cookbook_bundle,
+        _reflecting_claude_client,
+    )
+
+    # --- Teeth half: worker NOT registered → no look-ahead expansion. ---
+    conn_a = _mem_conn()
+    store_a = DungeonStore(conn_a)
+    store_a.ensure_schema()
+    _theme_a, _palette_a = await _seed_expansion_one(store_a)
+
+    frontier_a = store_a.load_frontier()
+    assert frontier_a, "expansion 1 commit did not derive any frontier edges"
+    target_region = frontier_a[0].from_region_id  # a real exp001.r* region
+
+    snap_a = GameSnapshot(
+        genre_slug="caverns_and_claudes", world_slug="beneath_sunden"
+    )
+    snap_a.current_region = "entrance"
+    snap_a.apply_world_patch(WorldStatePatch(current_region=target_region))
+    # No worker registered: only the original expansion 1 exists.
+    exp_ids_a = {
+        n.expansion_id
+        for n in store_a.load_map(entrance_id="entrance").nodes.values()
+    }
+    assert 2 not in exp_ids_a, (
+        "a look-ahead expansion 2 was committed with NO worker registered "
+        "— the wiring test is circular / the seam fires without a consumer"
+    )
+
+    # --- Live half: worker registered → crossing the frontier
+    #     materializes the next expansion FROM the real producer path. ---
+    conn_b = _mem_conn()
+    store_b = DungeonStore(conn_b)
+    store_b.ensure_schema()
+    _theme_b, palette_b = await _seed_expansion_one(store_b)
+
+    frontier_b = store_b.load_frontier()
+    target_b = frontier_b[0].from_region_id
+
+    obs = register_lookahead_worker(
+        persistence=store_b,
+        bundle=_real_cookbook_bundle(),
+        palette=palette_b,
+        pack_tropes=_attach_pack("cave_in"),
+        claude_client=_reflecting_claude_client(),
+        campaign_seed=7,
+        lookahead_breadth=1,
+    )
+    try:
+        snap_b = GameSnapshot(
+            genre_slug="caverns_and_claudes", world_slug="beneath_sunden"
+        )
+        snap_b.current_region = "entrance"
+        # THE PRODUCTION PATH: a narrator-shaped WorldStatePatch moving the
+        # party into a region with rooted unexpanded frontier edges, applied
+        # through the real public apply_world_patch entry point (NOT a
+        # direct call to the worker).
+        snap_b.apply_world_patch(WorldStatePatch(current_region=target_b))
+
+        # The observer scheduled the worker fire-and-forget; the region
+        # transition itself returned synchronously (central constraint).
+        assert snap_b.current_region == target_b
+        # Await the in-flight look-ahead task(s) the observer scheduled.
+        await obs.drain()
+    finally:
+        obs.unregister()
+
+    exp_ids_b = {
+        n.expansion_id
+        for n in store_b.load_map(entrance_id="entrance").nodes.values()
+    }
+    assert 2 in exp_ids_b, (
+        "the look-ahead worker did NOT materialize the next expansion from "
+        "the real apply_world_patch region-transition path — Task 7's "
+        "worker is not wired into Task 6's producer (CLAUDE.md: half-wired "
+        "features are forbidden)"
+    )

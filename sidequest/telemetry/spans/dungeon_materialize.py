@@ -35,6 +35,7 @@ SPAN_DUNGEON_MATERIALIZE_ATTACH = "dungeon.materialize.attach"
 SPAN_DUNGEON_MATERIALIZE_COMMIT = "dungeon.materialize.commit"
 SPAN_FRONTIER_EXPAND = "frontier.expand"
 SPAN_FRONTIER_REGION_TRANSITION = "frontier.region_transition"
+SPAN_FRONTIER_LOOKAHEAD = "frontier.lookahead"
 
 # ---------------------------------------------------------------------------
 # Routing registrations
@@ -205,6 +206,38 @@ SPAN_ROUTES[SPAN_FRONTIER_EXPAND] = SpanRoute(
     },
 )
 
+SPAN_ROUTES[SPAN_FRONTIER_LOOKAHEAD] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    # Plan 7 Task 7 — the async look-ahead WORKER's lie-detector surface.
+    # `deduped` is the idempotency proof: True when a second approach
+    # signal for an already-in-flight frontier_edge_id was a no-op (NOT a
+    # double-materialize) — the GM panel can SEE the dedupe rather than
+    # trusting that two rapid signals didn't grow the dungeon twice.
+    # `targets` is the count of frontier edges selected along the heading
+    # (lookahead_breadth resolution); `no_frontier_along_heading` is True
+    # for the genuine no-op case (not every transition approaches the
+    # frontier — observable, NOT a silent skip). `error`/`reason` are the
+    # routed terminal-failure markers: a background worker/materialize
+    # failure surfaces here (the GM panel must see the dungeon failed to
+    # grow), never silently swallowed; they read None on the success path
+    # (graceful-get idiom — harmless). The Task-2 lesson: a set-but-not-
+    # routed marker is a defect — route it.
+    extract=lambda s: {
+        "field": "dungeon_frontier",
+        "op": "frontier_lookahead",
+        "to_region": _attr("to_region")(s),
+        "heading": _attr("heading")(s),
+        "frontier_edge_id": _attr("frontier_edge_id")(s),
+        "expansion_id": _attr("expansion_id")(s),
+        "targets": _attr("targets")(s),
+        "deduped": _attr("deduped")(s),
+        "no_frontier_along_heading": _attr("no_frontier_along_heading")(s),
+        "error": _attr("error")(s),
+        "reason": _attr("reason")(s),
+    },
+)
+
 SPAN_ROUTES[SPAN_FRONTIER_REGION_TRANSITION] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
@@ -368,6 +401,29 @@ def frontier_expand_span(
 
 
 @contextmanager
+def frontier_lookahead_span(
+    *,
+    to_region: str,
+    heading: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Open the ``frontier.lookahead`` span for one async look-ahead
+    worker run (Plan 7 Task 7). The worker writes ``deduped`` /
+    ``no_frontier_along_heading`` / ``targets`` / ``frontier_edge_id`` /
+    ``expansion_id`` (success) or ``error`` / ``reason`` (terminal
+    failure) onto the span — the GM-panel lie-detector for the
+    background prefetch (the only way to tell the look-ahead engaged vs.
+    the narrator improvising the dungeon grew)."""
+    with Span.open(
+        SPAN_FRONTIER_LOOKAHEAD,
+        {"to_region": to_region, "heading": heading, **attrs},
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
 def frontier_region_transition_span(
     *,
     from_region: str,
@@ -399,6 +455,7 @@ __all__ = [
     "SPAN_DUNGEON_MATERIALIZE_DESIGN",
     "SPAN_DUNGEON_MATERIALIZE_FILL",
     "SPAN_FRONTIER_EXPAND",
+    "SPAN_FRONTIER_LOOKAHEAD",
     "SPAN_FRONTIER_REGION_TRANSITION",
     "dungeon_materialize_attach_span",
     "dungeon_materialize_commit_span",
@@ -407,5 +464,6 @@ __all__ = [
     "dungeon_materialize_fill_span",
     "dungeon_materialize_span",
     "frontier_expand_span",
+    "frontier_lookahead_span",
     "frontier_region_transition_span",
 ]
