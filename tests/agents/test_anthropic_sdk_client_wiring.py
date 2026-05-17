@@ -73,6 +73,7 @@ async def test_combat_shaped_turn_wiring(
     otel_capture: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", raising=False)
 
     sdk = _Sdk(
         responses=[
@@ -161,10 +162,14 @@ async def test_combat_shaped_turn_wiring(
     # 4. Streaming callback got the final-turn text.
     assert deltas == ["The strike lands; the bandit reels."]
 
-    # 5. Cache_control on the 5m (default) path has no ttl key — ephemeral only.
+    # 5. Default path is now 1h: the real request payload carries
+    #    ttl:"1h" on the cache_control marker, and the extended-cache-ttl
+    #    beta header rides every messages.create call (without it the API
+    #    400s the 1h request — see test_anthropic_sdk_client.py).
     first_call = sdk.messages.received[0]
     sys_array = first_call["system"]
-    assert sys_array[0]["cache_control"] == {"type": "ephemeral"}
+    assert sys_array[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert first_call["extra_headers"]["anthropic-beta"] == "extended-cache-ttl-2025-04-11"
 
     # 6. Two llm.request spans emitted (one per iteration).
     spans = [s for s in otel_capture.get_finished_spans() if s.name == "llm.request"]

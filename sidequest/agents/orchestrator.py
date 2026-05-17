@@ -831,9 +831,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
                 else None,
             }
             for seg in patch.get("private_segments", [])
-            if isinstance(seg, dict)
-            and isinstance(seg.get("text"), str)
-            and seg["text"].strip()
+            if isinstance(seg, dict) and isinstance(seg.get("text"), str) and seg["text"].strip()
         ],
         "beat_selections": patch.get("beat_selections", []),
         "confrontation": patch.get("confrontation"),
@@ -3223,6 +3221,13 @@ class Orchestrator:
                 )
                 span.set_attribute(
                     "narration.turn.cache_write_tokens", result.cached_input_write_tokens
+                )
+                # Cache TTL the client is configured with, so the GM panel
+                # can prove the 1h fix engaged and compute write
+                # amortization against cache_write_tokens above.
+                span.set_attribute(
+                    "narration.turn.cache_ttl",
+                    getattr(self._client, "cache_ttl", "n/a"),
                 )
                 span.set_attribute("narration.turn.tool_call_count", len(result.tool_calls))
 

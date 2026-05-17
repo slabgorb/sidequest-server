@@ -11,6 +11,7 @@ Rollup attributes (set by caller before exit):
     narration.turn.total_output_tokens
     narration.turn.cache_read_tokens
     narration.turn.cache_write_tokens
+    narration.turn.cache_ttl
     narration.turn.total_cost_usd
     narration.turn.tool_call_count
     narration.turn.llm_request_count

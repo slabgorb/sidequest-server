@@ -32,8 +32,14 @@ class AnthropicSdkLoopExceeded(AnthropicSdkClientError):
     """The tool-use loop did not converge within max_iterations."""
 
 
-CacheTtl = Literal["5m"]
-_VALID_TTLS: frozenset[str] = frozenset({"5m"})
+CacheTtl = Literal["5m", "1h"]
+_VALID_TTLS: frozenset[str] = frozenset({"5m", "1h"})
+
+
+# 1h ephemeral cache is a beta: without this header on the request the
+# API rejects ``ttl: "1h"`` and every narration turn 400s. Sent only on
+# the 1h path — see ``complete_with_tools``.
+_EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
 
 
 class AnthropicSdkClient:
@@ -52,10 +58,14 @@ class AnthropicSdkClient:
                 "AnthropicSdkClient without an explicit sdk= injection."
             )
 
+        # Operative default is 1h: submit-and-wait MP cadence routinely
+        # exceeds the 5m window, so a 5m write is re-paid almost every
+        # turn. A 1h write is 2x base but amortizes across an ~85-turn
+        # session. Operators can still opt back to 5m via the env var.
         resolved_ttl = (
             cache_ttl
             if cache_ttl is not None
-            else os.environ.get("SIDEQUEST_ANTHROPIC_CACHE_TTL", "5m")
+            else os.environ.get("SIDEQUEST_ANTHROPIC_CACHE_TTL", "1h")
         )
         if resolved_ttl not in _VALID_TTLS:
             raise AnthropicSdkConfigError(
@@ -104,6 +114,15 @@ class AnthropicSdkClient:
         cumulative_cache_write = 0
         last_model = model
 
+        # ttl:"1h" on the cache_control markers is rejected unless the
+        # extended-cache-ttl beta is opted in via this header. The 5m path
+        # sends no extra header (request stays identical to the prior
+        # behavior). No silent fallback: if the API still rejects 1h the
+        # error surfaces, it is not downgraded to 5m.
+        extra_headers = (
+            {"anthropic-beta": _EXTENDED_CACHE_TTL_BETA} if self.cache_ttl == "1h" else None
+        )
+
         for iteration in range(1, max_iterations + 1):
             with llm_request_span(model=model, iteration=iteration) as span:
                 response = await self._sdk.messages.create(
@@ -112,6 +131,7 @@ class AnthropicSdkClient:
                     messages=running_messages,
                     tools=sdk_tools,
                     max_tokens=4096,
+                    extra_headers=extra_headers,
                 )
                 usage = response.usage
                 input_tokens = int(getattr(usage, "input_tokens", 0))
@@ -208,7 +228,11 @@ class AnthropicSdkClient:
         for block in system_blocks:
             entry: dict[str, Any] = {"type": "text", "text": block.text}
             if block.cache:
-                entry["cache_control"] = {"type": "ephemeral"}
+                # Echo the configured TTL unconditionally — no special-
+                # casing. Both "5m" and "1h" are valid cache_control TTLs;
+                # the 1h path additionally rides the beta header sent in
+                # complete_with_tools.
+                entry["cache_control"] = {"type": "ephemeral", "ttl": self.cache_ttl}
             out.append(entry)
         return out
 
