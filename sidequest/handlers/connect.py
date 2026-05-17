@@ -749,6 +749,26 @@ class ConnectHandler:
                 ),
             )
 
+            # Beneath Sünden Plan 7 (§8): wire the live dungeon look-ahead
+            # worker to this session. attach_dungeon_to_session gates on
+            # genre/world (returns None for non-beneath_sunden), so this is
+            # a no-op for every other pack. Function-local import mirrors the
+            # established lazy-import style in this handler (avoids any
+            # import cycle through the dungeon package). cleanup() drains the
+            # handle via detach_dungeon_from_session before the final save.
+            from sidequest.dungeon.session_integration import (
+                attach_dungeon_to_session,
+            )
+
+            session._session_data.lookahead_handle = await attach_dungeon_to_session(
+                store=room.store,
+                snapshot=room.snapshot,
+                genre_pack=genre_pack,
+                genre_slug=row.genre_slug,
+                world_slug=row.world_slug,
+                world_dir=world_dir,
+            )
+
             # Slug-resume LoreStore re-seed (exposed by commit 72750db).
             # ``_SessionData.lore_store`` is an in-memory
             # ``default_factory=LoreStore`` — NOT persisted to the SQLite
