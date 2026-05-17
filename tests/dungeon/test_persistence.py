@@ -77,9 +77,7 @@ def _mem_conn() -> sqlite3.Connection:
 def test_ensure_schema_creates_all_five_tables() -> None:
     conn = _mem_conn()
     DungeonStore(conn).ensure_schema()
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     names = {r["name"] for r in rows}
     assert _EXPECTED_TABLES.issubset(names)
 
@@ -89,9 +87,7 @@ def test_ensure_schema_is_idempotent() -> None:
     store = DungeonStore(conn)
     store.ensure_schema()
     store.ensure_schema()  # second call must not raise
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     assert _EXPECTED_TABLES.issubset({r["name"] for r in rows})
 
 
@@ -264,22 +260,40 @@ def test_complication_ledger_open_resolve_and_accumulation() -> None:
     store.ensure_schema()
 
     # expansion 1 lights two threads
-    store.open_thread(ComplicationThread(
-        thread_id="t1", origin_region_id="exp001.r0", kind="trope",
-        status="open", started_at_depth_score=10.0, payload={"trope": "sacrifice_priest"},
-    ))
-    store.open_thread(ComplicationThread(
-        thread_id="t2", origin_region_id="exp001.r1", kind="quest",
-        status="open", started_at_depth_score=12.0, payload={"quest": "drowned_bell"},
-    ))
+    store.open_thread(
+        ComplicationThread(
+            thread_id="t1",
+            origin_region_id="exp001.r0",
+            kind="trope",
+            status="open",
+            started_at_depth_score=10.0,
+            payload={"trope": "sacrifice_priest"},
+        )
+    )
+    store.open_thread(
+        ComplicationThread(
+            thread_id="t2",
+            origin_region_id="exp001.r1",
+            kind="quest",
+            status="open",
+            started_at_depth_score=12.0,
+            payload={"quest": "drowned_bell"},
+        )
+    )
     conn.commit()
     assert {t.thread_id for t in store.open_threads()} == {"t1", "t2"}
 
     # expansion 2 lights a third — accumulation observable (spec §7.1)
-    store.open_thread(ComplicationThread(
-        thread_id="t3", origin_region_id="exp002.r0", kind="trope",
-        status="open", started_at_depth_score=30.0, payload={},
-    ))
+    store.open_thread(
+        ComplicationThread(
+            thread_id="t3",
+            origin_region_id="exp002.r0",
+            kind="trope",
+            status="open",
+            started_at_depth_score=30.0,
+            payload={},
+        )
+    )
     conn.commit()
     assert len(store.open_threads()) == 3  # nothing cleared by pushing deeper
 
@@ -288,9 +302,7 @@ def test_complication_ledger_open_resolve_and_accumulation() -> None:
     conn.commit()
     open_ids = {t.thread_id for t in store.open_threads()}
     assert open_ids == {"t2", "t3"}
-    assert ComplicationThread.from_dict(
-        store.get_thread("t1").to_dict()
-    ).status == "resolved"
+    assert ComplicationThread.from_dict(store.get_thread("t1").to_dict()).status == "resolved"
 
 
 def test_resolve_unknown_thread_fails_loud() -> None:
@@ -315,8 +327,7 @@ def test_frozen_region_untouched_after_generator_version_bump() -> None:
     conn.commit()
 
     before = conn.execute(
-        "SELECT region_id, payload, generator_version FROM dungeon_map "
-        "ORDER BY region_id"
+        "SELECT region_id, payload, generator_version FROM dungeon_map ORDER BY region_id"
     ).fetchall()
     before_snap = [(r["region_id"], r["payload"], r["generator_version"]) for r in before]
 
@@ -329,8 +340,7 @@ def test_frozen_region_untouched_after_generator_version_bump() -> None:
     conn.rollback()
 
     after = conn.execute(
-        "SELECT region_id, payload, generator_version FROM dungeon_map "
-        "ORDER BY region_id"
+        "SELECT region_id, payload, generator_version FROM dungeon_map ORDER BY region_id"
     ).fetchall()
     after_snap = [(r["region_id"], r["payload"], r["generator_version"]) for r in after]
 
@@ -347,8 +357,7 @@ def test_dungeon_persist_spans_registered_and_routed() -> None:
 
     for name in (SPAN_DUNGEON_PERSIST_COMMIT, SPAN_LEDGER_ADD, SPAN_LEDGER_RESOLVE):
         assert name in SPAN_ROUTES or name in FLAT_ONLY_SPANS, (
-            f"{name} has no routing decision — routing-completeness gate "
-            f"will fail"
+            f"{name} has no routing decision — routing-completeness gate will fail"
         )
 
 
@@ -390,17 +399,21 @@ def test_commit_and_ledger_emit_spans() -> None:
         trace.set_tracer_provider(provider)
 
         g = _seed_graph()
-        exp = _generate_and_attach(
-            g, campaign_seed=5, expansion_id=1, attach_ids=["entrance"]
-        )
+        exp = _generate_and_attach(g, campaign_seed=5, expansion_id=1, attach_ids=["entrance"])
         conn = _mem_conn()
         store = DungeonStore(conn)
         store.ensure_schema()
         store.commit_expansion(exp, g)
-        store.open_thread(ComplicationThread(
-            thread_id="t1", origin_region_id="exp001.r0", kind="trope",
-            status="open", started_at_depth_score=10.0, payload={},
-        ))
+        store.open_thread(
+            ComplicationThread(
+                thread_id="t1",
+                origin_region_id="exp001.r0",
+                kind="trope",
+                status="open",
+                started_at_depth_score=10.0,
+                payload={},
+            )
+        )
         store.resolve_thread("t1")
 
         assert "dungeon.persist.commit" in captured
@@ -423,12 +436,16 @@ def test_serde_exact_inverse_over_seed_sweep(campaign_seed: int) -> None:
     )
     deep_ids = [n.id for n in exp1.new_nodes][:2] or ["entrance"]
     exp2 = _generate_and_attach(
-        g, campaign_seed=campaign_seed, expansion_id=2,
+        g,
+        campaign_seed=campaign_seed,
+        expansion_id=2,
         attach_ids=(deep_ids + ["entrance"])[:2],
     )
     deeper = [n.id for n in exp2.new_nodes][:2] or deep_ids
     exp3 = _generate_and_attach(
-        g, campaign_seed=campaign_seed, expansion_id=3,
+        g,
+        campaign_seed=campaign_seed,
+        expansion_id=3,
         attach_ids=(deeper + deep_ids)[:2],
     )
 
@@ -444,10 +461,7 @@ def test_serde_exact_inverse_over_seed_sweep(campaign_seed: int) -> None:
     assert reloaded.nodes == g.nodes
     assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
     # every node carries its frozen depth_score through the round-trip
-    assert all(
-        reloaded.nodes[rid].depth_score == g.nodes[rid].depth_score
-        for rid in g.nodes
-    )
+    assert all(reloaded.nodes[rid].depth_score == g.nodes[rid].depth_score for rid in g.nodes)
 
 
 def test_wiring_contract_runs_on_real_save_db_connection() -> None:
@@ -464,9 +478,7 @@ def test_wiring_contract_runs_on_real_save_db_connection() -> None:
         _configure_connection(conn)  # the REAL save-DB PRAGMA contract
 
         g = _seed_graph()
-        exp = _generate_and_attach(
-            g, campaign_seed=42, expansion_id=1, attach_ids=["entrance"]
-        )
+        exp = _generate_and_attach(g, campaign_seed=42, expansion_id=1, attach_ids=["entrance"])
         store = DungeonStore(conn)
         store.ensure_schema()
         _commit_seed(store, g)
