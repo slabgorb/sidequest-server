@@ -41,13 +41,29 @@ from dataclasses import dataclass, field
 from sidequest.dungeon.setpieces import SetPiece
 
 
-@dataclass(frozen=True, eq=True)
+@dataclass(frozen=True)
 class RolledSetPiece:
     """The result of rolling all component slots for one set-piece.
 
     ``slots`` maps each ComponentSlot.name to the chosen SlotOption.value.
     This is the minimal return shape needed by Plan 6 Tasks 2–5; do not
-    over-design — extend in later tasks as needed.
+    over-design — extend in later tasks as needed. The ``dict``-in-frozen
+    pattern is established precedent (persistence.py DungeonMutation /
+    ComplicationThread); Tasks 2–5 depend on ``result.slots["name"]`` so
+    do NOT change this shape in Plan 6.
+
+    LOAD-BEARING — DO NOT "clean up":
+    * ``frozen=True`` does NOT make the ``slots`` dict immutable and does
+      NOT generate a working ``__hash__`` for it — a dataclass with a dict
+      field raises ``TypeError: unhashable type: 'dict'`` at hash time
+      unless ``__hash__`` is defined by hand. The custom ``__hash__`` below
+      is REQUIRED, not redundant. Do not remove it, and do not swap
+      ``slots`` to another type without updating ``__hash__`` in lockstep.
+    * The custom ``__eq__`` compares by ``slots`` content with a typed
+      guard (the auto-generated dataclass ``__eq__`` would also work, but
+      defining ``__eq__`` by hand suppresses the auto one, which forces us
+      to also define ``__hash__`` by hand — keeping both explicit makes the
+      hash contract impossible to silently break).
     """
 
     slots: dict[str, str] = field(default_factory=dict)
@@ -58,6 +74,9 @@ class RolledSetPiece:
         return self.slots == other.slots
 
     def __hash__(self) -> int:
+        # REQUIRED: dict fields are unhashable; frozen=True cannot auto-hash
+        # this. Removing this line breaks hashing at call time. See the
+        # class docstring's LOAD-BEARING note.
         return hash(tuple(sorted(self.slots.items())))
 
 

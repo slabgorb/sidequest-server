@@ -12,7 +12,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sidequest.dungeon.setpiece_attach import RolledSetPiece, roll_set_piece
+from sidequest.dungeon.setpiece_attach import (
+    RolledSetPiece,
+    _slot_seed,
+    roll_set_piece,
+)
 from sidequest.dungeon.setpieces import (
     ComponentSlot,
     SetPiece,
@@ -199,36 +203,31 @@ def test_slot_id_collision_prevention():
 
 
 def test_prefix_collision_prevention():
-    """(1, 23) and (12, 3) must not collude — delimiter prevents naive
-    concatenation collisions."""
-    # They may or may not differ by chance, but they must not ALWAYS be the
-    # same because the delimiter prevents raw concatenation. Assert they
-    # are treated as distinct inputs (different seeds are computed).
-    # We can only check the rolls are at least sometimes distinguishable
-    # by running multiple region_ids.
-    results_1, results_2 = set(), set()
-    for i in range(15):
-        results_1.add(
-            roll_set_piece(
-                campaign_seed=1,
-                expansion_id=23,
-                region_id=f"exp023.r{i}",
-                setpiece_id="piece",
-                set_piece=_MULTI_OPTION_SET_PIECE,
-            ).slots["layout"]
-        )
-        results_2.add(
-            roll_set_piece(
-                campaign_seed=12,
-                expansion_id=3,
-                region_id=f"exp003.r{i}",
-                setpiece_id="piece",
-                set_piece=_MULTI_OPTION_SET_PIECE,
-            ).slots["layout"]
-        )
-    # Both streams must show variation (not stuck at one value from seed aliasing)
-    assert len(results_1) > 1
-    assert len(results_2) > 1
+    """campaign=1/expansion=23 and campaign=12/expansion=3 must produce
+    distinct seeds with all other inputs identical — the pipe delimiter
+    prevents naive concatenation aliasing ('1'+'23' == '12'+'3' == '123').
+
+    Holds region_id/setpiece_id/slot_name constant so the ONLY difference
+    is the (campaign_seed, expansion_id) split — a no-delimiter _slot_seed
+    would alias these to the same seed and this test would fail loudly."""
+    seed_1_23 = _slot_seed(
+        campaign_seed=1,
+        expansion_id=23,
+        region_id="fixed.r0",
+        setpiece_id="piece",
+        slot_name="layout",
+    )
+    seed_12_3 = _slot_seed(
+        campaign_seed=12,
+        expansion_id=3,
+        region_id="fixed.r0",
+        setpiece_id="piece",
+        slot_name="layout",
+    )
+    assert seed_1_23 != seed_12_3, (
+        "(campaign=1,expansion=23) and (campaign=12,expansion=3) produce "
+        "the same seed — delimiter is not preventing concatenation aliasing"
+    )
 
 
 # ---------------------------------------------------------------------------
