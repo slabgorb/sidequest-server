@@ -2294,10 +2294,17 @@ class Orchestrator:
                   consumed by the streaming path; the sync path ignores it.
         """
         # Phase D Task 1: when the configured client is a tooling-capable
-        # LLM (AnthropicSdkClient), route through complete_with_tools so the
-        # 26-tool registry is exposed to the model. Streaming wins when both
-        # are available — Phase D Task 7 will add SDK streaming.
-        if not is_streaming_enabled() and isinstance(self._client, ToolingLlmClient):
+        # LLM (AnthropicSdkClient — the ADR-101 default), route through
+        # complete_with_tools so the 26-tool registry is exposed to the
+        # model. This check MUST take precedence over the streaming flag:
+        # SDK streaming is Phase D Task 7 and is NOT yet implemented, and
+        # _run_narration_turn_streaming asserts the client is not a
+        # ToolingLlmClient. Letting SIDEQUEST_NARRATOR_STREAMING=1 win here
+        # routed the default backend into the streaming path and crashed
+        # every turn with AssertionError. The tooling client always takes
+        # the SDK path until Task 7 lands; streaming remains for non-tooling
+        # clients (claude -p ClaudeClient) only.
+        if isinstance(self._client, ToolingLlmClient):
             return await self._run_narration_turn_sdk(action, context)
         if is_streaming_enabled():
             return await self._run_narration_turn_streaming(action, context, room=room)
