@@ -1870,17 +1870,22 @@ def test_attach_report_rolled_is_the_deterministic_rolled_set_piece() -> None:
 
 
 def _make_terminal_trope_def(trope_id: str) -> Any:
-    """TropeDefinition-shaped object that resolves after ONE tick_tropes call.
+    """TropeDefinition-shaped object whose ladder reaches terminal in ONE
+    tick once its TropeState progress is at the cap.
 
-    The escalation ladder has a single beat at threshold 0.0 so it is
-    immediately eligible on the first staggered-beat pass. The TropeState
-    is constructed with ``progress=1.0`` (already at cap) so
-    _advance_progress does nothing and _fire_one_staggered_beat fires the
-    single beat immediately. After firing: beats_fired==1==len(escalation)
-    AND progress>=1.0 → terminal resolution (winner.status="resolved").
+    This returns the PACK DEFINITION (duck-typed for
+    tick_tropes' ``pack_tropes_by_id``), NOT a TropeState. The escalation
+    ladder has a single beat at threshold 0.0 so it is immediately eligible
+    on the first staggered-beat pass. The CALLER must set the live
+    ``TropeState.progress = 1.0`` (start_trope_components appends it at
+    progress 0.0); the test does that explicitly before tick_tropes. With
+    progress at the cap, ``_advance_progress`` is a no-op and
+    ``_fire_one_staggered_beat`` fires the single beat: then
+    beats_fired==1==len(escalation) AND progress>=1.0 → terminal resolution
+    (winner.status="resolved").
 
-    This is the REAL ``_fire_one_staggered_beat`` terminal path — not a test
-    shortcut. Duck-typing matches tick_tropes' ``pack_tropes_by_id`` usage.
+    This drives the REAL ``_fire_one_staggered_beat`` terminal path — not a
+    test shortcut.
     """
     progression = SimpleNamespace(
         rate_per_turn=0.0,
@@ -1912,8 +1917,18 @@ def test_resolved_trope_flips_ledger_entry_and_emits_span() -> None:
     resolve_complications_for_resolved_tropes with the resolved trope id.
     Asserts:
       - the ledger thread flipped from "open" to "resolved"
-      - ledger.resolve (Plan 5's span) was emitted with the thread_id
-      - the origin_region_id carried on the thread matches the attach origin
+      - ledger.resolve (Plan 5's span) was emitted carrying THE thread_id
+      - origin↔resolution proven via the SOURCE OF TRUTH (the persisted
+        ledger row): store.get_thread(thread_id).origin_region_id ==
+        the attach origin AND .status == "resolved"
+
+    Seam-1 supersession continuation: merged Plan 5's ``ledger_resolve_span``
+    emits ONLY ``thread_id`` (it does NOT carry origin region — that is on
+    Plan 5's ``ledger.add`` span and is durably persisted on the thread
+    row). Plan 5 owns that span; Plan 6 must NOT modify it. The spec's
+    "ledger.resolve carries origin region" is therefore satisfied through
+    the persisted row (the source of truth), verified here via get_thread —
+    NOT via a span attribute that Plan 5 does not emit.
 
     OTEL captured via the in-memory exporter (established pattern from
     test_commit_and_ledger_emit_spans in test_persistence.py).
@@ -1977,11 +1992,15 @@ def test_resolved_trope_flips_ledger_entry_and_emits_span() -> None:
         _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
     conn.commit()
 
-    # Verify the thread is open before tick.
+    # Verify the thread is open before tick. Capture its thread_id — the
+    # source-of-truth row we will re-read via get_thread after resolution
+    # to prove origin↔resolution end-to-end.
     open_before = store.open_threads()
     assert len(open_before) == 1
     assert open_before[0].status == "open"
     assert open_before[0].payload["ref_id"] == trope_id
+    assert open_before[0].origin_region_id == origin_region
+    resolved_thread_id = open_before[0].thread_id
 
     # Step 2: Set trope progress=1.0 so the first tick fires the beat and
     # hits the terminal condition (beats_fired==1==len(escalation) AND
@@ -2023,23 +2042,42 @@ def test_resolved_trope_flips_ledger_entry_and_emits_span() -> None:
         _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
     conn.commit()
 
-    # Assert 1: ledger thread flipped to "resolved".
+    # Assert 1: no open threads remain (the one trope thread was resolved).
     remaining_open = store.open_threads()
     assert remaining_open == [], (
         f"ledger thread still open after resolve_complications_for_resolved_tropes; "
         f"open threads: {remaining_open}"
     )
 
-    # Assert 2: ledger.resolve span was emitted (Plan 5's span in resolve_thread).
+    # Assert 2: origin↔resolution proven through the SOURCE OF TRUTH — the
+    # persisted ledger row. get_thread returns the row regardless of status;
+    # assert it is now "resolved" AND still carries the attach origin region.
+    # This is what the spec's "ledger.resolve carries origin region"
+    # actually requires (origin is durable on the row; merged Plan 5's
+    # ledger.resolve span carries only thread_id — Plan 6 must not modify
+    # Plan 5's owned span; Seam-1 supersession continuation).
+    resolved_row = store.get_thread(resolved_thread_id)
+    assert resolved_row.status == "resolved", (
+        f"persisted ledger row status is {resolved_row.status!r}, expected 'resolved'"
+    )
+    assert resolved_row.origin_region_id == origin_region, (
+        f"persisted ledger row origin_region_id is "
+        f"{resolved_row.origin_region_id!r}, expected {origin_region!r} — "
+        "origin↔resolution linkage broken"
+    )
+
+    # Assert 3: the REAL ledger.resolve span (Plan 5's, via the in-memory
+    # exporter) was emitted carrying THE resolved thread_id — that span
+    # plus the persisted row above proves origin↔resolution end-to-end.
     finished = exporter.get_finished_spans()
     resolve_spans = [s for s in finished if s.name == SPAN_LEDGER_RESOLVE]
     assert resolve_spans, (
         "ledger.resolve span NOT emitted — Plan 5's resolve_thread span is missing"
     )
-    # The span carries the thread_id.
     resolve_thread_ids = {(s.attributes or {}).get("thread_id") for s in resolve_spans}
-    assert any(tid is not None for tid in resolve_thread_ids), (
-        "ledger.resolve span has no thread_id attribute — origin region unverifiable"
+    assert resolved_thread_id in resolve_thread_ids, (
+        f"ledger.resolve span did not carry the resolved thread_id "
+        f"{resolved_thread_id!r}; span thread_ids: {resolve_thread_ids}"
     )
 
 
@@ -2172,3 +2210,196 @@ def test_unresolved_thread_stays_open_across_subsequent_expansions() -> None:
     )
     # All three threads are "open" — accumulation spine intact.
     assert all(t.status == "open" for t in final_open)
+
+
+# ---------------------------------------------------------------------------
+# Task 5 Blocker-3 correctness: resolution semantics for the real cases.
+#   (a) resolved trope with NO matching open dungeon thread → clean no-op.
+#   (b) duplicate set-piece components → BOTH count-matched threads flip.
+#   (c) more resolved instances than open threads / repeated calls →
+#       resolve all open, surplus is a clean no-op (no double-resolve,
+#       no raise).
+# ---------------------------------------------------------------------------
+
+
+def _store_mem() -> tuple[Any, Any]:
+    import sqlite3  # noqa: PLC0415
+
+    from sidequest.dungeon.persistence import DungeonStore  # noqa: PLC0415
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    return conn, store
+
+
+def test_resolution_case_a_resolved_trope_no_dungeon_thread_is_clean_noop() -> None:
+    """Case (a) — the DOMINANT path. A normal resolved trope with NO
+    matching open dungeon thread is a clean no-op: no NotFoundError, no
+    raise, no ledger mutation. Most resolved tropes are non-dungeon tropes
+    (the trope engine is global) and land here every turn."""
+    from sidequest.dungeon.persistence import ComplicationThread  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+
+    conn, store = _store_mem()
+    # One UNRELATED open dungeon thread (ref_id "altar_collapse") — proves
+    # the no-op leaves real ledger rows untouched.
+    store.open_thread(
+        ComplicationThread(
+            thread_id="t_unrelated",
+            origin_region_id="exp001.r0",
+            kind="trope",
+            status="open",
+            started_at_depth_score=10.0,
+            payload={
+                "ref_id": "altar_collapse",
+                "setpiece_id": "sp",
+                "component_index": 0,
+                "params": {},
+            },
+        )
+    )
+    conn.commit()
+
+    # A bunch of normal resolved tropes, NONE of which has a dungeon thread.
+    resolve_complications_for_resolved_tropes(
+        resolved_trope_ids=["forest_ambush", "tavern_brawl", "rivals_reunite"],
+        store=store,
+    )
+
+    # Clean no-op: the unrelated thread is untouched, still open.
+    open_threads = store.open_threads()
+    assert len(open_threads) == 1
+    assert open_threads[0].thread_id == "t_unrelated"
+    assert open_threads[0].status == "open"
+
+
+def test_resolution_case_b_duplicate_components_both_threads_flip() -> None:
+    """Case (b) — two resolved instances of the same trope_id with TWO open
+    kind="trope" threads (same payload.ref_id) → BOTH flip resolved
+    (count-matched). resolved_trope_ids is NOT deduped — the handshake diff
+    legitimately carries the trope_id once per resolved TropeState."""
+    from sidequest.dungeon.persistence import ComplicationThread  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+
+    conn, store = _store_mem()
+    for i in range(2):
+        store.open_thread(
+            ComplicationThread(
+                thread_id=f"twin_{i}",
+                origin_region_id="exp002.r3",
+                kind="trope",
+                status="open",
+                started_at_depth_score=5.0,
+                payload={
+                    "ref_id": "twin_trap",
+                    "setpiece_id": "double_trouble",
+                    "component_index": i,
+                    "params": {},
+                },
+            )
+        )
+    conn.commit()
+    assert len(store.open_threads()) == 2
+
+    # Two resolved instances of the same trope_id (the diff carries it
+    # ONCE PER resolved TropeState — duplicate components → duplicate ids).
+    resolve_complications_for_resolved_tropes(
+        resolved_trope_ids=["twin_trap", "twin_trap"],
+        store=store,
+    )
+
+    # BOTH threads resolved (count-matched, no naive dedup).
+    assert store.open_threads() == []
+    for i in range(2):
+        row = store.get_thread(f"twin_{i}")
+        assert row.status == "resolved", (
+            f"twin_{i} not resolved — naive dedup under-resolved genuine duplicates"
+        )
+
+
+def test_resolution_case_c_surplus_resolved_instances_clean_noop_no_raise() -> None:
+    """Case (c) — more resolved instances than open threads, AND a repeated
+    call. Resolve every currently-open matching thread; surplus instances
+    and a second call find no open thread and are a clean no-op — NO
+    double-resolve (no spurious second ledger.resolve span), NO raise."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.persistence import ComplicationThread  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.telemetry.spans.dungeon_persist import (  # noqa: PLC0415
+        SPAN_LEDGER_RESOLVE,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    conn, store = _store_mem()
+    # ONE open thread, but THREE resolved instances of its ref_id.
+    store.open_thread(
+        ComplicationThread(
+            thread_id="solo_thread",
+            origin_region_id="exp003.r1",
+            kind="trope",
+            status="open",
+            started_at_depth_score=12.0,
+            payload={
+                "ref_id": "ceiling_crack",
+                "setpiece_id": "collapse",
+                "component_index": 0,
+                "params": {},
+            },
+        )
+    )
+    conn.commit()
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        # Surplus: 3 resolved instances, only 1 open thread.
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=["ceiling_crack", "ceiling_crack", "ceiling_crack"],
+            store=store,
+        )
+        conn.commit()
+        # Repeated call (idempotent re-detect — the handshake fires every
+        # turn; an already-resolved thread must NOT re-resolve).
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=["ceiling_crack"],
+            store=store,
+        )
+        conn.commit()
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # The single thread resolved exactly once; no raise on the surplus.
+    assert store.open_threads() == []
+    row = store.get_thread("solo_thread")
+    assert row.status == "resolved"
+
+    # Exactly ONE ledger.resolve span — the surplus instances and the
+    # repeated call did NOT re-resolve (no double-emit, no GM-panel lie).
+    finished = exporter.get_finished_spans()
+    resolve_spans = [
+        s
+        for s in finished
+        if s.name == SPAN_LEDGER_RESOLVE and (s.attributes or {}).get("thread_id") == "solo_thread"
+    ]
+    assert len(resolve_spans) == 1, (
+        f"expected exactly ONE ledger.resolve span for solo_thread (no "
+        f"double-resolve on surplus/repeat), got {len(resolve_spans)}"
+    )

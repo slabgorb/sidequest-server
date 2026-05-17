@@ -10,11 +10,17 @@ verifies:
       fires from the REAL trope/scenario resolution path — the 45-20
       handshake diff — not a test-only call.
 
-  (c) Decision N stop-and-report: ``_SessionData`` has NO ``dungeon_store``
-      attribute. The handler-site wiring is confirmed present (the import
-      and call exist in the real handler file) and the seam is declared
-      loudly (the WARNING log path is the honest deferral, NOT a silent
-      no-op). This test asserts the seam structure; Plan 7 activates it.
+  (c) Decision N (corrected — honest deferral, NO runtime noise):
+      ``_SessionData`` has NO ``dungeon_store`` attribute. The handler-site
+      call is present and GUARDED by
+      ``getattr(sd, "dungeon_store", None) is not None``. Pre-Plan-7 the
+      no-op is PROVABLY CORRECT (only Plan 7 both materializes set-pieces —
+      creating ledger threads — AND wires ``sd.dungeon_store``; they land
+      together, so store-absent ⟺ no open dungeon threads). There is NO
+      runtime warning/log (a per-turn log on the global trope engine is
+      ignorable noise, not a guard). The LOUD seam is this file's
+      structural tripwire (the ``"dungeon_store" not in _SessionData``
+      assertion), which fires exactly once — when Plan 7 must finish.
 
   (d) The OTEL routing-completeness contract: ``ledger.resolve`` (Plan 5's
       span, emitted inside ``store.resolve_thread``) is in SPAN_ROUTES.
@@ -29,15 +35,21 @@ Architecture:
   - ``ledger.resolve`` is captured via the real OTEL in-memory exporter
     (the established pattern from test_persistence.py:test_commit_and_ledger_emit_spans).
 
-Decision N honest-deferral (stop-and-report):
+Decision N honest-deferral (corrected — provably-correct no-op):
   ``_SessionData`` genuinely has no ``dungeon_store`` attribute — Plan 7
   owns the session→DungeonStore wiring. The handler site in
-  ``websocket_session_handler.py`` references ``sd.dungeon_store`` via
-  ``getattr(sd, "dungeon_store", None)`` with a loud WARNING log when absent.
-  This is NOT a silent ``if store is None: return`` no-op: the warning is
-  the declared, auditable deferral signal. Plan 7 adds
-  ``dungeon_store: DungeonStore | None = None`` to ``_SessionData`` and
-  populates it at session-construction time to activate the path.
+  ``websocket_session_handler.py`` reads the store via
+  ``getattr(sd, "dungeon_store", None)`` and gates the resolution call on
+  ``is not None``. Pre-Plan-7 the no-op is provably correct: only Plan 7
+  both materializes set-pieces (creating ledger threads via
+  ``attach_set_piece``) AND wires ``sd.dungeon_store`` — the two land
+  together, so store-absent ⟺ no open dungeon threads exist. NO runtime
+  warning/log (a per-turn log on the global trope engine is ignorable
+  noise, NOT a guard — the reviewer-rejected form). This is honest
+  deferral done right: the invariant is documented in a precise code
+  comment AND provably true; the loud declaration is THIS file's
+  structural tripwire (the ``"dungeon_store" not in _SessionData``
+  assertion), which fires exactly once when Plan 7 must finish the job.
   The wiring function itself (``resolve_complications_for_resolved_tropes``)
   is fully real and verified here.
 
@@ -97,13 +109,18 @@ def _store_with_schema() -> tuple[Any, DungeonStore]:
 
 
 def _make_terminal_trope_def(trope_id: str) -> Any:
-    """TropeDefinition-shaped object that resolves after ONE tick_tropes call.
+    """Pack DEFINITION (duck-typed for tick_tropes' pack_tropes_by_id) whose
+    one-beat ladder reaches terminal in ONE tick once its live TropeState
+    progress is at the cap.
 
-    One beat at threshold 0.0. TropeState is constructed with progress=1.0
-    so ``_fire_one_staggered_beat`` fires immediately:
+    This returns the trope DEFINITION, NOT a TropeState. One beat at
+    threshold 0.0. The CALLER must set the live ``TropeState.progress = 1.0``
+    (the test does this explicitly before tick_tropes;
+    start_trope_components appends the TropeState at progress 0.0). Then
+    ``_fire_one_staggered_beat`` fires the single beat:
       beats_fired = 1 == len(escalation) AND progress >= 1.0 → "resolved".
 
-    This is the REAL _fire_one_staggered_beat terminal path.
+    This drives the REAL _fire_one_staggered_beat terminal path.
     """
     progression = SimpleNamespace(
         rate_per_turn=0.0,
@@ -298,27 +315,35 @@ def test_mandatory_wiring_real_attach_tick_resolve_ledger_span() -> None:
 
 
 def test_mandatory_wiring_decision_n_handler_site_present_and_seam_declared() -> None:
-    """Decision N stop-and-report verification.
+    """Decision N (corrected) — honest-deferral structural tripwire.
+
+    Decision N corrected (Architect, spec-review pass): pre-Plan-7,
+    ``attach_set_piece`` is never called in production (it is Plan 7's
+    materializer entry point — nothing in prod creates ComplicationThreads
+    yet). So store-absent ⟺ zero dungeon ledger threads exist ⟹ the
+    handler-site no-op is PROVABLY CORRECT. There is NO runtime warning/log
+    (a per-turn log would fire on ~100% of pre-Plan-7 turns because the
+    trope engine is global — pure ignorable noise). The LOUD seam is THIS
+    test's structural tripwire instead: zero runtime noise, a CI tripwire
+    that fires exactly once — when Plan 7 must finish the job.
 
     Confirms:
-    1. ``resolve_complications_for_resolved_tropes`` is imported in the REAL
-       handler file (``websocket_session_handler.py``) — the wiring call
-       exists at the 45-20 handshake site.
-    2. The handler file references ``dungeon_store`` (the Plan 7–designated
-       attribute name) via ``getattr`` — the seam is declared, not stubbed.
-    3. ``_SessionData`` does NOT yet have a ``dungeon_store`` attribute —
-       Plan 7 owns the session→store wiring (honest deferral, not a silent
-       fallback). The absence is the stop-and-report finding.
-
-    This test ASSERTS the stop-and-report path rather than blocking on it —
-    the function is real and wired into the real handshake site; the only
-    deferred atom is Plan 7's store-construction.
+    1. ``resolve_complications_for_resolved_tropes`` is invoked in the REAL
+       handler file at the 45-20 handshake site.
+    2. The call is GUARDED by ``getattr(sd, "dungeon_store", None) is not
+       None`` — the documented-invariant gate (not a tautology, not a
+       silent fallback: the invariant is provably true and code-commented).
+    3. There is NO runtime warning/log for the absent-store case (Decision
+       N corrected — that would be ignorable per-turn noise).
+    4. ``_SessionData`` does NOT yet have a ``dungeon_store`` field — the
+       honest-deferral finding. THIS assertion is the noise-free loud seam:
+       it fires exactly once, when Plan 7 adds the field, forcing whoever
+       flips it to complete the wiring (see the Plan-7 directive below).
     """
     from pathlib import Path  # noqa: PLC0415
 
     from sidequest.server.session_handler import _SessionData  # noqa: PLC0415
 
-    # 1. Check the handler file imports resolve_complications_for_resolved_tropes.
     handler_path = (
         Path(__file__).parent.parent.parent
         / "sidequest"
@@ -329,41 +354,66 @@ def test_mandatory_wiring_decision_n_handler_site_present_and_seam_declared() ->
 
     src = handler_path.read_text(encoding="utf-8")
 
+    # 1. The resolution function is invoked at the handler site.
     assert "resolve_complications_for_resolved_tropes" in src, (
         "resolve_complications_for_resolved_tropes NOT found in "
         "websocket_session_handler.py — the handler-site wiring is missing; "
         "Task 5 requires wiring at the real 45-20 handshake site"
     )
 
-    # 2. The handler references dungeon_store (the Plan 7 seam name).
-    assert "dungeon_store" in src, (
-        "'dungeon_store' NOT referenced in websocket_session_handler.py — "
-        "the Plan 7 session→store seam is not declared; "
-        "Decision N requires the seam to be named, not absent"
+    # 2. The call is GUARDED by the documented-invariant gate. Assert the
+    # actual guarded-call STRUCTURE, not a tautology: the handler must read
+    # the store via getattr and gate the call on `is not None`. We check the
+    # gate token and the guarded call both appear, and that the guard
+    # precedes the call in source order (the call is inside the if-block).
+    gate_marker = 'getattr(sd, "dungeon_store", None)'
+    assert gate_marker in src, (
+        f"handler does not read the store via {gate_marker!r} — the "
+        "documented-invariant Decision-N gate is missing"
+    )
+    gate_idx = src.index(gate_marker)
+    # The guarded call must come AFTER the gate (inside its if-block).
+    call_idx = src.index("resolve_complications_for_resolved_tropes(", gate_idx)
+    is_not_none_idx = src.index("is not None", gate_idx)
+    assert is_not_none_idx < call_idx, (
+        "the resolve_complications_for_resolved_tropes(...) call is not "
+        'guarded by the `getattr(sd, "dungeon_store", None) is not None` '
+        "gate — Decision N requires the gated-call structure (provably-"
+        "correct no-op when the store is absent)"
     )
 
-    # 3. Decision N: _SessionData does NOT have dungeon_store yet — Plan 7's.
-    # This is the authorized stop-and-report finding: the function is real and
-    # wired into the real handshake path; the ONLY deferred atom is Plan 7's
-    # store-construction. The absence must be LOUD (warning log), not silent.
+    # 3. NO runtime warning/log for the absent-store case (Decision N
+    # corrected — a per-turn log on the global trope engine is noise, not a
+    # guard). Assert the old noise-y warning string is GONE.
+    assert "dungeon.ledger_resolve.skipped" not in src, (
+        "handler still emits a per-turn warning for the absent-store case — "
+        "Decision N (corrected) removes ALL runtime noise; the loud seam is "
+        "THIS test's structural tripwire, not a log"
+    )
+
+    # 4. THE LOUD SEAM (noise-free, fires exactly once): _SessionData has no
+    # dungeon_store field yet — the honest-deferral finding. When Plan 7
+    # adds the field this assertion fails, forcing the Plan-7 author to:
+    #   (i) invert this assertion to a positive type check, AND
+    #   (ii) in the SAME change, prove the resolution path is exercised
+    #        end-to-end (see the Decision-N seam at the handler site +
+    #        test_mandatory_wiring_real_attach_tick_resolve_ledger_span,
+    #        which already exercises resolve_complications_for_resolved_tropes
+    #        with a real store the way Plan 7 will populate sd.dungeon_store).
+    # Plan 7 MUST NOT just delete/skip this test — it must flip it and wire
+    # the store so the gated call actually fires from the live turn path.
     sd_fields = {f.name for f in __import__("dataclasses").fields(_SessionData)}
-    # Plan 7 will add dungeon_store to _SessionData. Until then it is absent.
-    # This assertion documents the honest-deferral state and will fail (loudly)
-    # the moment Plan 7 wires it — at which point this assert should be
-    # inverted (or this test updated to reflect the new wired state).
     assert "dungeon_store" not in sd_fields, (
-        "'dungeon_store' IS on _SessionData — Plan 7 has wired the seam! "
-        "Update this test: remove the 'not in' assertion and add a positive "
-        "check that the field is DungeonStore|None. Task 5's stop-and-report "
-        "no longer applies."
-    )
-
-    # 4. The handler must NOT use a silent no-op guard.
-    # A silent ``if store is None: return`` (without a log) would be a
-    # forbidden silent fallback. Check the handler uses getattr (the
-    # honest-deferral pattern) or the WARNING log path.
-    assert "getattr" in src or "dungeon_store" in src, (
-        "handler does not use getattr for dungeon_store — the seam may be a silent no-op"
+        "'dungeon_store' IS on _SessionData — Plan 7 has wired the seam. "
+        "REQUIRED ACTION (do NOT just delete this test): (1) invert this "
+        "assertion to `assert 'dungeon_store' in sd_fields` plus a positive "
+        "`DungeonStore | None` type check; (2) in the SAME change, populate "
+        "sd.dungeon_store at session construction so the gated handler call "
+        "fires from the live turn path; (3) add/keep an integration test "
+        "proving a real resolution flows turn → handshake diff → "
+        "resolve_complications_for_resolved_tropes → store.resolve_thread. "
+        "Decision N's deferral is now complete and must be PROVEN, not "
+        "merely unblocked."
     )
 
 

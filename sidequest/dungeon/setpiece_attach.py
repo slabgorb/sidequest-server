@@ -916,6 +916,28 @@ def resolve_complications_for_resolved_tropes(
     Decision O: quest-thread resolution is Plan 7's. This function resolves
     ONLY ``kind="trope"`` threads. Quest threads remain open.
 
+    Correctness contract (real cases, all tested):
+
+    (a) Common case — a resolved trope_id with NO matching open dungeon
+        thread (most resolved tropes are normal non-dungeon tropes): clean
+        no-op for that id. NO ``NotFoundError``, NO log. This is the
+        dominant intended path (the trope engine is global; only a tiny
+        fraction of resolved tropes correspond to a dungeon set-piece
+        complication).
+
+    (b) Duplicate set-piece components — two resolved instances of the
+        same trope_id with two open ``kind="trope"`` threads (same
+        ``payload["ref_id"]``): BOTH threads flip resolved (count-matched).
+        ``resolved_trope_ids`` is NOT deduped — that would under-resolve
+        genuine duplicates.
+
+    (c) More resolved instances than open threads (or repeated calls):
+        resolve every currently-open matching thread, then stop. Each open
+        thread_id is consumed at most once (popped from the per-ref_id
+        worklist as it is resolved), so a surplus resolved instance finds
+        an empty worklist and is a clean no-op — NO double-resolve, NO
+        spurious second ``ledger.resolve`` span, NO raise.
+
     Args:
         resolved_trope_ids: List of trope_ids that flipped to "resolved"
             this turn (produced by the 45-20 handshake diff in
@@ -925,12 +947,6 @@ def resolve_complications_for_resolved_tropes(
             (the 45-20 handshake site) obtains this from ``sd.dungeon_store``
             (the Plan 7–designated attribute). Transaction boundary is the
             caller's (plan §7.5).
-
-    Raises:
-        NotFoundError: propagated from ``store.resolve_thread`` if a
-            matched thread_id is absent from the ledger — this is a real
-            bug (the match logic found a thread, then it disappeared), NOT
-            silenced.
     """
     if not resolved_trope_ids:
         return
@@ -941,23 +957,33 @@ def resolve_complications_for_resolved_tropes(
     # on payload["ref_id"] without changing this interface.
     open_threads = store.open_threads()
 
-    # Build a lookup: ref_id → list[thread_id] for open trope threads.
+    # Build a worklist: ref_id → list[thread_id] for open trope threads.
     # Multiple threads with the same ref_id are all included (duplicate
-    # trope_id case, spec §7.1 aggregate resolution).
+    # trope_id case, spec §7.1 aggregate resolution). We POP from each list
+    # as we resolve so a thread_id is consumed at most once per call — case
+    # (c): a surplus resolved instance hits an empty list and no-ops cleanly
+    # rather than re-resolving an already-resolved thread (which would
+    # double-emit ledger.resolve and lie to the GM panel).
     trope_threads_by_ref_id: dict[str, list[str]] = {}
     for thread in open_threads:
         if thread.kind != "trope":
             # Decision O: only trope threads; quest resolution is Plan 7's.
             continue
         ref_id = thread.payload.get("ref_id", "")
-        if ref_id not in trope_threads_by_ref_id:
-            trope_threads_by_ref_id[ref_id] = []
-        trope_threads_by_ref_id[ref_id].append(thread.thread_id)
+        trope_threads_by_ref_id.setdefault(ref_id, []).append(thread.thread_id)
 
     for trope_id in resolved_trope_ids:
-        for thread_id in trope_threads_by_ref_id.get(trope_id, []):
-            # Plan 5's resolve_thread emits ledger.resolve internally — Plan 6
-            # does NOT add another emit here (Seam 1 supersession continuation).
-            # NotFoundError propagates — the match above found this thread_id,
-            # so absence at resolve time is a real bug (No Silent Fallbacks).
-            store.resolve_thread(thread_id)
+        worklist = trope_threads_by_ref_id.get(trope_id)
+        if not worklist:
+            # Case (a)/(c): no (remaining) open dungeon thread for this
+            # resolved trope — clean no-op. Most resolved tropes are normal
+            # non-dungeon tropes and land here. NOT an error, NOT logged.
+            continue
+        # Consume exactly one open thread per resolved instance (count-
+        # matched, case (b)). Plan 5's resolve_thread emits ledger.resolve
+        # internally — Plan 6 does NOT add another emit (Seam 1
+        # supersession continuation). The thread_id came from the
+        # open_threads() snapshot above and is consumed once, so the
+        # resolve always targets a currently-open row.
+        thread_id = worklist.pop(0)
+        store.resolve_thread(thread_id)

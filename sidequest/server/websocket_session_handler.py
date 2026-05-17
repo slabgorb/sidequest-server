@@ -2792,15 +2792,20 @@ class WebSocketSessionHandler:
                     # just-resolved trope. Quest-thread resolution is
                     # Plan 7's (Decision O).
                     #
-                    # DECISION N STOP-AND-REPORT: _SessionData has NO
-                    # dungeon_store attribute — Plan 7 owns the
-                    # session→DungeonStore wiring (adds
-                    # ``dungeon_store: DungeonStore | None = None`` to
-                    # _SessionData and populates it at session-construction
-                    # time). Until Plan 7 lands, getattr returns None and
-                    # the WARNING below fires so the GM panel and server log
-                    # show the honest deferral. This is NOT a silent no-op:
-                    # the log line is the auditable deferral signal.
+                    # DECISION N (honest deferral, no runtime noise):
+                    # No-op is correct iff no dungeon was materialized. Only
+                    # Plan 7 both materializes set-pieces (creating ledger
+                    # threads via attach_set_piece) AND wires
+                    # sd.dungeon_store — the two land together, so
+                    # store-absent ⟺ no open dungeon threads exist.
+                    # Resolution wiring activates the moment Plan 7 sets
+                    # sd.dungeon_store. The loud seam is the mandatory
+                    # wiring test's structural tripwire
+                    # (test_setpiece_attach_wiring.py), NOT a per-turn log:
+                    # the trope engine is global, so a per-turn warning
+                    # would fire on ~100% of pre-Plan-7 turns and be pure
+                    # ignorable noise. No warning, no log here — the no-op
+                    # is provably correct.
                     _dungeon_store = getattr(sd, "dungeon_store", None)
                     if _dungeon_store is not None:
                         from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
@@ -2816,12 +2821,6 @@ class WebSocketSessionHandler:
                         resolve_complications_for_resolved_tropes(
                             resolved_trope_ids=_resolved_this_turn,
                             store=_dungeon_store,
-                        )
-                    else:
-                        logger.warning(
-                            "dungeon.ledger_resolve.skipped — sd.dungeon_store is not "
-                            "set; Plan 7 must wire DungeonStore into _SessionData to "
-                            "activate complication-ledger resolution (Decision N)"
                         )
 
                     now_encounter = snapshot.encounter
