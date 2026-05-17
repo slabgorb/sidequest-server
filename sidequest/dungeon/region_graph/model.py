@@ -20,6 +20,23 @@ class RegionNode:
     theme: str
     depth_score: float | None = None  # assigned at attach (Plan 3), frozen into save
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "expansion_id": self.expansion_id,
+            "theme": self.theme,
+            "depth_score": self.depth_score,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionNode:
+        return cls(
+            id=d["id"],
+            expansion_id=d["expansion_id"],
+            theme=d["theme"],
+            depth_score=d["depth_score"],
+        )
+
 
 @dataclass(frozen=True)
 class RegionEdge:
@@ -31,6 +48,25 @@ class RegionEdge:
 
     def endpoints(self) -> frozenset[str]:
         return frozenset((self.a, self.b))
+
+    def to_dict(self) -> dict:
+        return {
+            "a": self.a,
+            "b": self.b,
+            "kind": self.kind,
+            "hidden": self.hidden,
+            "shortcut": self.shortcut,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionEdge:
+        return cls(
+            a=d["a"],
+            b=d["b"],
+            kind=d["kind"],
+            hidden=d["hidden"],
+            shortcut=d["shortcut"],
+        )
 
 
 @dataclass
@@ -136,3 +172,19 @@ class RegionGraph:
         """|E| - |V| + components. 0 == acyclic (forest, possibly
         disconnected); >=1 means at least one cycle."""
         return len(self.edges) - len(self.nodes) + self._component_count()
+
+    def to_dict(self) -> dict:
+        return {
+            "entrance_id": self.entrance_id,
+            "nodes": [n.to_dict() for n in self.nodes.values()],
+            "edges": [e.to_dict() for e in self.edges],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionGraph:
+        g = cls(entrance_id=d["entrance_id"])
+        for nd in d["nodes"]:
+            g.add_node(RegionNode.from_dict(nd))
+        for ed in d["edges"]:
+            g.add_edge(RegionEdge.from_dict(ed))
+        return g
