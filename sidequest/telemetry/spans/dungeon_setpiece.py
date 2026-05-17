@@ -1,6 +1,6 @@
 """Dungeon set-piece attach spans (Beneath Sünden Plan 6 §6).
 
-Three spans live here, each with a real caller in setpiece_attach.py:
+Four spans live here, each with a real caller in setpiece_attach.py:
 - ``trope.start`` — start_trope_components (Task 2). Has a failure path:
   the span emits failed=True BEFORE re-raising on an unknown trope_id so
   the GM panel sees the content authoring bug rather than silence.
@@ -17,6 +17,17 @@ Three spans live here, each with a real caller in setpiece_attach.py:
   fields as attributes (the same way DepthReport feeds
   ``dungeon.materialize.attach``). The single coalescence span Plan 7 uses
   as its attach-stage lie detector.
+- ``setpiece.resolve`` — resolve_complications_for_resolved_tropes
+  (Task 5). One aggregate span per resolution-subscription call (every
+  turn the 45-20 handshake fires). Carries ``tropes_processed`` (how many
+  resolved trope_ids the subscription was handed) and ``threads_resolved``
+  (how many open ledger threads it actually flipped). REQUIRED by the
+  CLAUDE.md OTEL Observability Principle: without it the GM panel cannot
+  distinguish "subscription fired, correctly found 0 matching threads"
+  from "subscription never ran". This is the Plan-6-owned aggregate
+  subsystem-decision span; Plan 5 still owns the per-thread ``ledger.*``
+  spans underneath (do NOT re-emit ``ledger.resolve`` here — Seam-1
+  supersession: Plan 5 owns it).
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ from .span import Span
 SPAN_TROPE_START = "trope.start"
 SPAN_QUEST_SEED = "quest.seed"
 SPAN_SETPIECE_ATTACH = "setpiece.attach"
+SPAN_SETPIECE_RESOLVE = "setpiece.resolve"
 
 
 def _attr(field: str):
@@ -189,11 +201,66 @@ def setpiece_attach_span(
         yield span
 
 
+# setpiece.resolve — one aggregate span per resolution-subscription call
+# (Task 5). Emitted by resolve_complications_for_resolved_tropes every time
+# the 45-20 handshake fires. tropes_processed = #resolved trope_ids handed
+# in; threads_resolved = #open ledger threads actually flipped. This is the
+# Plan-6-owned subsystem-decision span the OTEL Observability Principle
+# requires — Plan 5's per-thread ledger.resolve stays underneath unchanged.
+SPAN_ROUTES[SPAN_SETPIECE_RESOLVE] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    extract=lambda s: {
+        "field": "complication_ledger",
+        "op": "setpiece_resolve",
+        "tropes_processed": _attr("tropes_processed")(s),
+        "threads_resolved": _attr("threads_resolved")(s),
+    },
+)
+
+
+@contextmanager
+def setpiece_resolve_span(
+    *,
+    tropes_processed: int,
+    threads_resolved: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Open the aggregate setpiece.resolve span for one resolution call.
+
+    One span per ``resolve_complications_for_resolved_tropes`` invocation
+    (every turn the 45-20 handshake fires). ``tropes_processed`` is the
+    count of resolved trope_ids the subscription was handed (= the
+    handshake diff size); ``threads_resolved`` is the count of open ledger
+    threads it actually flipped. Both are late-bound by the caller after
+    the resolution loop completes so the GM panel sees the subscription
+    fired AND what it did — distinguishing "fired, 0 matches" from "never
+    ran" (CLAUDE.md OTEL Observability Principle).
+
+    Plan 5 still owns the per-thread ``ledger.resolve`` span inside
+    ``store.resolve_thread``; this aggregate does NOT re-emit it
+    (Seam-1 supersession).
+    """
+    with Span.open(
+        SPAN_SETPIECE_RESOLVE,
+        {
+            "tropes_processed": tropes_processed,
+            "threads_resolved": threads_resolved,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
 __all__ = [
     "SPAN_QUEST_SEED",
     "SPAN_SETPIECE_ATTACH",
+    "SPAN_SETPIECE_RESOLVE",
     "SPAN_TROPE_START",
     "quest_seed_span",
     "setpiece_attach_span",
+    "setpiece_resolve_span",
     "trope_start_span",
 ]

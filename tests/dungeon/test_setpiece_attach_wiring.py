@@ -362,24 +362,40 @@ def test_mandatory_wiring_decision_n_handler_site_present_and_seam_declared() ->
     )
 
     # 2. The call is GUARDED by the documented-invariant gate. Assert the
-    # actual guarded-call STRUCTURE, not a tautology: the handler must read
-    # the store via getattr and gate the call on `is not None`. We check the
-    # gate token and the guarded call both appear, and that the guard
-    # precedes the call in source order (the call is inside the if-block).
-    gate_marker = 'getattr(sd, "dungeon_store", None)'
-    assert gate_marker in src, (
-        f"handler does not read the store via {gate_marker!r} — the "
-        "documented-invariant Decision-N gate is missing"
+    # actual guarded-call STRUCTURE, not a tautology. The handler shape is:
+    #     _dungeon_store = getattr(sd, "dungeon_store", None)
+    #     if _dungeon_store is not None:
+    #         ... resolve_complications_for_resolved_tropes(...)
+    # We bind the `is not None` check to the SAME local the getattr
+    # assigns (the next-line gate), so a future unrelated `is not None`
+    # elsewhere in the handler cannot accidentally satisfy this (MINOR
+    # tightening, spec-review).
+    import re  # noqa: PLC0415
+
+    gate_re = re.compile(r'(\w+)\s*=\s*getattr\(\s*sd\s*,\s*"dungeon_store"\s*,\s*None\s*\)')
+    m = gate_re.search(src)
+    assert m is not None, (
+        "handler does not read the store via `<var> = getattr(sd, "
+        '"dungeon_store", None)` — the documented-invariant Decision-N '
+        "gate is missing"
     )
-    gate_idx = src.index(gate_marker)
-    # The guarded call must come AFTER the gate (inside its if-block).
-    call_idx = src.index("resolve_complications_for_resolved_tropes(", gate_idx)
-    is_not_none_idx = src.index("is not None", gate_idx)
-    assert is_not_none_idx < call_idx, (
+    store_var = m.group(1)
+    gate_idx = m.end()
+    # The `is not None` gate must reference THE local the getattr assigned
+    # (not some unrelated `is not None`), and must appear right after it.
+    typed_gate = f"if {store_var} is not None:"
+    typed_gate_idx = src.find(typed_gate, gate_idx)
+    assert typed_gate_idx != -1, (
+        f"no `{typed_gate}` gate after `{store_var} = getattr(...)` — "
+        "Decision N requires the call gated on the store local being "
+        "non-None (provably-correct no-op when the store is absent)"
+    )
+    # And the guarded call must be AFTER the gate (inside its if-block).
+    call_idx = src.index("resolve_complications_for_resolved_tropes(", typed_gate_idx)
+    assert call_idx > typed_gate_idx, (
         "the resolve_complications_for_resolved_tropes(...) call is not "
-        'guarded by the `getattr(sd, "dungeon_store", None) is not None` '
-        "gate — Decision N requires the gated-call structure (provably-"
-        "correct no-op when the store is absent)"
+        f"inside the `{typed_gate}` block — Decision N requires the "
+        "gated-call structure"
     )
 
     # 3. NO runtime warning/log for the absent-store case (Decision N

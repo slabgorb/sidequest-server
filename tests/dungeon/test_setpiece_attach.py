@@ -2403,3 +2403,274 @@ def test_resolution_case_c_surplus_resolved_instances_clean_noop_no_raise() -> N
         f"expected exactly ONE ledger.resolve span for solo_thread (no "
         f"double-resolve on surplus/repeat), got {len(resolve_spans)}"
     )
+
+
+def test_resolution_case_d_cross_setpiece_same_ref_id_one_flips() -> None:
+    """Case (d) — two open kind="trope" threads with the SAME ref_id but
+    from DIFFERENT setpiece_ids, and a SINGLE resolved instance of that
+    trope_id → exactly ONE thread flips (the lexicographically-first by
+    thread_id, because open_threads() is ORDER BY thread_id and the
+    worklist pops index 0); the other stays open.
+
+    This ordering is INTENTIONAL and deterministic. Plan 7, if it
+    introduces origin/set-piece-scoped resolution (resolve only the thread
+    whose origin region the player actually closed), must CONSCIOUSLY
+    change this — this test pins the current contract so that change is
+    deliberate, not accidental.
+
+    Asserts exactly ONE ledger.resolve AND exactly ONE setpiece.resolve
+    with threads_resolved=1, tropes_processed=1."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.persistence import ComplicationThread  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.telemetry.spans.dungeon_persist import (  # noqa: PLC0415
+        SPAN_LEDGER_RESOLVE,
+    )
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_RESOLVE,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    conn, store = _store_mem()
+    # Two threads, SAME ref_id "shared_curse", DIFFERENT setpiece_ids.
+    # thread_id "aaa_first" < "zzz_second" lexicographically — open_threads()
+    # ORDER BY thread_id returns aaa_first first, so it is the one resolved.
+    store.open_thread(
+        ComplicationThread(
+            thread_id="aaa_first",
+            origin_region_id="exp001.r1",
+            kind="trope",
+            status="open",
+            started_at_depth_score=10.0,
+            payload={
+                "ref_id": "shared_curse",
+                "setpiece_id": "cursed_altar",
+                "component_index": 0,
+                "params": {},
+            },
+        )
+    )
+    store.open_thread(
+        ComplicationThread(
+            thread_id="zzz_second",
+            origin_region_id="exp001.r9",
+            kind="trope",
+            status="open",
+            started_at_depth_score=20.0,
+            payload={
+                "ref_id": "shared_curse",
+                "setpiece_id": "haunted_well",
+                "component_index": 0,
+                "params": {},
+            },
+        )
+    )
+    conn.commit()
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        # A SINGLE resolved instance of shared_curse.
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=["shared_curse"],
+            store=store,
+        )
+        conn.commit()
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # Exactly ONE flipped — the lexicographically-first thread_id.
+    aaa = store.get_thread("aaa_first")
+    zzz = store.get_thread("zzz_second")
+    assert aaa.status == "resolved", (
+        "the lexicographically-first thread (aaa_first) must be the one "
+        "resolved — open_threads() ORDER BY thread_id + pop(0)"
+    )
+    assert zzz.status == "open", (
+        "the second cross-set-piece thread must stay open — only ONE "
+        "resolved instance was handed in (case (d) contract)"
+    )
+    assert len(store.open_threads()) == 1
+
+    finished = exporter.get_finished_spans()
+
+    # Exactly ONE ledger.resolve (Plan 5's per-thread span).
+    ledger_resolve = [s for s in finished if s.name == SPAN_LEDGER_RESOLVE]
+    assert len(ledger_resolve) == 1, (
+        f"expected exactly ONE ledger.resolve, got {len(ledger_resolve)}"
+    )
+    assert (ledger_resolve[0].attributes or {}).get("thread_id") == "aaa_first"
+
+    # Exactly ONE setpiece.resolve aggregate span, threads_resolved=1.
+    setpiece_resolve = [s for s in finished if s.name == SPAN_SETPIECE_RESOLVE]
+    assert len(setpiece_resolve) == 1, (
+        f"expected exactly ONE setpiece.resolve aggregate span, got {len(setpiece_resolve)}"
+    )
+    attrs = setpiece_resolve[0].attributes or {}
+    assert attrs.get("tropes_processed") == 1, (
+        f"setpiece.resolve tropes_processed should be 1, got {attrs.get('tropes_processed')}"
+    )
+    assert attrs.get("threads_resolved") == 1, (
+        f"setpiece.resolve threads_resolved should be 1 (only one of the two "
+        f"cross-set-piece threads flips), got {attrs.get('threads_resolved')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 5: setpiece.resolve aggregate span — CLAUDE.md OTEL Observability
+# Principle. The GM panel must distinguish "subscription fired, 0 matches"
+# from "subscription never ran".
+# ---------------------------------------------------------------------------
+
+
+def test_setpiece_resolve_span_routed() -> None:
+    """setpiece.resolve must be in SPAN_ROUTES — routing-completeness
+    contract (mirrors test_attach_set_piece_setpiece_attach_span_routed).
+    Without a route the GM panel's typed tabs silently miss the
+    resolution-subscription subsystem."""
+    from sidequest.telemetry.spans import SPAN_ROUTES  # noqa: PLC0415
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_RESOLVE,
+    )
+
+    assert SPAN_SETPIECE_RESOLVE in SPAN_ROUTES, (
+        "setpiece.resolve has no SPAN_ROUTES entry — GM panel would miss "
+        "the resolution-subscription subsystem (OTEL Observability Principle)"
+    )
+
+
+def test_setpiece_resolve_span_fires_on_empty_diff_turn() -> None:
+    """The aggregate span fires EVERY call — including the empty-diff turn
+    (no tropes resolved). This is the OTEL Observability Principle's core
+    requirement: the GM panel must distinguish "subscription fired,
+    correctly found 0 matching threads" from "subscription never ran".
+    An empty resolved_trope_ids → span with tropes_processed=0,
+    threads_resolved=0 (NOT silence)."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_RESOLVE,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    _conn, store = _store_mem()
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        # Empty diff — the dominant per-turn case (no tropes resolved).
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=[],
+            store=store,
+        )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    finished = exporter.get_finished_spans()
+    spans = [s for s in finished if s.name == SPAN_SETPIECE_RESOLVE]
+    assert len(spans) == 1, (
+        "setpiece.resolve did NOT fire on the empty-diff turn — the GM "
+        "panel cannot distinguish 'fired, 0 matches' from 'never ran' "
+        "(OTEL Observability Principle violated)"
+    )
+    attrs = spans[0].attributes or {}
+    assert attrs.get("tropes_processed") == 0
+    assert attrs.get("threads_resolved") == 0
+
+
+def test_setpiece_resolve_span_reports_real_threads_resolved_count() -> None:
+    """The aggregate span's threads_resolved is late-bound to the REAL
+    count actually flipped (lie-detector cross-check): 2 resolved instances
+    + 2 matching open threads → threads_resolved=2; the count equals the
+    number of ledger.resolve (Plan 5) spans emitted underneath."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.persistence import ComplicationThread  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import (  # noqa: PLC0415
+        resolve_complications_for_resolved_tropes,
+    )
+    from sidequest.telemetry.spans.dungeon_persist import (  # noqa: PLC0415
+        SPAN_LEDGER_RESOLVE,
+    )
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_RESOLVE,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    conn, store = _store_mem()
+    for i in range(2):
+        store.open_thread(
+            ComplicationThread(
+                thread_id=f"twin_{i}",
+                origin_region_id="exp002.r3",
+                kind="trope",
+                status="open",
+                started_at_depth_score=5.0,
+                payload={
+                    "ref_id": "twin_trap",
+                    "setpiece_id": "double_trouble",
+                    "component_index": i,
+                    "params": {},
+                },
+            )
+        )
+    conn.commit()
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        resolve_complications_for_resolved_tropes(
+            resolved_trope_ids=["twin_trap", "twin_trap"],
+            store=store,
+        )
+        conn.commit()
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    finished = exporter.get_finished_spans()
+    setpiece_resolve = [s for s in finished if s.name == SPAN_SETPIECE_RESOLVE]
+    assert len(setpiece_resolve) == 1
+    attrs = setpiece_resolve[0].attributes or {}
+    assert attrs.get("tropes_processed") == 2
+    assert attrs.get("threads_resolved") == 2
+
+    # Lie-detector cross-check: aggregate threads_resolved == #ledger.resolve.
+    ledger_resolve = [s for s in finished if s.name == SPAN_LEDGER_RESOLVE]
+    assert len(ledger_resolve) == attrs.get("threads_resolved"), (
+        f"setpiece.resolve threads_resolved={attrs.get('threads_resolved')} "
+        f"!= #ledger.resolve spans ({len(ledger_resolve)}) — aggregate span "
+        "is lying about what the subscription did"
+    )

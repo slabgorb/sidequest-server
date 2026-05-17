@@ -134,15 +134,19 @@ Decision M: ``resolve_complications_for_resolved_tropes`` is the Plan 6
   emit ``ledger.resolve`` directly (continuation of the Seam 1 supersession:
   Plan 5 owns the span; Plan 6 only calls resolve_thread).
 
-Decision N (STOP-AND-REPORT): ``_SessionData`` has NO ``dungeon_store``
-  attribute. The real store-source seam does not exist yet — Plan 7 owns it.
-  The handler-site call at the 45-20 handshake site references
-  ``sd.dungeon_store`` (the Plan 7–designated attribute name) via
-  ``getattr(sd, "dungeon_store", None)``. When the attribute is absent (pre-
-  Plan 7), the resolution subscription logs a WARNING and skips — this is
-  the honest-deferral path (NOT a silent no-op: the warning is the loud
-  declaration of the missing seam). Plan 7 populates ``sd.dungeon_store`` to
-  activate the path. The wiring function itself is real and fully tested.
+Decision N (honest deferral — provably-correct no-op, no runtime noise):
+  ``_SessionData`` has NO ``dungeon_store`` attribute — Plan 7 owns the
+  session→DungeonStore seam. The handler-site call at the 45-20 handshake
+  site gates on ``getattr(sd, "dungeon_store", None) is not None``. When
+  absent (pre-Plan 7), the no-op is PROVABLY CORRECT: Plan 7 both
+  materializes set-pieces (creating ledger threads via ``attach_set_piece``)
+  AND wires ``sd.dungeon_store`` — they land together, so store-absent ⟺
+  no open dungeon threads exist. NO warning, NO log — a per-turn log on the
+  global trope engine would fire on ~100% of pre-Plan-7 turns (ignorable
+  noise, not a guard). The loud seam is ``test_setpiece_attach_wiring.py``'s
+  structural tripwire (CI-only, fires exactly once when Plan 7 adds
+  ``dungeon_store`` to ``_SessionData``, forcing the wiring to be
+  completed). The wiring function itself is real and fully tested.
 
 Decision O (Plan 7 handoff): Quest-thread resolution is Plan 7's.
   ``resolve_complications_for_resolved_tropes`` resolves ONLY ``kind="trope"``
@@ -938,52 +942,100 @@ def resolve_complications_for_resolved_tropes(
         an empty worklist and is a clean no-op — NO double-resolve, NO
         spurious second ``ledger.resolve`` span, NO raise.
 
+    (d) Cross-set-piece collision — two open ``kind="trope"`` threads with
+        the SAME ``ref_id`` but from DIFFERENT ``setpiece_id``s, and a
+        SINGLE resolved instance of that trope_id: exactly ONE thread flips
+        (the lexicographically-first by ``thread_id``, because
+        ``open_threads()`` is ``ORDER BY thread_id`` and we ``pop(0)``);
+        the other stays ``open``. This ordering is INTENTIONAL and
+        deterministic. Plan 7, if it introduces origin/set-piece-scoped
+        resolution (resolve only the thread whose origin region the player
+        actually closed), must CONSCIOUSLY change this — it is pinned by
+        ``test_resolution_case_d_cross_setpiece_same_ref_id_one_flips``.
+
+    OTEL (CLAUDE.md OTEL Observability Principle): the whole call is
+    wrapped in the Plan-6-owned aggregate ``setpiece.resolve`` span,
+    carrying ``tropes_processed`` (= len(resolved_trope_ids)) and
+    ``threads_resolved`` (= count actually flipped). The span fires EVERY
+    call — including the empty-diff turn — so the GM panel can tell
+    "subscription fired, 0 matches" from "subscription never ran". Plan 5's
+    per-thread ``ledger.resolve`` stays underneath unchanged (Seam-1
+    supersession: Plan 5 owns it; this aggregate does NOT re-emit it).
+
     Args:
         resolved_trope_ids: List of trope_ids that flipped to "resolved"
             this turn (produced by the 45-20 handshake diff in
             ``websocket_session_handler.py``). Empty list is a valid no-op
-            (nothing resolved this turn).
+            (nothing resolved this turn) — the span still fires with
+            tropes_processed=0, threads_resolved=0.
         store: Real DungeonStore from Plan 7's session seam. The caller
             (the 45-20 handshake site) obtains this from ``sd.dungeon_store``
             (the Plan 7–designated attribute). Transaction boundary is the
             caller's (plan §7.5).
     """
-    if not resolved_trope_ids:
-        return
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        setpiece_resolve_span,
+    )
 
-    # Fetch all open threads once — O(open_threads) rather than one query
-    # per trope_id. On typical dungeon sizes (tens to hundreds of threads)
-    # this is fast; if the ledger grows very large Plan 7 can add an index
-    # on payload["ref_id"] without changing this interface.
-    open_threads = store.open_threads()
+    tropes_processed = len(resolved_trope_ids)
+    threads_resolved = 0
 
-    # Build a worklist: ref_id → list[thread_id] for open trope threads.
-    # Multiple threads with the same ref_id are all included (duplicate
-    # trope_id case, spec §7.1 aggregate resolution). We POP from each list
-    # as we resolve so a thread_id is consumed at most once per call — case
-    # (c): a surplus resolved instance hits an empty list and no-ops cleanly
-    # rather than re-resolving an already-resolved thread (which would
-    # double-emit ledger.resolve and lie to the GM panel).
-    trope_threads_by_ref_id: dict[str, list[str]] = {}
-    for thread in open_threads:
-        if thread.kind != "trope":
-            # Decision O: only trope threads; quest resolution is Plan 7's.
-            continue
-        ref_id = thread.payload.get("ref_id", "")
-        trope_threads_by_ref_id.setdefault(ref_id, []).append(thread.thread_id)
+    # The aggregate span fires on EVERY call (including the empty-diff
+    # turn) so the GM panel distinguishes "fired, 0 matches" from "never
+    # ran" (OTEL Observability Principle). threads_resolved is late-bound
+    # after the loop so the span carries what the subscription actually did.
+    with setpiece_resolve_span(
+        tropes_processed=tropes_processed,
+        threads_resolved=0,
+    ) as span:
+        if not resolved_trope_ids:
+            return
 
-    for trope_id in resolved_trope_ids:
-        worklist = trope_threads_by_ref_id.get(trope_id)
-        if not worklist:
-            # Case (a)/(c): no (remaining) open dungeon thread for this
-            # resolved trope — clean no-op. Most resolved tropes are normal
-            # non-dungeon tropes and land here. NOT an error, NOT logged.
-            continue
-        # Consume exactly one open thread per resolved instance (count-
-        # matched, case (b)). Plan 5's resolve_thread emits ledger.resolve
-        # internally — Plan 6 does NOT add another emit (Seam 1
-        # supersession continuation). The thread_id came from the
-        # open_threads() snapshot above and is consumed once, so the
-        # resolve always targets a currently-open row.
-        thread_id = worklist.pop(0)
-        store.resolve_thread(thread_id)
+        # Fetch all open threads once — O(open_threads) rather than one
+        # query per trope_id. On typical dungeon sizes (tens to hundreds of
+        # threads) this is fast; if the ledger grows very large Plan 7 can
+        # add an index on payload["ref_id"] without changing this interface.
+        # open_threads() is ORDER BY thread_id (case (d) determinism).
+        open_threads = store.open_threads()
+
+        # Build a worklist: ref_id → list[thread_id] for open trope
+        # threads. Multiple threads with the same ref_id are all included
+        # (duplicate trope_id case, spec §7.1 aggregate resolution). We POP
+        # from each list as we resolve so a thread_id is consumed at most
+        # once per call — case (c): a surplus resolved instance hits an
+        # empty list and no-ops cleanly rather than re-resolving an
+        # already-resolved thread (which would double-emit ledger.resolve
+        # and lie to the GM panel). Insertion order follows the
+        # thread_id-sorted open_threads(), so pop(0) is the
+        # lexicographically-first thread_id (case (d) determinism).
+        trope_threads_by_ref_id: dict[str, list[str]] = {}
+        for thread in open_threads:
+            if thread.kind != "trope":
+                # Decision O: only trope threads; quest resolution is
+                # Plan 7's.
+                continue
+            ref_id = thread.payload.get("ref_id", "")
+            trope_threads_by_ref_id.setdefault(ref_id, []).append(thread.thread_id)
+
+        for trope_id in resolved_trope_ids:
+            worklist = trope_threads_by_ref_id.get(trope_id)
+            if not worklist:
+                # Case (a)/(c): no (remaining) open dungeon thread for this
+                # resolved trope — clean no-op. Most resolved tropes are
+                # normal non-dungeon tropes and land here. NOT an error,
+                # NOT logged.
+                continue
+            # Consume exactly one open thread per resolved instance (count-
+            # matched, case (b); lexicographically-first per case (d)).
+            # Plan 5's resolve_thread emits ledger.resolve internally —
+            # Plan 6 does NOT add another emit (Seam 1 supersession
+            # continuation). The thread_id came from the open_threads()
+            # snapshot above and is consumed once, so the resolve always
+            # targets a currently-open row.
+            thread_id = worklist.pop(0)
+            store.resolve_thread(thread_id)
+            threads_resolved += 1
+
+        # Late-bind the real outcome so the GM panel sees what the
+        # subscription actually did this turn (not just that it ran).
+        span.set_attribute("threads_resolved", threads_resolved)
