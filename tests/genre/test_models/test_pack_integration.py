@@ -130,7 +130,15 @@ def test_tropes_deserializes() -> None:
     tropes_data = _load(CC / "tropes.yaml")
     assert isinstance(tropes_data, list)
     tropes = [TropeDefinition.model_validate(t) for t in tropes_data]
-    assert len(tropes) == 4
+    # 4 original genre tropes + 4 Plan 7 §14.A genre-level set-piece tropes
+    # referenced by the Plan-4 themes' set-pieces.
+    assert len(tropes) == 8
+    assert {
+        "the_thing_that_followed_you_down",
+        "the_keeper_notices_the_disturbance",
+        "priest_demands_a_sacrifice",
+        "the_resource_clock_you_can_see",
+    } <= {t.id for t in tropes}
     keeper_stirs = next(t for t in tropes if t.id == "the_keeper_stirs")
     assert keeper_stirs.passive_progression is not None
     assert keeper_stirs.passive_progression.rate_per_turn == pytest.approx(0.02)
