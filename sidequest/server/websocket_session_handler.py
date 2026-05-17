@@ -2540,13 +2540,39 @@ class WebSocketSessionHandler:
                         if isinstance(turn_context.current_location, str)
                         else ""
                     )
-                    monster_manual_inject.inject(
+                    mm_injected = monster_manual_inject.inject(
                         sd,
                         snapshot,
                         current_location=mm_location,
                         in_combat=bool(turn_context.in_combat),
                     )
+                    # Honest plain-text signal (CLAUDE.md OTEL principle).
+                    # monster_manual.injected is an OTEL-only span; a GM
+                    # reading server.log otherwise has zero proof the
+                    # Manual materialized vs. the narrator improvising
+                    # creatures (Pattern 5). Logs the actual patch count,
+                    # not a presence boolean.
+                    logger.info(
+                        "monster_manual.injected genre=%s world=%s "
+                        "player_id=%s turn=%s in_combat=%s patches=%d",
+                        sd.genre_slug,
+                        sd.world_slug,
+                        sd.player_id,
+                        turn_context.turn_number,
+                        bool(turn_context.in_combat),
+                        mm_injected,
+                    )
                     turn_context.npcs = list(snapshot.npcs)
+                    # _build_turn_context (session_helpers.py) snapshots
+                    # monster_manual off sd.monster_manual at the *caller*,
+                    # which runs BEFORE ensure_loaded() above lazily
+                    # populates it. Without this refresh the orchestrator
+                    # gets context.monster_manual=None on every session's
+                    # turn 1 and every MP turn where the acting player's
+                    # per-player _SessionData has not yet narrated —
+                    # lookup_monster goes dead and the context_wired OTEL
+                    # flag logs a false negative (playtest 2026-05-17).
+                    turn_context.monster_manual = sd.monster_manual
 
                 with orchestrator_process_action_span(action_len=len(action)):
                     result = await sd.orchestrator.run_narration_turn(

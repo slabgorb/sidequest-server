@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest import mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -481,4 +482,87 @@ def test_websocket_session_handler_wires_monster_manual_inject() -> None:
     )
     assert "sd.monster_manual.save()" in text, (
         "Manual.save() is not called after each turn — lifecycle won't persist"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Regression — turn_context.monster_manual staleness (playtest 2026-05-17)
+#
+# _build_turn_context (session_helpers.py) snapshots monster_manual off
+# sd.monster_manual at the *caller* (player_action.py / dice_throw.py /
+# ws_handler), which runs BEFORE _execute_narration_turn's lazy
+# ensure_loaded(sd). The handler refreshes turn_context.npcs from the
+# post-inject snapshot but historically NOT turn_context.monster_manual,
+# so the orchestrator received context.monster_manual=None on every
+# session's turn 1 and every MP turn where the acting player's per-player
+# _SessionData had not yet narrated. Consequence: ToolContext.monster_manual
+# was None → lookup_monster returned nothing → narrator improvised stats,
+# and the context_wired OTEL flag logged a false negative (~47% of turns
+# in the 2026-05-17 logs).
+# ---------------------------------------------------------------------------
+
+
+def _fake_local_dm() -> MagicMock:
+    """Dormant LocalDM stub (offline-only design, 2026-04-28 spec) — keeps
+    _execute_narration_turn off the decompose path so the test isolates
+    the monster_manual refresh seam."""
+    from sidequest.protocol.dispatch import DispatchPackage
+
+    fake_dm = MagicMock()
+    fake_dm.decompose = AsyncMock(
+        return_value=DispatchPackage(
+            turn_id="t-mm-refresh",
+            per_player=[],
+            cross_player=[],
+            confidence_global=0.0,
+            degraded=False,
+            degraded_reason=None,
+        )
+    )
+    return fake_dm
+
+
+@pytest.mark.asyncio
+async def test_execute_narration_turn_refreshes_stale_monster_manual(
+    session_fixture,
+) -> None:
+    """The orchestrator must receive turn_context.monster_manual refreshed
+    from sd.monster_manual after ensure_loaded — not the stale None the
+    caller snapshotted before the lazy load."""
+    from tests.server.conftest import (
+        _build_turn_context_for_test,
+        _make_minimal_narration_turn_result,
+    )
+
+    sd, handler = session_fixture
+
+    # Manual is on the session. ensure_loaded short-circuits on its first
+    # line (sd.monster_manual is not None) — no disk, no seeding.
+    manual = _manual_with(npcs=[_human("Krag")])
+    sd.monster_manual = manual
+
+    captured: dict[str, object] = {}
+
+    async def _capture(action: str, turn_context: object, *, room: object = None) -> object:
+        captured["turn_context"] = turn_context
+        return _make_minimal_narration_turn_result()
+
+    sd.orchestrator.run_narration_turn = AsyncMock(side_effect=_capture)
+    sd.local_dm = _fake_local_dm()
+    handler._validator = MagicMock()
+    handler._validator.submit = AsyncMock()
+    handler._validator.is_running = MagicMock(return_value=True)
+
+    # Production ordering: the caller built the context BEFORE the Manual
+    # was visible, so monster_manual defaults to None.
+    turn_context = _build_turn_context_for_test(sd)
+    assert turn_context.monster_manual is None, "precondition: context built stale"
+
+    await handler._execute_narration_turn(sd, "I look around.", turn_context)
+
+    received = captured["turn_context"]
+    assert received.monster_manual is manual, (
+        "turn_context.monster_manual not refreshed from sd.monster_manual "
+        "after ensure_loaded — orchestrator gets None, lookup_monster is "
+        "dead, and context_wired logs a false negative."
     )
