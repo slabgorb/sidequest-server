@@ -1,4 +1,4 @@
-"""Tests for sidequest.dungeon.setpiece_attach — Plan 6, Tasks 1 & 2.
+"""Tests for sidequest.dungeon.setpiece_attach — Plan 6, Tasks 1, 2 & 3.
 
 Task 1 checkboxes:
   1. identical inputs → byte-identical rolled result (frozen-into-save contract).
@@ -12,7 +12,24 @@ Task 2 checkboxes:
   2. Unknown trope_id raises loudly (content bug surfaced, not swallowed);
      the failure path still emits a trope.start span carrying the failure.
   3. threads_lit_per_expansion bounds the count — with budget N and components
-     > N, at most N are lit, and the selection is deterministic from the seed.
+     > N, at most N are lit, and the selection is deterministic from the seed
+     AND frozen (hardcoded-pin canary — see
+     test_trope_over_budget_selection_against_hardcoded_expected_value).
+
+Task 3 checkboxes (reduced scope — see module docstring of
+sidequest/dungeon/setpiece_attach.py and the plan's Post-Implementation
+Corrections; ScenarioState SUPERSEDED, manifest-join reassigned to Plan 7):
+  1. A seeded quest produces a real (QuestComponent, origin_region_id) pending
+     entry that Task 4 can persist as ComplicationThread(kind="quest") via the
+     REAL Plan 5 DungeonStore (lie detector — persist + read-back).
+  2. No content-bug failure path BY DESIGN (no quest registry; manifest-join
+     is Plan 7's). quest.seed is informational/success only — a fabricated
+     failure test would be testing theater.
+  3. threads_lit_per_expansion bounds the count, SHARED with Task 2's tropes;
+     the over-budget selection is deterministic AND frozen (hardcoded-pin
+     canary — see test_quest_over_budget_selection_against_hardcoded_expected_value).
+  4. Duplicate quest_id in one set-piece seeds two pending entries (Task 4's
+     thread_id collision reference — symmetric to the trope version).
 """
 
 from __future__ import annotations
@@ -94,16 +111,28 @@ _SINGLE_OPTION_SET_PIECE = _make_set_piece(
 
 
 def test_identical_inputs_produce_identical_result():
-    """Same call twice must produce an equal RolledSetPiece."""
-    kwargs = dict(
+    """Same call twice must produce an equal RolledSetPiece.
+
+    Inputs are inlined into both call sites rather than splatted from a
+    heterogeneous ``dict(...)`` literal: the dict literal infers a
+    ``int | str | SetPiece`` value type and ``**kwargs`` loses the per-key
+    arg types, tripping ~10 pyright reportArgumentType errors. Inlining
+    keeps the signature types intact (Task 6 gate requires pyright-clean
+    on this file)."""
+    result_a = roll_set_piece(
         campaign_seed=999,
         expansion_id=1,
         region_id="exp001.r3",
         setpiece_id="test_trap",
         set_piece=_MULTI_OPTION_SET_PIECE,
     )
-    result_a = roll_set_piece(**kwargs)
-    result_b = roll_set_piece(**kwargs)
+    result_b = roll_set_piece(
+        campaign_seed=999,
+        expansion_id=1,
+        region_id="exp001.r3",
+        setpiece_id="test_trap",
+        set_piece=_MULTI_OPTION_SET_PIECE,
+    )
     assert result_a == result_b
 
 
@@ -501,6 +530,48 @@ def test_budget_caps_tropes_lit() -> None:
     assert ids_a == ids_b, "selection is non-deterministic across identical inputs"
 
 
+def test_trope_over_budget_selection_against_hardcoded_expected_value() -> None:
+    """Frozen-into-save canary for trope OVER-BUDGET selection (the gap
+    test_budget_caps_tropes_lit left open — it only proved within-process
+    set-equality, which still passes if blake2b were swapped for md5 or the
+    'trope_order|' prefix changed).
+
+    A save written at campaign_seed=99 that lit {trope_1, trope_0} must light
+    that SAME pair, in that SAME order, on every re-attach forever (spec §7
+    save-is-truth; the rolled/selected set is frozen by Plan 7's commit and
+    never recomputed). These values were computed once from the real
+    _slot_seed implementation and are now PINNED. Any change to the sub-seed
+    algorithm, the pipe delimiter, or the 'trope_order|<idx>' discriminator
+    reorders the blake2b sort key and breaks this test loudly — exactly what
+    the frozen-into-save contract requires. Mirrors Task 1's
+    test_determinism_against_hardcoded_expected_value shape.
+
+    Pinned full sort order at these inputs (lowest blake2b sub-seed first):
+      trope_1 (10910839037820560710) < trope_0 (15753952436805574355)
+      < trope_2 (15945093321800880024) < trope_3 (17643241989342562483)
+    so budget=2 selects [trope_1, trope_0], appended in that order.
+    """
+    pack = _make_pack(*[_make_trope_def(f"trope_{i}") for i in range(4)])
+    snapshot = _fresh_snapshot()
+    components = _make_components("trope_0", "trope_1", "trope_2", "trope_3")
+
+    result = start_trope_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot,
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+
+    # EXACT pinned selection AND order — not just set membership.
+    assert [t.id for t in snapshot.active_tropes] == ["trope_1", "trope_0"]
+    assert [c.trope_id for c, _r in result.pending] == ["trope_1", "trope_0"]
+
+
 def test_budget_with_already_lit_accumulator() -> None:
     """threads_already_lit reduces remaining budget; when already_lit >= budget,
     no tropes are lit."""
@@ -709,6 +780,33 @@ class _FakeManifest:
         ]
 
 
+class _PoisonManifest:
+    """Manifest whose tables raise on ANY access — locks the
+    "manifest is accepted but NEVER resolved against" contract for Tasks
+    4-5 to inherit. If seed_quest_components ever iterates / indexes /
+    truthiness-checks .wandering_table or .loot_table, this raises loudly
+    (the manifest-join is Plan 7's by Architect decision — Plan 4 shipped
+    no ref convention; see the setpiece_attach.py module docstring and the
+    plan's Post-Implementation Corrections). A property (not an attribute)
+    is used so even a bare attribute READ trips it — not just iteration."""
+
+    @property
+    def wandering_table(self) -> list[dict]:
+        raise AssertionError(
+            "seed_quest_components accessed manifest.wandering_table — "
+            "Plan 7 owns creature/loot ref resolution; reduced Task 3 must "
+            "NOT touch the manifest tables"
+        )
+
+    @property
+    def loot_table(self) -> list[dict]:
+        raise AssertionError(
+            "seed_quest_components accessed manifest.loot_table — "
+            "Plan 7 owns creature/loot ref resolution; reduced Task 3 must "
+            "NOT touch the manifest tables"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Task 3 Test 1: a seeded quest produces a REAL pending entry that Task 4 can
 # write as ComplicationThread(kind="quest") via DungeonStore.open_thread().
@@ -894,6 +992,82 @@ def test_quest_budget_caps_seeded_and_is_deterministic() -> None:
     assert ids_a == ids_b, "selection is non-deterministic across identical inputs"
 
 
+def test_quest_over_budget_selection_against_hardcoded_expected_value() -> None:
+    """Frozen-into-save canary for quest OVER-BUDGET selection (the gap
+    test_quest_budget_caps_seeded_and_is_deterministic left open — it only
+    proved within-process set-equality, which still passes if blake2b were
+    swapped for md5 or the 'quest_order|' prefix changed).
+
+    A save written at campaign_seed=99 that seeded {quest_1, quest_3} must
+    seed that SAME pair, in that SAME order, on every re-attach forever
+    (spec §7 save-is-truth; Plan 7's commit freezes the selected set and it
+    is never recomputed). These values were computed once from the real
+    _slot_seed implementation and are now PINNED. Any change to the sub-seed
+    algorithm, the pipe delimiter, or the 'quest_order|<idx>' discriminator
+    reorders the blake2b sort key and breaks this test loudly — exactly what
+    the frozen-into-save contract requires. Mirrors Task 1's
+    test_determinism_against_hardcoded_expected_value and the symmetric
+    test_trope_over_budget_selection_against_hardcoded_expected_value.
+
+    Pinned full sort order at these inputs (lowest blake2b sub-seed first):
+      quest_1 (4998445612204798045) < quest_3 (11471368094519798342)
+      < quest_2 (12272679721357361849) < quest_0 (17210404864106356272)
+    so budget=2 selects [quest_1, quest_3], in that order.
+
+    The 'quest_order|' prefix differs from trope's 'trope_order|', so quest
+    selection at the SAME (seed, region, setpiece) does NOT mirror trope
+    selection — pinning both proves the prefixes keep the two sub-streams
+    independent (trope pins [trope_1, trope_0]; quest pins [quest_1, quest_3]).
+    """
+    components = _make_quest_components("quest_0", "quest_1", "quest_2", "quest_3")
+
+    result = seed_quest_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+
+    # EXACT pinned selection AND order — not just set membership.
+    assert [c.quest_id for c, _r in result.pending] == ["quest_1", "quest_3"]
+    assert all(region == "exp003.r2" for _c, region in result.pending)
+
+
+def test_duplicate_quest_id_in_one_setpiece_seeds_two_pending() -> None:
+    """Pin current behavior: two identical QuestComponents (same quest_id) in
+    one set-piece → two pending entries appended (Task 4's thread_id collision
+    reference — symmetric to test_duplicate_trope_id_in_one_setpiece_lights_two_states).
+
+    This is intentional (each component seeds its own thread). It is pinned
+    so Task 4 sees the constraint: a thread_id derived from quest_id ALONE
+    would collide here and trip Plan 5's open_thread duplicate-thread_id loud
+    raise — Task 4 must use a per-component discriminator (origin region +
+    component index / params)."""
+    snapshot_region = "exp002.r3"
+    components = _make_quest_components("twin_quest", "twin_quest")
+
+    result = seed_quest_components(
+        campaign_seed=8,
+        expansion_id=2,
+        region_id=snapshot_region,
+        setpiece_id="double_trouble",
+        components=components,
+        manifest=_FakeManifest(),
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+    )
+
+    assert result.quests_seeded == 2
+    assert len(result.pending) == 2
+    assert [c.quest_id for c, _r in result.pending] == ["twin_quest", "twin_quest"]
+    # Both pending entries carry the origin region for Task 4's ledger.
+    assert all(region == snapshot_region for _c, region in result.pending)
+
+
 def test_quest_shared_budget_accumulator_with_tropes() -> None:
     """threads_already_lit threads the SHARED expansion budget: Task 4 passes
     threads_already_lit = trope_result.tropes_started so quests consume what
@@ -1032,27 +1206,32 @@ def test_quest_seed_span_emitted_per_component_and_routed() -> None:
         assert attrs.get("origin_region_id") == "exp004.r9"
 
 
-def test_quest_seed_manifest_parameter_accepted_unchanged() -> None:
+def test_quest_seed_manifest_parameter_accepted_but_never_resolved_against() -> None:
     """The manifest parameter is REQUIRED (Plan 7 supplies the real
-    RegionContentManifest) but reduced Task 3 does NOT resolve refs against
-    it — that join is Plan 7's (Plan 4 shipped no ref convention; see plan
-    Post-Implementation Corrections). This pins that the parameter is
-    accepted and the call succeeds without touching its tables."""
-    manifest = _FakeManifest()
-    # Sentinel: if the implementation ever iterates the tables to resolve
-    # refs, an empty-table manifest would still pass (no resolution happens).
-    manifest.wandering_table = []
-    manifest.loot_table = []
+    RegionContentManifest so its call shape is ready) but reduced Task 3
+    does NOT resolve refs against it — that join is Plan 7's (Plan 4 shipped
+    no ref convention; see the setpiece_attach.py module docstring and the
+    plan's Post-Implementation Corrections).
+
+    Locked with a POISON manifest whose .wandering_table / .loot_table raise
+    on ANY access. An empty-table sentinel would NOT prove non-iteration
+    (an empty list passes whether or not it is iterated); the poison
+    manifest fails loudly the instant the implementation so much as reads a
+    table attribute. Even a params key that *looks* like a creature ref
+    ({"creatures": ["Nonexistent"]}) must NOT trigger a manifest touch —
+    ref-resolution is Plan 7's job by Architect decision. This locks the
+    contract for Tasks 4-5 to inherit."""
     result = seed_quest_components(
         campaign_seed=2,
         expansion_id=1,
         region_id="exp001.r0",
         setpiece_id="no_resolution",
         components=_make_quest_components("q0", params={"creatures": ["Nonexistent"]}),
-        manifest=manifest,
+        manifest=_PoisonManifest(),
         threads_lit_per_expansion=5,
         threads_already_lit=0,
     )
-    # A creatures-ref in params that is absent from the (empty) manifest does
-    # NOT raise here — ref-resolution is Plan 7's job, by Architect decision.
+    # Reaching here at all proves the poison properties were never accessed:
+    # seed_quest_components did not iterate / index / truthiness-check the
+    # manifest tables. ref-resolution is Plan 7's (Architect decision).
     assert result.quests_seeded == 1

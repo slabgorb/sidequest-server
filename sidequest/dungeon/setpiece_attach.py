@@ -236,7 +236,16 @@ def start_trope_components(
         region_id:                Origin region id — carried in pending for
                                   Task 4; NOT stored on TropeState (Decision A).
         setpiece_id:              Set-piece id (used for seed discrimination).
-        components:               TropeComponent list from the set-piece template.
+        components:               TropeComponent list from the set-piece
+                                  template. ORDER IS LOAD-BEARING: the
+                                  over-budget selection sub-seeds on the
+                                  enumerate() index ("trope_order|<idx>"), so
+                                  if the caller reorders this list the seeded
+                                  selection silently changes and a re-attach
+                                  no longer matches the frozen save (spec §7).
+                                  Pass it in the set-piece template's authored
+                                  order; do not sort/filter upstream. Pinned by
+                                  test_trope_over_budget_selection_against_hardcoded_expected_value.
         pack_tropes:              Duck-typed pack object with a .tropes attribute
                                   (list of TropeDefinition-like objects with .id).
                                   Same duck type tick_tropes uses.
@@ -407,7 +416,15 @@ def seed_quest_components(
                                   ComplicationThread.origin_region_id).
         setpiece_id:              Set-piece id (used for seed discrimination).
         components:               QuestComponent list from the set-piece
-                                  template.
+                                  template. ORDER IS LOAD-BEARING: the
+                                  over-budget selection sub-seeds on the
+                                  enumerate() index ("quest_order|<idx>"), so
+                                  if the caller reorders this list the seeded
+                                  selection silently changes and a re-attach
+                                  no longer matches the frozen save (spec §7).
+                                  Pass it in the set-piece template's authored
+                                  order; do not sort/filter upstream. Pinned by
+                                  test_quest_over_budget_selection_against_hardcoded_expected_value.
         manifest:                 The RegionContentManifest Plan 7 supplies
                                   (duck-typed on .wandering_table /
                                   .loot_table, mirroring Task 2's
@@ -489,6 +506,10 @@ def seed_quest_components(
             # and trip Plan 5's open_thread duplicate-thread_id loud raise.
             # Use a per-component discriminator (origin region + component
             # index / params), exactly as the Task 2 trope note instructs.
+            # This duplicate-id behavior is PINNED by
+            # tests/dungeon/test_setpiece_attach.py::
+            # test_duplicate_quest_id_in_one_setpiece_seeds_two_pending
+            # (symmetric to the trope version) — read it before wiring Task 4.
             pending.append((component, region_id))
             seeded += 1
 
