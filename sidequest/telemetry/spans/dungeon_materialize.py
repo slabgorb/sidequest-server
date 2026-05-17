@@ -103,11 +103,27 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL] = SpanRoute(
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # `curated` is the lie-detector verdict (Plan 7 Task 4): True only when
+    # the bounded `claude -p` curation pass succeeded AND every corpus
+    # creature was CR→Edge translated; False (with a specific `reason`) on
+    # any failure path (assemble error / subprocess failure / unparseable
+    # verdict). The Task-2 lesson: a set-but-not-routed marker is a defect
+    # — `curated`/`reason` are routed here so the GM panel renders the
+    # failure, never a raw-manifest-stamped-curated lie. The success
+    # summary (region/creature counts, races, cr_bands) reads None on the
+    # failure path via the graceful-get idiom (harmless).
     extract=lambda s: {
         "field": "dungeon_map",
         "op": "materialize.curate",
         "expansion_id": _attr("expansion_id")(s),
         "stage": "curate",
+        "curated": _attr("curated")(s),
+        "reason": _attr("reason")(s),
+        "region_count": _attr("region_count")(s),
+        "creature_count": _attr("creature_count")(s),
+        "manifest_race": _attr("manifest_race")(s),
+        "cr_band": _attr("cr_band")(s),
+        "raw_seed_reproducible": _attr("raw_seed_reproducible")(s),
     },
 )
 

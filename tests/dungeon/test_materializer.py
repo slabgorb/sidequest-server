@@ -11,7 +11,9 @@ Two test bullets from the plan:
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -216,10 +218,14 @@ class TestMaterializePipelineSpans:
             lookahead_breadth=2,
         )
 
-    def test_materialize_raises_not_implemented_error(self) -> None:
+    async def test_materialize_raises_not_implemented_error(self) -> None:
         """materialize() propagates NotImplementedError from the first
-        un-implemented stage it hits.  After Task 2, design runs successfully
-        and the error comes from _stage_fill."""
+        still-deferred stage it hits. The boundary moves forward as each
+        stage lands: design/fill/curate are implemented (Tasks 2–4), so
+        the error now comes from _stage_attach (Task 5, still deferred).
+        A real bundle + look-bound palette + reflecting curation client
+        are required so curate runs end-to-end and the pipeline genuinely
+        reaches the attach boundary."""
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import materialize
         from sidequest.dungeon.persistence import DungeonStore
@@ -227,21 +233,32 @@ class TestMaterializePipelineSpans:
         conn = _mem_conn()
         store = DungeonStore(conn)
 
+        bundle = _real_cookbook_bundle()
+        _req, palette, _exp, _fill, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+
         _exporter, _provider, real_tracer = _otel_in_memory()
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
             req = self._build_request()
             graph = _make_seed_graph("entrance")
-            palette = _make_theme_palette_two_themes(depth_score_cutoff=20.0)
-            with pytest.raises(NotImplementedError):
-                materialize(req, graph=graph, bundle=None, palette=palette, persistence=store)
+            with pytest.raises(NotImplementedError, match="attach"):
+                await materialize(
+                    req,
+                    graph=graph,
+                    bundle=bundle,
+                    palette=palette,
+                    persistence=store,
+                    claude_client=_reflecting_claude_client(),
+                )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
 
-    def test_parent_span_opens_before_any_stage(self) -> None:
-        """dungeon.materialize parent span must be emitted even when a stage
-        raises NotImplementedError."""
+    async def test_parent_span_opens_before_any_stage(self) -> None:
+        """dungeon.materialize parent span must be emitted even when a
+        still-deferred stage raises NotImplementedError (now attach)."""
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import materialize
         from sidequest.dungeon.persistence import DungeonStore
@@ -250,15 +267,26 @@ class TestMaterializePipelineSpans:
         conn = _mem_conn()
         store = DungeonStore(conn)
 
+        bundle = _real_cookbook_bundle()
+        _req, palette, _exp, _fill, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+
         exporter, _provider, real_tracer = _otel_in_memory()
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
             req = self._build_request()
             graph = _make_seed_graph("entrance")
-            palette = _make_theme_palette_two_themes(depth_score_cutoff=20.0)
-            with pytest.raises(NotImplementedError):
-                materialize(req, graph=graph, bundle=None, palette=palette, persistence=store)
+            with pytest.raises(NotImplementedError, match="attach"):
+                await materialize(
+                    req,
+                    graph=graph,
+                    bundle=bundle,
+                    palette=palette,
+                    persistence=store,
+                    claude_client=_reflecting_claude_client(),
+                )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
 
@@ -269,7 +297,9 @@ class TestMaterializePipelineSpans:
             f"got span names: {[s.name for s in finished]}"
         )
 
-    def test_five_stage_spans_emitted_in_order_nested_under_parent(self) -> None:
+    async def test_five_stage_spans_emitted_in_order_nested_under_parent(
+        self,
+    ) -> None:
         """Run materialize with a patched stage executor so all five stages
         run (no early-exit on NotImplementedError). Assert:
           - all five child spans are emitted
@@ -309,6 +339,13 @@ class TestMaterializePipelineSpans:
         def _noop(*args: object, **kwargs: object) -> None:
             pass
 
+        async def _async_noop(*args: object, **kwargs: object) -> None:
+            # _stage_curate is `async def` (it awaits ClaudeClient.send);
+            # the coordinator `await`s it. The no-op stub must therefore be
+            # a coroutine function so `await _stage_curate(...)` is valid.
+            # design/fill/attach/commit stay synchronous no-ops.
+            return None
+
         def _design_noop(*args: object, **kwargs: object) -> tuple[object, object]:
             # The real _stage_design ALWAYS returns (Expansion,
             # GenerationReport) (Task 2 hard contract); the coordinator
@@ -319,12 +356,12 @@ class TestMaterializePipelineSpans:
 
         _mat_module._stage_design = _design_noop  # type: ignore[assignment]
         _mat_module._stage_fill = _noop  # type: ignore[assignment]
-        _mat_module._stage_curate = _noop  # type: ignore[assignment]
+        _mat_module._stage_curate = _async_noop  # type: ignore[assignment]
         _mat_module._stage_attach = _noop  # type: ignore[assignment]
         _mat_module._stage_commit = _noop  # type: ignore[assignment]
         try:
             req = self._build_request()
-            materialize(req, graph=None, bundle=None, palette=None, persistence=store)
+            await materialize(req, graph=None, bundle=None, palette=None, persistence=store)
         finally:
             _mat_module._stage_design = original_design  # type: ignore[assignment]
             _mat_module._stage_fill = original_fill  # type: ignore[assignment]
@@ -1165,10 +1202,13 @@ class TestStageFill:
         finally:
             _mat_module._region_interior_seed = orig_mixer  # type: ignore[assignment]
 
-    def test_fill_wired_into_coordinator(self) -> None:
+    async def test_fill_wired_into_coordinator(self) -> None:
         """Wiring test: materialize() reaches _stage_fill with real
         expansion+palette threaded from _stage_design, and the pipeline
-        proceeds past fill to the still-deferred curate stage."""
+        proceeds past fill AND curate (Tasks 3–4) to the still-deferred
+        attach stage. (The deferral boundary moves forward as each stage
+        lands — this test now needs a real bundle + look-bound palette +
+        reflecting curation client so curate runs end-to-end.)"""
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import materialize
         from sidequest.dungeon.persistence import DungeonStore
@@ -1176,21 +1216,515 @@ class TestStageFill:
         conn = _mem_conn()
         store = DungeonStore(conn)
 
+        bundle = _real_cookbook_bundle()
+        _r, palette, _e, _f, _l = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+
         _exporter, _provider, real_tracer = _otel_in_memory()
         original_tracer_fn = _spans_module.tracer
         _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
         try:
             req = _make_request_task3()
             graph = _make_seed_graph("entrance")
-            palette = _make_theme_palette_two_themes(depth_score_cutoff=20.0)
-            # design + fill now run; curate is still NotImplementedError.
-            with pytest.raises(NotImplementedError, match="curate"):
-                materialize(
+            # design + fill + curate now run; attach is still deferred.
+            with pytest.raises(NotImplementedError, match="attach"):
+                await materialize(
                     req,
                     graph=graph,
-                    bundle=None,
+                    bundle=bundle,
                     palette=palette,
                     persistence=store,
+                    claude_client=_reflecting_claude_client(),
+                )
+        finally:
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Stage 3 curate — assemble_region + one-shot claude -p + CR→Edge
+# ---------------------------------------------------------------------------
+
+# The real shipped beneath_sunden world dir (Plan 5/8). Discovery mirrors
+# tests/genre/test_beneath_sunden_world_load.py — parents[3] is the
+# orchestrator root; the world dir is the load_cookbook input.
+_BENEATH_SUNDEN_WORLD = (
+    Path(__file__).resolve().parents[3]
+    / "sidequest-content/genre_packs/caverns_and_claudes/worlds/beneath_sunden"
+)
+
+
+def _real_cookbook_bundle() -> Any:
+    """Load the REAL beneath_sunden cookbook (no mocking the content)."""
+    from sidequest.game.cookbook.loader import load_cookbook
+
+    return load_cookbook(_BENEATH_SUNDEN_WORLD)
+
+
+class _FakeProc:
+    """Minimal asyncio.subprocess.Process stand-in (mirrors
+    tests/agents/test_claude_client.py:FakeProcess) — the ONLY mocked
+    seam: the claude -p subprocess. Real content, real cookbook, real
+    EdgePool everywhere else."""
+
+    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+    def kill(self) -> None:
+        pass
+
+    async def wait(self) -> int:
+        return self.returncode
+
+
+def _curation_ok_payload(manifests: dict[str, Any]) -> bytes:
+    """A well-formed curated payload: the claude -p JSON envelope whose
+    `result` is the curator's per-region JSON verdict (keeps every
+    wandering row + big_bad, lightly refining telegraphs). Mirrors the
+    real --output-format json envelope (_parse_json_envelope reads
+    `result`) AND the curate stage's contract that the verdict is keyed
+    by region_id."""
+    verdict = {
+        region_id: {
+            "race": m.race,
+            "cr_band": m.cr_band,
+            "wandering_table": [
+                {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                for row in m.wandering_table
+            ],
+            "big_bad": m.big_bad,
+        }
+        for region_id, m in manifests.items()
+    }
+    envelope = {"result": json.dumps(verdict), "usage": {"output_tokens": 10}}
+    return json.dumps(envelope).encode()
+
+
+def _fake_claude_client(spawn_proc: _FakeProc) -> Any:
+    """A real ClaudeClient with the subprocess spawner injected (DI) so
+    no real `claude` binary is ever launched (prompt: mock ONLY the
+    subprocess)."""
+    from sidequest.agents.claude_client import ClaudeClient
+
+    async def _spawn(*_a: object, **_k: object) -> _FakeProc:
+        return spawn_proc
+
+    return ClaudeClient(timeout=5.0, spawn_fn=_spawn)
+
+
+def _reflecting_claude_client() -> Any:
+    """A real ClaudeClient whose injected spawner parses the curation
+    prompt's ``INPUT:`` JSON (which the curate stage builds with the
+    ACTUAL generated region ids + manifests) and echoes a well-formed
+    per-region verdict back. Used by the wiring test where region ids are
+    generated by the real design stage and not known in advance — still
+    NEVER launches a real subprocess."""
+    from sidequest.agents.claude_client import ClaudeClient
+
+    async def _spawn(command: str, *args: object, **_k: object) -> _FakeProc:
+        # claude_client builds args as [..., "-p", <prompt>, "--output-format", "json"]
+        arglist = list(args)
+        prompt = arglist[arglist.index("-p") + 1]
+        assert isinstance(prompt, str)
+        _, _, input_blob = prompt.partition("INPUT:\n")
+        payload = json.loads(input_blob)
+        verdict = {
+            region_id: {
+                "race": region["race"],
+                "cr_band": region["cr_band"],
+                "wandering_table": [
+                    {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                    for row in region["wandering_table"]
+                ],
+                "big_bad": region["big_bad"],
+            }
+            for region_id, region in payload.items()
+        }
+        envelope = {"result": json.dumps(verdict), "usage": {"output_tokens": 7}}
+        return _FakeProc(json.dumps(envelope).encode())
+
+    return ClaudeClient(timeout=5.0, spawn_fn=_spawn)
+
+
+def _theme_bound_to_look(theme_id: str, algorithm: str) -> Any:
+    """A real DungeonTheme whose interior.algorithm is the join key onto
+    a LookDef.generator_binding (the resolved look→theme seam)."""
+    from sidequest.dungeon.themes import (
+        Adjacency,
+        DepthBand,
+        DungeonTheme,
+        InteriorSpec,
+        NarratorFlavor,
+    )
+
+    algo_class = {
+        "cellular": "organic",
+        "depthfirst": "labyrinthine",
+        "prim": "structured",
+        "roomcorridor": "built",
+    }
+    return DungeonTheme(
+        id=theme_id,
+        display_name=theme_id.replace("_", " ").title(),
+        generator_class=algo_class[algorithm],
+        interior=InteriorSpec(algorithm=algorithm, braid_ratio=0.0),
+        depth_band=DepthBand(min=0.0, max=None),
+        narrator=NarratorFlavor(register="grave", flavor="dread"),
+        adjacency=Adjacency(),
+    )
+
+
+def _curate_inputs(
+    *,
+    algorithm: str = "prim",
+    expansion_id: int = 1,
+    depth_score: float = 0.5,
+) -> tuple[Any, Any, Any, Any, str]:
+    """Build (request, palette, expansion, fill_result, look) bound to a
+    real look. `prim` → look `delvehold` (race dwarf at depth 0.5 → band
+    `mid`, which has a big_bad gate — every creature must Edge-translate).
+    """
+    from sidequest.dungeon.materializer import MaterializationRequest, RegionFill
+    from sidequest.dungeon.persistence import FrontierEdge
+    from sidequest.dungeon.region_graph import Expansion
+    from sidequest.dungeon.region_graph.model import RegionNode
+    from sidequest.dungeon.themes import ThemePalette
+
+    theme_id = f"t_{algorithm}"
+    palette = ThemePalette(themes={theme_id: _theme_bound_to_look(theme_id, algorithm)})
+    rid = f"exp{expansion_id:03d}.r0"
+    nodes = [RegionNode(id=rid, expansion_id=expansion_id, theme=theme_id)]
+    expansion = Expansion(expansion_id=expansion_id, new_nodes=nodes, new_edges=[])
+    fe = FrontierEdge(
+        frontier_edge_id="fe1",
+        from_region_id="entrance",
+        heading="north",
+        spawn_depth_score=depth_score,
+    )
+    request = MaterializationRequest.build(
+        campaign_seed=7,
+        expansion_id=expansion_id,
+        frontier_edge=fe,
+        frontier=[fe],
+        attach_region_ids=["entrance"],
+        heading="north",
+        burst_magnitude=3,
+        lookahead_breadth=2,
+    )
+    fill_result = {
+        rid: RegionFill(
+            region_id=rid,
+            algorithm=algorithm,
+            width=49,
+            height=49,
+            braid_ratio=0.0,
+            grid=[[0]],
+        )
+    }
+    # `prim` is the generator_binding of look `delvehold` in the real
+    # beneath_sunden cookbook (looks.yaml).
+    look = "delvehold"
+    return request, palette, expansion, fill_result, look
+
+
+class TestStageCurate:
+    """Task 4 tests (the 3 plan bullets):
+    1. assemble_region called with EXACTLY the named signal kwargs (int→str
+       at the seam); manifest deterministic for identical inputs (up to the
+       curation seam).
+    2. A curation subprocess failure raises loudly + aborts; the span
+       records curated=false + a reason; raw manifest is NOT shipped
+       stamped curated.
+    3. Every corpus creature crossing the seam emerges with an EdgePool —
+       no raw cr/hp leaks into the curate-stage output.
+    """
+
+    async def test_assemble_region_called_with_exact_signal_kwargs_and_is_deterministic(
+        self,
+    ) -> None:
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, look = _curate_inputs(
+            algorithm="prim", expansion_id=4, depth_score=0.5
+        )
+        rid0 = expansion.new_nodes[0].id
+
+        # Spy on assemble_region at the materializer's imported name.
+        calls: list[dict] = []
+        original = _mat.assemble_region
+
+        def _spy(bundle_arg: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return original(bundle_arg, **kwargs)
+
+        # A success curation that echoes the manifest back unchanged.
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        _mat.assemble_region = _spy  # type: ignore[assignment]
+        try:
+            with dungeon_materialize_curate_span(
+                expansion_id=request.expansion_id
+            ) as span:
+                # Capture the pre-curation manifest the stage assembled so
+                # the determinism assertion is up-to-the-seam.
+                m0 = original(
+                    bundle,
+                    campaign_seed=str(request.campaign_seed),
+                    expansion_id=str(request.expansion_id),
+                    depth_score=0.5,
+                    burst_magnitude=request.burst_magnitude,
+                    look=look,
+                    is_first_band_entry=True,
+                )
+                proc = _FakeProc(_curation_ok_payload({rid0: m0}))
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_fake_claude_client(proc),
+                    span=span,
+                )
+        finally:
+            _mat.assemble_region = original  # type: ignore[assignment]
+            _spans_mod.tracer = original_tracer_fn
+
+        assert calls, "assemble_region was not called by _stage_curate"
+        kw = calls[0]
+        # DIVERGENCE 1: campaign_seed / expansion_id are str at this seam.
+        assert kw["campaign_seed"] == str(request.campaign_seed)
+        assert kw["expansion_id"] == str(request.expansion_id)
+        assert isinstance(kw["campaign_seed"], str)
+        assert isinstance(kw["expansion_id"], str)
+        # depth_score from the frontier edge; burst from the request.
+        assert kw["depth_score"] == request.frontier_edge.spawn_depth_score
+        assert kw["burst_magnitude"] == request.burst_magnitude
+        # The look the stage passed to assemble_region is the one it
+        # derived loudly from the region theme (theme=t_prim →
+        # generator_binding 'prim' → cookbook look 'delvehold'). No
+        # caller override exists; assert the derived value end-to-end.
+        assert kw["look"] == "delvehold"
+        assert result.region_look[rid0] == "delvehold"
+        assert kw["is_first_band_entry"] is True
+
+        # Pre-curation determinism: assemble_region is pure — identical
+        # inputs ⇒ identical manifest (the contract holds UP TO the
+        # curation seam).
+        m_a = original(
+            bundle,
+            campaign_seed=str(request.campaign_seed),
+            expansion_id=str(request.expansion_id),
+            depth_score=request.frontier_edge.spawn_depth_score,
+            burst_magnitude=request.burst_magnitude,
+            look=look,
+            is_first_band_entry=True,
+        )
+        m_b = original(
+            bundle,
+            campaign_seed=str(request.campaign_seed),
+            expansion_id=str(request.expansion_id),
+            depth_score=request.frontier_edge.spawn_depth_score,
+            burst_magnitude=request.burst_magnitude,
+            look=look,
+            is_first_band_entry=True,
+        )
+        assert m_a.model_dump() == m_b.model_dump(), (
+            "assemble_region must be deterministic for identical inputs "
+            "(pre-curation determinism contract, up to the curation seam)"
+        )
+
+    async def test_curation_subprocess_failure_raises_and_records_curated_false(
+        self,
+    ) -> None:
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans import SPAN_ROUTES
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_CURATE,
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs()
+
+        # Non-zero exit, empty stdout — a hard subprocess failure.
+        proc = _FakeProc(b"", b"boom", returncode=1)
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with pytest.raises(Exception) as exc_info, dungeon_materialize_curate_span(  # noqa: PT011
+                expansion_id=request.expansion_id
+            ) as span:
+                await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_fake_claude_client(proc),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        # Loud: NOT NotImplementedError, NOT a swallowed pass.
+        assert not isinstance(exc_info.value, NotImplementedError)
+
+        finished = exporter.get_finished_spans()
+        curate_spans = [
+            s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE
+        ]
+        assert curate_spans, "curate span must be emitted even on failure"
+        route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE]
+        fields = route.extract(curate_spans[0])  # type: ignore[arg-type]
+        # The routed extract (what the GM panel renders) must show the
+        # failure — set-but-not-routed is the Task-2 defect lesson.
+        assert fields.get("curated") is False, (
+            f"routed extract must surface curated=false on failure; got {fields}"
+        )
+        assert fields.get("reason"), (
+            f"routed extract must surface a specific failure reason; got {fields}"
+        )
+        # Decisive: the raw manifest was NOT shipped stamped curated.
+        assert fields.get("curated") is not True
+
+    async def test_every_corpus_creature_emerges_with_edge_no_raw_cr_hp(
+        self,
+    ) -> None:
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.game.creature_core import EdgePool
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        # depth 0.5 → band `mid`; `mid` is in
+        # affinities.big_bad_gate.on_first_band_entry, and the fixture
+        # passes is_first_band_entry=True, so the manifest is GUARANTEED a
+        # big_bad — both the wandering table AND a big_bad cross the
+        # CR→Edge seam (verified: race=dwarf yields big_bad 'Wight').
+        request, palette, expansion, fill_result, look = _curate_inputs(
+            depth_score=0.5
+        )
+        rid0 = expansion.new_nodes[0].id
+
+        from sidequest.dungeon.materializer import assemble_region
+
+        m0 = assemble_region(
+            bundle,
+            campaign_seed=str(request.campaign_seed),
+            expansion_id=str(request.expansion_id),
+            depth_score=0.5,
+            burst_magnitude=request.burst_magnitude,
+            look=look,
+            is_first_band_entry=True,
+        )
+        assert m0.wandering_table, "fixture must exercise a non-empty wandering table"
+        assert m0.big_bad is not None, (
+            "band 'mid' + is_first_band_entry=True must yield a big_bad in "
+            "the real cookbook so the big_bad CR→Edge path is provably "
+            "exercised (fixture/affinities contract)"
+        )
+
+        proc = _FakeProc(_curation_ok_payload({rid0: m0}))
+
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(
+                expansion_id=request.expansion_id
+            ) as span:
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_fake_claude_client(proc),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        # I2: the look is derived from the theme inside the stage — assert
+        # the resolved value end-to-end (no caller override exists).
+        assert result.region_look[rid0] == "delvehold"
+
+        creatures = result.creatures_for_region(rid0)
+        assert creatures, "curated region must carry its creatures"
+        for c in creatures:
+            assert isinstance(c.edge, EdgePool), (
+                f"every corpus creature must emerge with an EdgePool; "
+                f"{c.name!r} has {type(c.edge)}"
+            )
+            assert c.edge.max >= 1 and c.edge.current == c.edge.max
+            # No raw cr/hp may leak onto the curated creature object.
+            assert not hasattr(c, "cr"), f"{c.name!r} leaked raw cr"
+            assert not hasattr(c, "hp"), f"{c.name!r} leaked raw hp"
+
+        # The big_bad (band `mid` gate, GUARANTEED above) must ALSO be
+        # Edge-translated — decisively, not conditionally.
+        bb = result.big_bad_for_region(rid0)
+        assert bb is not None, (
+            "band 'mid' fixture must yield a big_bad so the big_bad "
+            "CR→Edge path is provably exercised"
+        )
+        assert isinstance(bb.edge, EdgePool)
+        assert bb.edge.max >= 1 and bb.edge.current == bb.edge.max
+        assert not hasattr(bb, "cr")
+        assert not hasattr(bb, "hp")
+
+    async def test_curate_wired_into_coordinator(self) -> None:
+        """Wiring: materialize() reaches _stage_curate with real
+        expansion+palette+bundle threaded from design/fill, runs the
+        injected fake curation, and proceeds PAST curate to the
+        still-deferred attach stage."""
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.materializer import materialize
+        from sidequest.dungeon.persistence import DungeonStore
+
+        bundle = _real_cookbook_bundle()
+        # A palette whose single theme binds to look `delvehold` (prim).
+        request, palette, _expansion, _fill, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        # The coordinator runs the REAL _stage_design/_stage_fill, which
+        # need the seed graph + a palette whose themes resolve at the
+        # frontier depth. Reuse the design/fill helpers' palette but bind
+        # its themes to a real look so the curate look-resolution passes.
+        graph = _make_seed_graph("entrance")
+
+        # The REAL _stage_design generates region ids dynamically, so the
+        # curation verdict cannot be precomputed. The reflecting client
+        # parses the curate stage's actual prompt and echoes a well-formed
+        # per-region verdict — still never launching a real subprocess.
+        reflecting = _reflecting_claude_client()
+
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        _exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            # design + fill + curate now run; attach is still deferred.
+            with pytest.raises(NotImplementedError, match="attach"):
+                await materialize(
+                    request,
+                    graph=graph,
+                    bundle=bundle,
+                    palette=palette,
+                    persistence=store,
+                    claude_client=reflecting,
                 )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]

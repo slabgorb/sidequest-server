@@ -85,6 +85,39 @@ def placeholder_edge_pool() -> EdgePool:
     )
 
 
+def creature_edge_pool_from_hp(hp: int) -> EdgePool:
+    """Translate a B/X-shaped creature HP value into an :class:`EdgePool`.
+
+    Per ADR-078, runtime entities carry an ``EdgePool`` instead of raw HP.
+    ``creatures.yaml`` is authored against the B/X content schema (an ``hp``
+    integer per creature, e.g. ``1`` for a chalk_moth, ``30`` for a Patient
+    Butcher), so the Monster Manual seeder ships the HP as-authored and the
+    materializer translates it here. The pool is seeded full
+    (``current == max == base_max``) with the same ``OnResolution`` recovery
+    trigger ``placeholder_edge_pool`` uses; thresholds stay empty pending
+    advancement-side wiring (ADR-081 deferred).
+
+    Clamped at 1 because EdgePool requires a positive ceiling — a creature
+    authored with ``hp: 0`` would otherwise be unrepresentable as a
+    materialized actor.
+
+    This is the SINGLE canonical HP→EdgePool translator. It was promoted
+    from ``session._creature_edge_pool_from_hp`` (Beneath Sünden Plan 7
+    Task 4) so the NPC-patch path AND the dungeon materializer's CR→Edge
+    seam share one implementation. ``session._creature_edge_pool_from_hp``
+    is now a thin back-compat re-export of this symbol — do NOT reintroduce
+    a second copy of this body.
+    """
+    seed = max(1, hp)
+    return EdgePool(
+        current=seed,
+        max=seed,
+        base_max=seed,
+        recovery_triggers=[RecoveryTrigger.OnResolution],
+        thresholds=[],
+    )
+
+
 class EdgeConfigMissingClassError(KeyError):
     """Genre pack declared `edge_config` but omitted a `base_max_by_class`
     entry for the character's class.

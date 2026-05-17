@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from opentelemetry import trace as _otel_trace
 
+from sidequest.agents.claude_client import ClaudeClient, ClaudeClientError
 from sidequest.dungeon.interiors import generate_interior
 from sidequest.dungeon.interiors.grid import Grid
 from sidequest.dungeon.persistence import DungeonStore, FrontierEdge
@@ -39,6 +40,10 @@ from sidequest.dungeon.region_graph import (
     generate_expansion,
 )
 from sidequest.dungeon.themes import ThemePalette
+from sidequest.game.cookbook.assemble import assemble_region
+from sidequest.game.cookbook.loader import CookbookBundle
+from sidequest.game.cookbook.models import RegionContentManifest
+from sidequest.game.creature_core import EdgePool, creature_edge_pool_from_hp
 from sidequest.telemetry.spans.dungeon_materialize import (
     dungeon_materialize_attach_span,
     dungeon_materialize_commit_span,
@@ -49,8 +54,11 @@ from sidequest.telemetry.spans.dungeon_materialize import (
 )
 
 __all__ = [
+    "CuratedCreature",
     "MaterializationRequest",
+    "RegionCuration",
     "RegionFill",
+    "assemble_region",
     "materialize",
 ]
 
@@ -86,6 +94,52 @@ ROOMCORRIDOR_MIN_DIM = 25
 # mixer (the Plan-2/3 _subseed precedent), but additionally refuse the fixed
 # point loudly if a derived seed ever lands exactly on it.
 _BRAID_FIXED_POINT = 0x5EED  # == 24301
+
+# ---------------------------------------------------------------------------
+# CR → HP → Edge seam (ADR-014 / ADR-078) — Plan 7 Task 4 OWNS this
+# ---------------------------------------------------------------------------
+#
+# `cookbook.assemble_region` ships raw `cr` (a float, B/X-via-SRD-5.1
+# Challenge Rating) on every wandering-table row and the big_bad by
+# contract — its docstring states explicitly "CR→Edge translation is the
+# oq-1 materializer seam (ADR-014/078) — NOT done here." ADR-078 deleted
+# raw HP from runtime entities: every materialized actor carries an
+# `EdgePool`. So the seam is CR → HP-equivalent → the SINGLE canonical
+# `creature_edge_pool_from_hp` (promoted from session.py in this task) →
+# EdgePool, identical in shape to every other engine-materialized actor
+# (`world_materialization._apply_npc` precedent).
+#
+# The CR→HP map is a Plan-7-OWNED §-style decision (there is no shipped
+# CR→HP table — corpus rows are SRD-5.1 CR only, no hp column). It is
+# B/X-shaped and strictly monotonic in cr: `hp = max(1, round(cr * _CR_HP))`.
+# `_CR_HP = 8` reads as "≈ one d8 hit die's worth of composure per point
+# of Challenge Rating" — a CR 1 creature seeds an 8-Edge pool, CR 5 → 40,
+# CR 10 → 80, and a fractional CR 0.25 kobold → max(1, round(2)) = 2. This
+# is not a B/X stat-block transcription (those vary per monster); it is a
+# deterministic, monotone, documented composure seed so the curated deep
+# has Edge that scales with depth-banded CR. Tuning the constant is a
+# §11-style content-tuning lever, not a save migration (ADR-078 §"A pure
+# view function. No materialized-effect state ... retune without
+# migrations").
+_CR_HP = 8
+
+
+def _edge_from_cr(cr: float) -> EdgePool:
+    """CR → HP-equivalent → canonical EdgePool (the owned seam).
+
+    Funnels through the ONE promoted ``creature_edge_pool_from_hp`` so the
+    pool shape (full, ``OnResolution`` recovery, empty thresholds) is byte
+    identical to the NPC-patch path and ``placeholder_edge_pool``. Not a
+    per-call ``if cr is not None`` guard — every creature crossing the
+    cookbook seam is translated here, end to end.
+
+    ``round()`` is banker's rounding; safe for all SRD CRs at
+    ``_CR_HP=8`` (every ``cr*8`` is integral, so no half-integer boundary
+    is ever hit) — a future tuner picking an odd ``_CR_HP`` must
+    re-verify the half-integer rounding boundary.
+    """
+    hp = max(1, round(cr * _CR_HP))
+    return creature_edge_pool_from_hp(hp)
 
 
 def _region_interior_seed(
@@ -128,6 +182,71 @@ class RegionFill:
     height: int
     braid_ratio: float
     grid: Grid
+
+
+@dataclass(frozen=True, slots=True)
+class CuratedCreature:
+    """One curated creature crossing the cookbook→materializer seam.
+
+    The cookbook ships raw corpus rows (``cr``/``xp``); ADR-078 forbids
+    raw HP/CR on a materialized actor. This object is what survives the
+    seam: identity (``name``/``creature_type``), the curator-refined
+    ``telegraph``, and an :class:`EdgePool` (``edge``) — NO ``cr``, NO
+    ``hp``, NO ``xp`` (the same shape discipline as
+    ``world_materialization._apply_npc`` building ``CreatureCore(...,
+    edge=<EdgePool>)``; we mirror the *shape* without fabricating the
+    non-blank ``description``/``personality`` ``CreatureCore`` demands —
+    those are Task 6's snapshot-application concern, not curate's).
+    """
+
+    name: str
+    creature_type: str
+    telegraph: str
+    edge: EdgePool
+
+
+@dataclass(frozen=True, slots=True)
+class RegionCuration:
+    """In-memory curated content for one expansion (Plan 7 Task 4).
+
+    Curation deliberately breaks byte-reproducibility (the ``claude -p``
+    pass): ``assemble_region`` is deterministic up to the seam, the
+    post-curation output is NOT seed-reproducible — the save, not the
+    seed, is truth (spec §7). This is the curate stage's OUTPUT; applying
+    it to a ``GameSnapshot`` / persisting it is Task 6 (commit). Because
+    every creature here already carries an :class:`EdgePool` and no raw
+    cr/hp, Task 6 commits an Edge-only snapshot (no raw-cr-in-committed-
+    snapshot — flagged for Task 6's snapshot-application binding).
+
+    Note: ``frozen`` blocks field reassignment but the dict/list fields
+    are mutable; treat them as read-only by convention (same
+    false-immutability caveat as ``RegionFill.grid``).
+    """
+
+    region_manifests: dict[str, RegionContentManifest]
+    region_creatures: dict[str, list[CuratedCreature]]
+    region_big_bad: dict[str, CuratedCreature | None]
+    region_look: dict[str, str]
+    curated: bool = True
+    raw_seed_reproducible: bool = field(default=False)
+
+    def creatures_for_region(self, region_id: str) -> list[CuratedCreature]:
+        """Fail-loud lookup — an unknown region is a bug, not an empty list."""
+        if region_id not in self.region_creatures:
+            raise KeyError(
+                f"no curated creatures for region {region_id!r}; "
+                f"have: {sorted(self.region_creatures)}"
+            )
+        return self.region_creatures[region_id]
+
+    def big_bad_for_region(self, region_id: str) -> CuratedCreature | None:
+        if region_id not in self.region_big_bad:
+            raise KeyError(
+                f"no big_bad slot for region {region_id!r}; "
+                f"have: {sorted(self.region_big_bad)}"
+            )
+        return self.region_big_bad[region_id]
+
 
 # ---------------------------------------------------------------------------
 # Value object
@@ -412,9 +531,358 @@ def _stage_fill(
     return fills
 
 
-def _stage_curate(request: MaterializationRequest, **kwargs: Any) -> Any:
-    """Plan 7 Task 4: curate stage — cookbook manifest curation + cookbook join."""
-    raise NotImplementedError("_stage_curate not implemented until Plan 7 Task 4")
+class CurationError(RuntimeError):
+    """The bounded ``claude -p`` curation pass failed.
+
+    Raised loudly so the materialization transaction aborts — there is no
+    fallback that ships the raw manifest stamped curated (spec §7 / No
+    Silent Fallbacks). The curate span carries ``curated=false`` + a
+    specific ``reason`` before this propagates so the GM panel sees it.
+    """
+
+
+def _resolve_look_for_theme(
+    bundle: CookbookBundle, theme: Any, *, region_id: str
+) -> str:
+    """Resolve a region's cookbook LOOK from its theme (the look→theme seam).
+
+    `assemble_region` requires a ``look`` (a ``LookDef`` id). There is no
+    ``look`` on ``DungeonTheme`` and none on ``MaterializationRequest`` /
+    §12 knobs. The join key found by reconcile: a ``LookDef`` carries
+    ``generator_binding`` (``depthfirst``/``cellular``/``prim``) and a
+    ``DungeonTheme`` carries ``interior.algorithm`` — they are the SAME
+    generator-family id. So a region's look is the LookDef whose
+    ``generator_binding`` equals the region theme's ``interior.algorithm``.
+
+    Fail loud (No Silent Fallbacks): if no look binds the theme's
+    algorithm (e.g. a ``roomcorridor`` theme with no ``roomcorridor`` look
+    in the shipped beneath_sunden ``looks.yaml``) raise a ``ValueError``
+    naming the region/theme/algorithm. Never default to ``looks[0]``.
+    """
+    algorithm = theme.interior.algorithm
+    matches = [lk.id for lk in bundle.looks if lk.generator_binding == algorithm]
+    if not matches:
+        raise ValueError(
+            f"region {region_id!r} theme {theme.id!r} interior.algorithm "
+            f"{algorithm!r} has no cookbook LOOK whose generator_binding "
+            f"matches it (looks: "
+            f"{ {lk.id: lk.generator_binding for lk in bundle.looks} }). "
+            f"No silent fallback to looks[0] — author a look for this "
+            f"generator family or retheme the region."
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f"region {region_id!r} theme {theme.id!r} algorithm {algorithm!r} "
+            f"is bound by multiple looks {sorted(matches)} — ambiguous "
+            f"look→theme seam; the cookbook must bind one look per "
+            f"generator family. No silent first-match."
+        )
+    return matches[0]
+
+
+def _build_curation_prompt(
+    manifests: dict[str, RegionContentManifest],
+    looks: dict[str, str],
+) -> str:
+    """One bounded prompt covering spec §7 'pass 1 content, pass 2
+    creatures' in a SINGLE one-shot ``claude -p`` subprocess (ADR-001/098:
+    no tools mid-generation, no --resume). The model selects/refines to
+    ship quality and returns a strict JSON verdict mirroring the manifest
+    shape (so curation is auditable, not free-form prose)."""
+    payload = {
+        region_id: {
+            "look": looks[region_id],
+            "race": m.race,
+            "cr_band": m.cr_band,
+            "wandering_table": m.wandering_table,
+            "big_bad": m.big_bad,
+        }
+        for region_id, m in manifests.items()
+    }
+    return (
+        "You are curating one procedurally-assembled dungeon expansion for "
+        "Beneath Sünden (grave, lethal, Moria-as-tragedy; no winking).\n"
+        "PASS 1 (content): for each region keep the cohesive subset of the "
+        "wandering table that fits the region's look and CR band; drop rows "
+        "that read as noise. PASS 2 (creatures): tighten each kept row's "
+        "telegraph to one grave, specific sentence. Keep the big_bad if "
+        "present.\n"
+        "Return ONLY strict JSON, no prose, of the shape: "
+        '{"<region_id>": {"race": str, "cr_band": str, '
+        '"wandering_table": [{"name": str, "cr": number, "xp": number, '
+        '"type": str, "weight": number, "count": str, "telegraph": str}], '
+        '"big_bad": {"name": str, "min_band": str} | null}}.\n'
+        "Preserve every kept row's name/cr/xp/type verbatim (curation "
+        "selects and refines telegraphs; it does not invent stats).\n\n"
+        f"INPUT:\n{json.dumps(payload, sort_keys=True)}"
+    )
+
+
+def _parse_curation_verdict(text: str) -> dict[str, Any]:
+    """Parse the curator's JSON verdict. Unparseable → loud CurationError
+    (never a fallback to the raw manifest)."""
+    stripped = text.strip()
+    # Tolerate a ```json fence the model may wrap around the object.
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`")
+        if stripped.startswith("json"):
+            stripped = stripped[4:]
+        stripped = stripped.strip()
+    try:
+        verdict = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise CurationError(
+            f"curation pass returned unparseable output (not JSON): "
+            f"{exc}; head={stripped[:200]!r}"
+        ) from exc
+    if not isinstance(verdict, dict):
+        raise CurationError(
+            f"curation verdict must be a JSON object keyed by region_id; "
+            f"got {type(verdict).__name__}"
+        )
+    return verdict
+
+
+async def _stage_curate(
+    request: MaterializationRequest,
+    *,
+    bundle: CookbookBundle | None,
+    palette: ThemePalette | None,
+    expansion: Expansion | None,
+    fill_result: dict[str, RegionFill] | None,
+    is_first_band_entry: bool,
+    claude_client: ClaudeClient | None,
+    span: _otel_trace.Span,
+) -> RegionCuration:
+    """Plan 7 Task 4: curate stage — assemble_region + one-shot claude -p
+    + the owned CR→Edge seam.
+
+    Generation proposes; curation disposes. For every region in the
+    expansion: derive its cookbook LOOK from its theme (the resolved
+    look→theme seam), call the pure deterministic
+    ``cookbook.assemble_region`` (campaign_seed/expansion_id int→str at
+    this seam — DIVERGENCE 1), then run ONE bounded ``claude -p`` pass
+    (ADR-001/098 one-shot; spec §7 pass1+pass2 in a single subprocess) to
+    select/refine to ship quality. Every corpus creature crossing the
+    seam (wandering rows AND big_bad) is CR→Edge translated via the single
+    canonical ``creature_edge_pool_from_hp`` — no raw cr/hp leaks into the
+    curate-stage OUTPUT (so Task 6 commits Edge-only).
+
+    ``async def``: ``ClaudeClient.send`` is a coroutine and the event
+    loop is owned by the caller (uvicorn in prod, pytest-asyncio
+    ``asyncio_mode=auto`` in tests). There is NO ``asyncio.run`` anywhere
+    in production — a nested ``asyncio.run`` from the running uvicorn loop
+    (and from Task 7's async look-ahead worker) would raise
+    ``RuntimeError`` unconditionally. The other four stages stay
+    synchronous; only curate awaits.
+
+    Invariants (No Silent Fallbacks):
+    - ``bundle``/``palette``/``expansion``/``claude_client`` must be real
+      objects — ``None`` is rejected loudly.
+    - A region's cookbook LOOK is ALWAYS derived loudly from its theme
+      (``_resolve_look_for_theme`` — an unresolved look is a loud
+      ``ValueError``; NEVER a ``looks[0]`` default; a multi-bind is also
+      a loud ``ValueError``). There is no caller ``look`` override:
+      the theme is the single source of truth.
+    - ``is_first_band_entry`` is an EXPLICIT threaded input — true
+      band-entry history needs Plan 5 persistence (``load_frontier`` /
+      ``load_map``) the curate stage does NOT own. Computing it from
+      incomplete state here would be a silent fallback; Task 6 (commit,
+      which owns persistence) owns the real band-entry-history
+      computation. (Reconcile seam: ``is_first_band_entry``.)
+    - A curation subprocess failure (non-zero exit / timeout / empty /
+      unparseable) raises a loud ``CurationError`` and aborts the
+      transaction — it does NOT fall back to shipping the raw manifest
+      stamped curated. The span records ``curated=false`` + a specific
+      ``reason`` before the raise (lie-detector visibility).
+    """
+    if bundle is None:
+        raise ValueError(
+            "_stage_curate requires a real CookbookBundle — "
+            "bundle=None is not valid (No Silent Fallbacks)"
+        )
+    if palette is None:
+        raise ValueError(
+            "_stage_curate requires a real ThemePalette — "
+            "palette=None is not valid (No Silent Fallbacks)"
+        )
+    if expansion is None:
+        raise ValueError(
+            "_stage_curate requires a real Expansion — "
+            "expansion=None is not valid (No Silent Fallbacks)"
+        )
+    if fill_result is None:
+        # Required to enforce fill-ran-before-curate pipeline ordering;
+        # consumed at Task 6 (commit), not read in this stage's body.
+        raise ValueError(
+            "_stage_curate requires the fill stage result — "
+            "fill_result=None is not valid (No Silent Fallbacks)"
+        )
+    if claude_client is None:
+        raise ValueError(
+            "_stage_curate requires an injected ClaudeClient — "
+            "claude_client=None is not valid (No Silent Fallbacks)"
+        )
+
+    campaign_seed_s = str(request.campaign_seed)  # DIVERGENCE 1: int→str seam
+    expansion_id_s = str(request.expansion_id)  # DIVERGENCE 1: int→str seam
+    depth_score = request.frontier_edge.spawn_depth_score
+
+    manifests: dict[str, RegionContentManifest] = {}
+    region_look: dict[str, str] = {}
+    try:
+        for node in expansion.new_nodes:
+            if node.theme not in palette.themes:
+                raise ValueError(
+                    f"region {node.id!r} references theme {node.theme!r} "
+                    f"which is absent from the palette (have: "
+                    f"{sorted(palette.themes)}). No silent default theme."
+                )
+            theme = palette.themes[node.theme]
+            # The look→theme seam: a region's cookbook LOOK is derived
+            # loudly from its theme — the theme is the single source of
+            # truth (No Silent Fallbacks — an unresolved or multi-bound
+            # look raises in _resolve_look_for_theme; never a looks[0]
+            # default, never a first-match).
+            resolved_look = _resolve_look_for_theme(
+                bundle, theme, region_id=node.id
+            )
+            region_look[node.id] = resolved_look
+            manifests[node.id] = assemble_region(
+                bundle,
+                campaign_seed=campaign_seed_s,
+                expansion_id=expansion_id_s,
+                depth_score=depth_score,
+                burst_magnitude=request.burst_magnitude,
+                look=resolved_look,
+                is_first_band_entry=is_first_band_entry,
+            )
+    except ValueError as exc:
+        span.set_attribute("curated", False)
+        span.set_attribute("reason", f"assemble: {exc}")
+        raise
+
+    # ONE bounded one-shot claude -p curation pass (spec §7 pass1+pass2 in
+    # a single subprocess). ClaudeClient.send is a coroutine; this stage
+    # is async and the event loop is owned by the caller (uvicorn in
+    # prod, pytest-asyncio in tests) — NO asyncio.run anywhere, so Task
+    # 7's async look-ahead worker can await materialize() directly.
+    prompt = _build_curation_prompt(manifests, region_look)
+    try:
+        response = await claude_client.send(prompt)
+    except ClaudeClientError as exc:
+        span.set_attribute("curated", False)
+        span.set_attribute("reason", f"subprocess: {exc}")
+        raise CurationError(
+            f"curation subprocess failed: {exc} — aborting "
+            f"materialization (no raw-manifest-stamped-curated fallback)"
+        ) from exc
+
+    try:
+        verdict = _parse_curation_verdict(response.text)
+    except CurationError as exc:
+        span.set_attribute("curated", False)
+        span.set_attribute("reason", str(exc))
+        raise
+
+    # Build the curated, Edge-translated output. Every corpus creature
+    # crossing the seam (kept wandering rows + big_bad) is CR→Edge
+    # translated here, end to end (NOT a per-call null guard).
+    region_creatures: dict[str, list[CuratedCreature]] = {}
+    region_big_bad: dict[str, CuratedCreature | None] = {}
+    try:
+        for region_id, manifest in manifests.items():
+            rv = verdict.get(region_id)
+            if not isinstance(rv, dict):
+                raise CurationError(
+                    f"curation verdict missing/!dict for region "
+                    f"{region_id!r} (got {type(rv).__name__}); the curator "
+                    f"must return one object per region"
+                )
+            kept_rows = rv.get("wandering_table")
+            if not isinstance(kept_rows, list):
+                raise CurationError(
+                    f"curation verdict for region {region_id!r} has no "
+                    f"wandering_table list (got {type(kept_rows).__name__})"
+                )
+            creatures: list[CuratedCreature] = []
+            for row in kept_rows:
+                if "cr" not in row:
+                    raise CurationError(
+                        f"curated row for {region_id!r} dropped the 'cr' "
+                        f"field ({row!r}); CR→Edge translation is "
+                        f"impossible — the curator must preserve cr verbatim"
+                    )
+                creatures.append(
+                    CuratedCreature(
+                        name=str(row["name"]),
+                        creature_type=str(row.get("type", "")),
+                        telegraph=str(row.get("telegraph", "")),
+                        edge=_edge_from_cr(float(row["cr"])),
+                    )
+                )
+            region_creatures[region_id] = creatures
+
+            bb_v = rv.get("big_bad")
+            if bb_v is None:
+                region_big_bad[region_id] = None
+            else:
+                # The cookbook big_bad row is {name, min_band} only — no cr.
+                # Source its CR from the manifest's raw big_bad if present;
+                # otherwise the band ceiling (the capstone is a lair boss,
+                # spec §4.2 big_bad_forces_size). Either way it crosses the
+                # SAME CR→Edge seam — never a raw cr/hp.
+                bb_cr = None
+                if isinstance(manifest.big_bad, dict):
+                    bb_cr = manifest.big_bad.get("cr")
+                if bb_cr is None:
+                    band = next(
+                        (
+                            b
+                            for b in bundle.affinities.cr_bands
+                            if b.id == manifest.cr_band
+                        ),
+                        None,
+                    )
+                    if band is None:
+                        raise CurationError(
+                            f"big_bad for {region_id!r} has no cr and its "
+                            f"cr_band {manifest.cr_band!r} is not in "
+                            f"affinities.cr_bands — cannot CR→Edge translate"
+                        )
+                    bb_cr = band.cr_max
+                region_big_bad[region_id] = CuratedCreature(
+                    name=str(bb_v.get("name", "")),
+                    creature_type="big_bad",
+                    telegraph=str(bb_v.get("min_band", "")),
+                    edge=_edge_from_cr(float(bb_cr)),
+                )
+    except CurationError as exc:
+        span.set_attribute("curated", False)
+        span.set_attribute("reason", str(exc))
+        raise
+
+    # Lie-detector success payload: curation succeeded (byte-reproducibility
+    # is deliberately broken by the LLM pass — recorded here; the save, not
+    # the seed, is truth).
+    total_creatures = sum(len(v) for v in region_creatures.values())
+    races = sorted({m.race for m in manifests.values()})
+    bands = sorted({m.cr_band for m in manifests.values()})
+    span.set_attribute("curated", True)
+    span.set_attribute("region_count", len(manifests))
+    span.set_attribute("creature_count", total_creatures)
+    span.set_attribute("manifest_race", json.dumps(races, sort_keys=True))
+    span.set_attribute("cr_band", json.dumps(bands, sort_keys=True))
+    span.set_attribute("raw_seed_reproducible", False)
+
+    return RegionCuration(
+        region_manifests=manifests,
+        region_creatures=region_creatures,
+        region_big_bad=region_big_bad,
+        region_look=region_look,
+        curated=True,
+        raw_seed_reproducible=False,
+    )
 
 
 def _stage_attach(request: MaterializationRequest, **kwargs: Any) -> Any:
@@ -432,22 +900,31 @@ def _stage_commit(request: MaterializationRequest, **kwargs: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def materialize(
+async def materialize(
     request: MaterializationRequest,
     *,
     graph: RegionGraph | None,
     bundle: Any,
     palette: Any,
     persistence: DungeonStore,
+    claude_client: ClaudeClient | None = None,
+    is_first_band_entry: bool = True,
 ) -> None:
     """Run the five-stage materialisation pipeline for one expansion.
 
     Opens a parent ``dungeon.materialize`` OTEL span; each of the five stage
     spans nests under it in order (design → fill → curate → attach → commit).
 
-    At Task 1 every stage raises ``NotImplementedError`` — the skeleton exists
-    so span nesting and control flow are testable before any stage logic lands.
-    Later tasks (2–6) fill each stage in turn.
+    Stages design/fill/curate are implemented (Plan 7 Tasks 2–4); attach
+    and commit remain ``NotImplementedError`` until Plan 7 Tasks 5–6.
+
+    ``async def``: the curate stage awaits ``ClaudeClient.send``. The
+    event loop is owned by the caller (uvicorn in prod, pytest-asyncio
+    ``asyncio_mode=auto`` in tests) — there is NO ``asyncio.run``
+    anywhere, so Task 7's async look-ahead worker can ``await
+    materialize()`` directly from inside its coroutine. design/fill/
+    attach/commit remain plain synchronous calls inside this async
+    coordinator; only curate is awaited.
 
     Parameters
     ----------
@@ -456,13 +933,33 @@ def materialize(
     graph:
         The live ``RegionGraph`` (passed through to attach/commit stages).
     bundle:
-        The cookbook bundle (passed through to curate stage).
+        The cookbook bundle (consumed by the curate stage).
     palette:
-        The ``ThemePalette`` (passed through to design stage).
+        The ``ThemePalette`` (consumed by design/fill/curate).
     persistence:
         The ``DungeonStore`` operating on the live save-DB connection
         (caller owns the transaction boundary, spec §7.5).
+    claude_client:
+        Injected ``ClaudeClient`` for the curate stage's one-shot
+        ``claude -p`` pass. ``None`` → a real ``ClaudeClient()`` is
+        constructed (production). Tests inject a fake-spawn client so no
+        real subprocess is launched (DI discipline mirrored from the rest
+        of the codebase — NOT a hardcoded non-injectable client).
+    is_first_band_entry:
+        Caller-asserted band-entry flag threaded into the curate stage's
+        ``assemble_region`` call. The TRUE band-entry-history computation
+        needs Plan 5 persistence (``load_frontier``/``load_map``) that the
+        curate stage does NOT own; it is deferred to Task 6 (commit, which
+        owns persistence). For Task 4 the coordinator passes this
+        caller-supplied value (NOT a silent default computed from
+        incomplete state). (Reconcile seam: ``is_first_band_entry``.)
     """
+    curation_client = claude_client if claude_client is not None else ClaudeClient()
+
+    # The per-region look is derived from each region's theme INSIDE
+    # _stage_curate (it has bundle+palette+expansion) — the theme is the
+    # single source of truth (loud raise on unresolvable/multi-bound;
+    # never a silent default). No look value is threaded from here.
     with dungeon_materialize_span(
         expansion_id=request.expansion_id,
         heading=request.heading,
@@ -474,10 +971,23 @@ def materialize(
             )
 
         with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as fill_span:
-            _stage_fill(request, expansion=expansion, palette=palette, span=fill_span)
+            fill_result = _stage_fill(
+                request, expansion=expansion, palette=palette, span=fill_span
+            )
 
-        with dungeon_materialize_curate_span(expansion_id=request.expansion_id):
-            _stage_curate(request, bundle=bundle)
+        with dungeon_materialize_curate_span(
+            expansion_id=request.expansion_id
+        ) as curate_span:
+            await _stage_curate(
+                request,
+                bundle=bundle,
+                palette=palette,
+                expansion=expansion,
+                fill_result=fill_result,
+                is_first_band_entry=is_first_band_entry,
+                claude_client=curation_client,
+                span=curate_span,
+            )
 
         with dungeon_materialize_attach_span(expansion_id=request.expansion_id):
             _stage_attach(request, graph=graph)
