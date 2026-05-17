@@ -7,24 +7,22 @@ import pytest
 
 from sidequest.dungeon import frontier_hook
 
-# The FULL set of distinct trope_ids referenced by set-pieces across ALL 5
-# caverns_and_claudes themes (grepped from
-# sidequest-content/genre_packs/caverns_and_claudes/themes/*.yaml):
-#   bone_crypt      -> the_keeper_notices_the_disturbance
-#   drowned_cavern  -> the_thing_that_followed_you_down
-#   labyrinth_trap  -> the_resource_clock_you_can_see
-#   sunless_temple  -> priest_demands_a_sacrifice  (+ quest deny_or_feed_the_altar)
-#   winding_catacomb-> (no trope; quest find_the_unlit_way_out only)
-# quest_components are NOT resolved against the pack (seed_quest_components has
-# no quest registry — see sidequest/dungeon/setpiece_attach.py docstring), so
-# only trope_ids must be supplied. Passing ALL real trope_ids makes the test
-# robust to whichever themes the design/attach stages pick for expansion 1+2.
-_ALL_REAL_TROPE_IDS = (
-    "the_keeper_notices_the_disturbance",
-    "the_thing_that_followed_you_down",
-    "the_resource_clock_you_can_see",
-    "priest_demands_a_sacrifice",
-)
+
+def _real_pack() -> Any:
+    """The REAL loaded caverns_and_claudes GenrePack (spec §14.C).
+
+    No _attach_pack: the keystone genuinely proves a real session grows
+    the dungeon. The 4 set-piece tropes are authored in the genre-level
+    tropes.yaml (Plan 7 §14.A); the real pack resolves them. Provenance:
+    handlers/connect.py:~400 loads genre_pack -> session_integration.py
+    passes it as pack_tropes -> setpiece_attach.py resolves trope_id.
+    """
+    from sidequest.genre.loader import (
+        DEFAULT_GENRE_PACK_SEARCH_PATHS,
+        GenreLoader,
+    )
+
+    return GenreLoader(DEFAULT_GENRE_PACK_SEARCH_PATHS).load("caverns_and_claudes")
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +76,7 @@ async def test_session_lifecycle_registers_worker_and_dungeon_grows(
     from sidequest.telemetry.spans.dungeon_materialize import (
         SPAN_FRONTIER_REGION_TRANSITION,
     )
-    from tests.dungeon.test_materializer import _attach_pack, _reflecting_sdk_client
+    from tests.dungeon.test_materializer import _reflecting_sdk_client
 
     monkeypatch.setattr(
         session_integration, "build_llm_client", _reflecting_sdk_client
@@ -97,7 +95,7 @@ async def test_session_lifecycle_registers_worker_and_dungeon_grows(
         handle = await session_integration.attach_dungeon_to_session(
             store=store,
             snapshot=snap,
-            genre_pack=_attach_pack(*_ALL_REAL_TROPE_IDS),
+            genre_pack=_real_pack(),
             genre_slug="caverns_and_claudes",
             world_slug="beneath_sunden",
             world_dir=_beneath_sunden_world_dir(),
