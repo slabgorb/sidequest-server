@@ -327,7 +327,16 @@ def test_genre_pack_assembles_from_caverns_and_claudes() -> None:
 
     assert pack.name == "Caverns & Claudes"
     assert len(pack.archetypes) == 11
-    assert len(pack.tropes) == 4
+    # 4 original genre tropes + 4 Plan 7 §14.A genre-level set-piece tropes
+    # referenced by the Plan-4 themes' set-pieces (mirrors the fix-forward
+    # in test_tropes_deserializes).
+    assert len(pack.tropes) == 8
+    assert {
+        "the_thing_that_followed_you_down",
+        "the_keeper_notices_the_disturbance",
+        "priest_demands_a_sacrifice",
+        "the_resource_clock_you_can_see",
+    } <= {t.id for t in pack.tropes}
     assert len(pack.cultures) == 3
     assert pack.beat_vocabulary is not None
     assert len(pack.beat_vocabulary.obstacles) == 17
