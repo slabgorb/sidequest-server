@@ -1,13 +1,24 @@
-"""Tests for sidequest.dungeon.setpiece_attach — Plan 6, Task 1.
+"""Tests for sidequest.dungeon.setpiece_attach — Plan 6, Tasks 1 & 2.
 
-Three checkboxes from the plan:
+Task 1 checkboxes:
   1. identical inputs → byte-identical rolled result (frozen-into-save contract).
   2. distinct (region_id|setpiece_id|slot_id) tuples do not collude.
   3. a ComponentSlot with one option always picks that option; empty options
      list is rejected by Plan 4's validator — assert the guard still holds.
+
+Task 2 checkboxes:
+  1. A started trope appears in snap.active_tropes with status="progressing";
+     a subsequent tick_tropes advances its progress (lie detector / wiring proof).
+  2. Unknown trope_id raises loudly (content bug surfaced, not swallowed);
+     the failure path still emits a trope.start span carrying the failure.
+  3. threads_lit_per_expansion bounds the count — with budget N and components
+     > N, at most N are lit, and the selection is deterministic from the seed.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -16,11 +27,14 @@ from sidequest.dungeon.setpiece_attach import (
     RolledSetPiece,
     _slot_seed,
     roll_set_piece,
+    start_trope_components,
 )
 from sidequest.dungeon.setpieces import (
     ComponentSlot,
     SetPiece,
+    TropeComponent,
 )
+from sidequest.game.session import GameSnapshot
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -275,3 +289,249 @@ def test_rolled_setpiece_contains_all_slot_names():
     loot_values = {o.value for o in _MULTI_OPTION_SET_PIECE.slots[1].options}
     assert result.slots["layout"] in layout_values
     assert result.slots["loot"] in loot_values
+
+
+# ===========================================================================
+# Task 2: Trope-component start → live trope engine (ADR-018 seam)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Fixture helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_trope_def(
+    trope_id: str,
+    rate_per_turn: float = 0.05,
+) -> Any:
+    """Minimal TropeDefinition-shaped object.
+
+    tick_tropes duck-types on .id, .passive_progression.rate_per_turn,
+    and .escalation (checked in _fire_one_staggered_beat Pass B).
+    Using SimpleNamespace keeps the fixture free of the genre loader so the
+    test does not require a real genre pack on disk.
+    """
+    passive = SimpleNamespace(
+        rate_per_turn=rate_per_turn,
+        rate_per_day=0.0,
+        accelerators=[],
+        decelerators=[],
+        accelerator_bonus=0.0,
+        decelerator_penalty=0.0,
+    )
+    return SimpleNamespace(
+        id=trope_id,
+        passive_progression=passive,
+        escalation=[],  # no beats — tick advances progress without firing
+    )
+
+
+def _make_pack(*trope_defs: Any) -> Any:
+    """Minimal pack-shaped object carrying a .tropes list."""
+    return SimpleNamespace(tropes=list(trope_defs))
+
+
+def _make_components(*trope_ids: str, params: dict | None = None) -> list[TropeComponent]:
+    """Build TropeComponent list with optional shared params."""
+    return [TropeComponent(trope_id=tid, params=params or {}) for tid in trope_ids]
+
+
+def _fresh_snapshot() -> GameSnapshot:
+    """Minimal GameSnapshot with empty active_tropes."""
+    return GameSnapshot(genre_slug="caverns_and_claudes", world_slug="test_world")
+
+
+# ---------------------------------------------------------------------------
+# Task 2 Test 1: started trope appears in active_tropes with
+# status="progressing" AND tick_tropes advances its progress (lie detector).
+# ---------------------------------------------------------------------------
+
+
+def test_started_trope_is_progressing_and_tick_advances_it() -> None:
+    """Wiring proof: start_trope_components appends a live TropeState that
+    tick_tropes actually advances — not an inert blob the engine ignores."""
+    from sidequest.game.trope_tick import tick_tropes
+
+    trope_def = _make_trope_def("cave_in", rate_per_turn=0.1)
+    pack = _make_pack(trope_def)
+    snapshot = _fresh_snapshot()
+    components = _make_components("cave_in")
+
+    result = start_trope_components(
+        campaign_seed=42,
+        expansion_id=1,
+        region_id="exp001.r5",
+        setpiece_id="collapse_hall",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+    )
+
+    # 1a — TropeState appended with correct fields
+    assert result.tropes_started == 1
+    assert len(snapshot.active_tropes) == 1
+    ts = snapshot.active_tropes[0]
+    assert ts.id == "cave_in"
+    assert ts.status == "progressing"
+    assert ts.progress == 0.0
+
+    # 1b — pending carries component + origin_region for Task 4
+    assert len(result.pending) == 1
+    comp, origin_region = result.pending[0]
+    assert comp.trope_id == "cave_in"
+    assert origin_region == "exp001.r5"
+
+    # 1c — tick_tropes with a real pack advances progress (lie detector)
+    progress_before = ts.progress
+    tick_tropes(snapshot, pack, now_turn=1)
+    assert snapshot.active_tropes[0].progress > progress_before, (
+        "tick_tropes did not advance progress — trope is inert, not live"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 2 Test 2: unknown trope_id raises loudly; span carries failure.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_trope_id_raises_loudly() -> None:
+    """An unresolvable trope_id must raise ValueError (content authoring bug),
+    not silently skip. The span must be emitted even on failure so the GM
+    panel sees the content bug."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+
+    pack = _make_pack()  # empty — no tropes registered
+    snapshot = _fresh_snapshot()
+    components = _make_components("ghost_lights")
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ValueError, match="ghost_lights"):
+            start_trope_components(
+                campaign_seed=7,
+                expansion_id=2,
+                region_id="exp002.r1",
+                setpiece_id="haunted_alcove",
+                components=components,
+                pack_tropes=pack,
+                snapshot=snapshot,
+                threads_lit_per_expansion=10,
+                threads_already_lit=0,
+            )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # Span must have been emitted carrying the failure
+    finished = exporter.get_finished_spans()
+    trope_start_spans = [s for s in finished if s.name == "trope.start"]
+    assert trope_start_spans, "trope.start span was NOT emitted on failure — GM panel is blind"
+    span_attrs = trope_start_spans[0].attributes or {}
+    assert span_attrs.get("trope_id") == "ghost_lights"
+    assert span_attrs.get("failed") is True
+
+
+# ---------------------------------------------------------------------------
+# Task 2 Test 3: threads_lit_per_expansion bounds the count; selection is
+# deterministic from the seed.
+# ---------------------------------------------------------------------------
+
+
+def test_budget_caps_tropes_lit() -> None:
+    """With 4 trope components and budget=2 (remaining=2), exactly 2 are lit.
+    Which 2 is deterministic from the seed — running twice gives the same pair."""
+    trope_defs = [_make_trope_def(f"trope_{i}") for i in range(4)]
+    pack = _make_pack(*trope_defs)
+    components = _make_components("trope_0", "trope_1", "trope_2", "trope_3")
+
+    # Run A
+    snapshot_a = _fresh_snapshot()
+    result_a = start_trope_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot_a,
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+
+    # Run B — same inputs, must produce identical lit set
+    snapshot_b = _fresh_snapshot()
+    start_trope_components(
+        campaign_seed=99,
+        expansion_id=3,
+        region_id="exp003.r2",
+        setpiece_id="budget_test",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot_b,
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+    )
+
+    # Budget enforced
+    assert result_a.tropes_started == 2
+    assert len(snapshot_a.active_tropes) == 2
+
+    # Deterministic — same seed → same selection
+    ids_a = {t.id for t in snapshot_a.active_tropes}
+    ids_b = {t.id for t in snapshot_b.active_tropes}
+    assert ids_a == ids_b, "selection is non-deterministic across identical inputs"
+
+
+def test_budget_with_already_lit_accumulator() -> None:
+    """threads_already_lit reduces remaining budget; when already_lit >= budget,
+    no tropes are lit."""
+    trope_def = _make_trope_def("ceiling_crack")
+    pack = _make_pack(trope_def)
+    snapshot = _fresh_snapshot()
+    components = _make_components("ceiling_crack")
+
+    result = start_trope_components(
+        campaign_seed=5,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="full_budget",
+        components=components,
+        pack_tropes=pack,
+        snapshot=snapshot,
+        threads_lit_per_expansion=1,
+        threads_already_lit=1,  # budget exhausted
+    )
+    assert result.tropes_started == 0
+    assert snapshot.active_tropes == []
+
+
+def test_budget_no_silent_default() -> None:
+    """threads_lit_per_expansion has no default — omitting it raises TypeError,
+    not a silent fallback."""
+    pack = _make_pack()
+    snapshot = _fresh_snapshot()
+    with pytest.raises(TypeError):
+        start_trope_components(  # type: ignore[call-arg]
+            campaign_seed=1,
+            expansion_id=1,
+            region_id="r0",
+            setpiece_id="p0",
+            components=[],
+            pack_tropes=pack,
+            snapshot=snapshot,
+            threads_already_lit=0,
+            # threads_lit_per_expansion intentionally omitted
+        )

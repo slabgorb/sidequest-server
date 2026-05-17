@@ -1,18 +1,21 @@
-"""Set-piece attach — Plan 6, Task 1: deterministic slot roll.
+"""Set-piece attach — Plan 6, Tasks 1 & 2.
 
-Public surface (first of this module's lifetimes — grows across Plan 6 Tasks
-1–5, exactly like Plan 3's DepthReport precedent; NOT a stub):
+Public surface (grows across Plan 6 Tasks 1–5, exactly like Plan 3's
+DepthReport precedent; NOT a stub):
 
     roll_set_piece(
         campaign_seed, expansion_id, region_id, setpiece_id, set_piece
     ) -> RolledSetPiece
 
+    start_trope_components(
+        *, campaign_seed, expansion_id, region_id, setpiece_id,
+        components, pack_tropes, snapshot,
+        threads_lit_per_expansion, threads_already_lit
+    ) -> TropeStartResult
+
 Determinism contract
 --------------------
-* Pure function — no I/O, no engine mutation, no side effects.
-* Identical inputs produce byte-identical results across repeated calls AND
-  process restarts (frozen-into-save contract; spec §7 — once rolled, the
-  result is stored and never recomputed).
+* ``roll_set_piece`` is a pure function — no I/O, no engine mutation.
 * Sub-seeding uses blake2b over a pipe-delimited UTF-8 string of all five
   discriminators, fed into random.Random.  This is the canonical pattern
   established in region_graph/generator._subseed and depth.depth_jitter.
@@ -24,11 +27,21 @@ Determinism contract
   delimiter prevents naive string-concatenation aliasing) and between
   distinct slots within the same set-piece (slot_name is the innermost
   discriminator).
+* ``start_trope_components`` reuses the same _slot_seed family for the
+  budget-capped deterministic ordering of components (never a second scheme,
+  never XOR).
+
+Architect decisions (Plan 6, 2026-05-16)
+-----------------------------------------
+Decision A: origin_region + params do NOT go on TropeState (extra="ignore"
+  would swallow them silently). They are carried in TropeStartResult.pending
+  for Task 4's ledger thread.
+Decision B: threads_lit_per_expansion is an explicit required parameter
+  (no silent default, no config module). Plan 7 threads the value.
 
 Plan 6 later tasks extend this module:
-  Task 2 — trope-start at attach
   Task 3 — quest-seed at attach
-  Task 4 — ledger-add
+  Task 4 — ledger-add (consumes TropeStartResult.pending)
   Task 5 — resolution wiring
 """
 
@@ -37,8 +50,10 @@ from __future__ import annotations
 import hashlib
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
-from sidequest.dungeon.setpieces import SetPiece
+from sidequest.dungeon.setpieces import SetPiece, TropeComponent
+from sidequest.game.session import GameSnapshot, TropeState
 
 
 @dataclass(frozen=True)
@@ -138,3 +153,124 @@ def roll_set_piece(
         rolled[slot.name] = chosen.value
 
     return RolledSetPiece(slots=rolled)
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Trope-component start → live trope engine (ADR-018 seam)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TropeStartResult:
+    """Result of start_trope_components.
+
+    ``tropes_started`` is the count added to snapshot.active_tropes this
+    call.  Task 4 adds that value to the running threads_already_lit total.
+
+    ``pending`` carries (component, origin_region_id) pairs for every trope
+    that was started — Task 4 writes these to the ledger as ComplicationThread
+    entries (origin_region_id + component.params are thread provenance;
+    they CANNOT go on TropeState because extra="ignore" would swallow them
+    silently — Decision A).
+    """
+
+    tropes_started: int
+    pending: list[tuple[TropeComponent, str]] = field(default_factory=list)
+
+
+def start_trope_components(
+    *,
+    campaign_seed: int,
+    expansion_id: int,
+    region_id: str,
+    setpiece_id: str,
+    components: list[TropeComponent],
+    pack_tropes: Any,
+    snapshot: GameSnapshot,
+    threads_lit_per_expansion: int,
+    threads_already_lit: int,
+) -> TropeStartResult:
+    """Start each TropeComponent: resolve against pack, append TropeState,
+    emit trope.start span, return TropeStartResult for Task 4's ledger.
+
+    Args:
+        campaign_seed:            Campaign-level integer seed.
+        expansion_id:             Expansion id (matches RegionNode.expansion_id).
+        region_id:                Origin region id — carried in pending for
+                                  Task 4; NOT stored on TropeState (Decision A).
+        setpiece_id:              Set-piece id (used for seed discrimination).
+        components:               TropeComponent list from the set-piece template.
+        pack_tropes:              Duck-typed pack object with a .tropes attribute
+                                  (list of TropeDefinition-like objects with .id).
+                                  Same duck type tick_tropes uses.
+        snapshot:                 Mutable GameSnapshot — active_tropes is
+                                  mutated in place (TropeState appended).
+        threads_lit_per_expansion: Required budget. No silent default (No Silent
+                                  Fallbacks). Plan 7 threads this value.
+        threads_already_lit:      Count already consumed this expansion (shared
+                                  with Task 3's quest components). Remaining
+                                  budget = threads_lit_per_expansion -
+                                  threads_already_lit.
+
+    Returns:
+        TropeStartResult with count lit and pending (component, region_id)
+        pairs for Task 4.
+
+    Raises:
+        ValueError: if any selected component's trope_id is not present in
+                    pack_tropes.  This is a content authoring bug — loud
+                    failure per CLAUDE.md "No Silent Fallbacks".  The
+                    trope.start span is still emitted with failed=True before
+                    the exception propagates so the GM panel sees it.
+    """
+    from sidequest.telemetry.spans.dungeon_setpiece import trope_start_span
+
+    # Build the trope resolution map — same approach as tick_tropes.
+    pack_tropes_by_id: dict[str, Any] = {
+        t.id: t for t in getattr(pack_tropes, "tropes", []) if t.id is not None
+    }
+
+    remaining = threads_lit_per_expansion - threads_already_lit
+    if remaining <= 0 or not components:
+        return TropeStartResult(tropes_started=0)
+
+    # Deterministic ordering of components within this budget cap.
+    # Reuses the _slot_seed / blake2b family — index as the innermost
+    # discriminator (canonical pattern, no second seed scheme, no XOR).
+    indexed = list(enumerate(components))
+    indexed.sort(
+        key=lambda t: _slot_seed(
+            campaign_seed,
+            expansion_id,
+            region_id,
+            setpiece_id,
+            f"trope_order|{t[0]}",
+        )
+    )
+    selected = indexed[:remaining]
+
+    pending: list[tuple[TropeComponent, str]] = []
+    started = 0
+
+    for _orig_idx, component in selected:
+        # Open the span before resolution so the failure path can set
+        # failed=True on the live span before re-raising.
+        with trope_start_span(
+            trope_id=component.trope_id,
+            setpiece_id=setpiece_id,
+            origin_region_id=region_id,
+        ) as span:
+            if component.trope_id not in pack_tropes_by_id:
+                span.set_attribute("failed", True)
+                raise ValueError(
+                    f"trope_id {component.trope_id!r} not found in pack — "
+                    "content authoring bug (add it to tropes.yaml or fix the "
+                    "set-piece template). No Silent Fallbacks."
+                )
+            snapshot.active_tropes.append(
+                TropeState(id=component.trope_id, status="progressing", progress=0.0)
+            )
+            pending.append((component, region_id))
+            started += 1
+
+    return TropeStartResult(tropes_started=started, pending=pending)
