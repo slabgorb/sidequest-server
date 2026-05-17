@@ -29,9 +29,6 @@ if TYPE_CHECKING:
     from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import SessionRoom
 
-from sidequest.agents.claude_client import (
-    ClaudeClient,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
-)
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend

@@ -447,9 +447,13 @@ def _mock_claude_client(monkeypatch):
 
     - ``orchestrator.ClaudeClient`` — Orchestrator's default narrator client
     - ``local_dm.ClaudeClient`` — LocalDM's default decomposer client
-    - ``session_handler.ClaudeClient`` — the factory default in
-      ``WebSocketSessionHandler`` when no ``claude_client_factory`` is
-      passed
+    - ``websocket_session_handler.ClaudeClient`` — the factory default in
+      ``WebSocketSessionHandler`` (defined in ``websocket_session_handler``,
+      which reads its own module-level ``ClaudeClient`` binding at the
+      ``_client_factory`` default) when no ``claude_client_factory`` is
+      passed. Patching ``session_handler.ClaudeClient`` (a dead re-export)
+      does NOT reach it — this is the per-module-binding footgun above,
+      applied to the guard itself.
 
     Tests that want to inspect prompts install their own mock via
     ``monkeypatch.setattr`` / ``claude_client_factory=`` — those shadow
@@ -464,7 +468,7 @@ def _mock_claude_client(monkeypatch):
         _FakeClaudeClient,
     )
     monkeypatch.setattr(
-        "sidequest.server.session_handler.ClaudeClient",
+        "sidequest.server.websocket_session_handler.ClaudeClient",
         _FakeClaudeClient,
     )
 
