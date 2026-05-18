@@ -68,6 +68,10 @@ class ToolingResult:
     cached_input_write_tokens: int
     model: str
     tool_calls: list[ToolUseBlock] = field(default_factory=list)
+    # Sum of `compute_cost_usd` across every iteration of the tool-use
+    # loop. Defaults to 0.0 so legacy test doubles that construct
+    # ToolingResult by hand keep working — production paths populate it.
+    cumulative_cost_usd: float = 0.0
 
 
 # Handler signature the registry exposes to the client.

@@ -107,6 +107,11 @@ class _FakeRegistry:
     def compose_split(self, agent_name: str) -> tuple[str, str]:
         return ("system text", "user text")
 
+    def compose_split_by_zone(self, agent_name: str):
+        from sidequest.agents.prompt_framework.types import AttentionZone
+
+        return ({AttentionZone.Primacy: "system text"}, "user text")
+
 
 # ---------------------------------------------------------------------------
 # Shared sidecar fixture — a game_patch block that mixes TOOL-OWNED mutations

@@ -67,3 +67,55 @@ def test_empty_agent_returns_empty_pair():
     registry = PromptRegistry()
     system, user = registry.compose_split(AGENT)
     assert (system, user) == ("", "")
+
+
+# ---------------------------------------------------------------------------
+# compose_split_by_zone — drives the three-zone cacheable layout (ADR-101 D6)
+# ---------------------------------------------------------------------------
+
+
+def test_compose_split_by_zone_partitions_system_sections_by_zone():
+    registry = PromptRegistry()
+    # System-bucket sections in three zones.
+    registry.register_section(
+        AGENT, _section("soul_principles", "SOUL-TEXT", zone=AttentionZone.Primacy)
+    )
+    registry.register_section(
+        AGENT,
+        _section("genre_narrator_voice", "EARLY-TEXT", zone=AttentionZone.Early),
+    )
+    registry.register_section(
+        AGENT,
+        _section("genre_transition_hints", "LATE-TEXT", zone=AttentionZone.Late),
+    )
+    # User-bucket section.
+    registry.register_section(
+        AGENT, _section("player_action", "USER-TEXT", zone=AttentionZone.Recency)
+    )
+
+    zone_text, user_text = registry.compose_split_by_zone(AGENT)
+
+    assert zone_text[AttentionZone.Primacy] == "SOUL-TEXT"
+    assert zone_text[AttentionZone.Early] == "EARLY-TEXT"
+    assert zone_text[AttentionZone.Late] == "LATE-TEXT"
+    assert AttentionZone.Valley not in zone_text
+    assert AttentionZone.Recency not in zone_text
+    assert user_text == "USER-TEXT"
+
+
+def test_compose_split_by_zone_user_bucket_unchanged():
+    """Sections not on the system allowlist appear only in user_text."""
+    registry = PromptRegistry()
+    registry.register_section(
+        AGENT, _section("npc_roster", "NPCS", zone=AttentionZone.Early)
+    )
+
+    zone_text, user_text = registry.compose_split_by_zone(AGENT)
+    assert zone_text == {}
+    assert user_text == "NPCS"
+
+
+def test_compose_split_by_zone_returns_empty_for_unknown_agent():
+    registry = PromptRegistry()
+    zone_text, user_text = registry.compose_split_by_zone(AGENT)
+    assert (zone_text, user_text) == ({}, "")

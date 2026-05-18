@@ -190,6 +190,62 @@ class PromptRegistry:
             span.set_attribute("user_section_count", len(user_parts))
             return system_text, user_text
 
+    def compose_split_by_zone(
+        self, agent_name: str
+    ) -> tuple[dict[AttentionZone, str], str]:
+        """Compose system-bucket sections grouped by attention zone.
+
+        Returns ``(system_by_zone, user_text)`` where ``system_by_zone``
+        maps each :class:`AttentionZone` to the joined text of
+        system-bucket sections in that zone, and ``user_text`` is the
+        joined text of all user-bucket sections (zone-sorted, same as
+        :meth:`compose_split`).
+
+        Used by :class:`Orchestrator` to assemble multiple
+        :class:`CacheableBlock` entries by zone (ADR-101 Phase D Task 6):
+        Primacy + Early go in the cached block, Valley and Late + Recency
+        ride uncached blocks so they may mutate per turn without breaking
+        the cache prefix.
+
+        Empty zones are omitted from the dict. Empty user content yields
+        an empty string. Section content for any zone is byte-stable
+        across calls given identical registered sections — see the
+        :func:`compose_split`-driven byte-stability test in
+        ``tests/agents/test_cache_ttl_prefix_and_otel.py`` for the
+        load-bearing guarantee.
+        """
+        from sidequest.agents.prompt_framework.bucket import (
+            SectionBucket,
+            default_bucket_for_section,
+        )
+        from sidequest.telemetry.spans import SPAN_COMPOSE, Span
+
+        with Span.open(
+            SPAN_COMPOSE, {"agent_name": agent_name, "split": True, "by_zone": True}
+        ) as span:
+            sections = list(self._sections.get(agent_name, []))
+            sections.sort(key=lambda s: s.zone.order())
+
+            system_by_zone: dict[AttentionZone, list[str]] = {}
+            user_parts: list[str] = []
+            for s in sections:
+                if s.is_empty():
+                    continue
+                bucket = default_bucket_for_section(s.name)
+                if bucket == SectionBucket.System:
+                    system_by_zone.setdefault(s.zone, []).append(s.content)
+                else:
+                    user_parts.append(s.content)
+
+            zone_text: dict[AttentionZone, str] = {
+                zone: "\n\n".join(parts) for zone, parts in system_by_zone.items()
+            }
+            user_text = "\n\n".join(user_parts)
+            span.set_attribute("user_chars", len(user_text))
+            for zone, text in zone_text.items():
+                span.set_attribute(f"system_chars.{zone.value}", len(text))
+            return zone_text, user_text
+
     def clear(self, agent_name: str) -> None:
         """Clear all sections for an agent."""
         self._sections.pop(agent_name, None)
