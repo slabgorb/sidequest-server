@@ -102,6 +102,78 @@ def test_round_absent_or_non_int_is_stored_null(tmp_path):
         store.close()
 
 
+def test_pydantic_rootmodel_in_payload_serializes_via_tolerant_default(tmp_path):
+    """A Pydantic RootModel (NonBlankString) inside fields must not crash
+    the sink — the tolerant `_json_default` collapses it to its .root value.
+    Regression for 2026-05-18 MP playtest: footnote forwards carry
+    NonBlankString summaries; default json.dumps raised TypeError and
+    every footnote turn lost telemetry."""
+    from sidequest.protocol.types import NonBlankString
+
+    store = _store(tmp_path)
+    try:
+        bind_event_store(store)
+        publish_event(
+            "state_transition",
+            {
+                "field": "footnote",
+                "summaries": [NonBlankString(root="silver-salts pales the smear")],
+                "round": 5,
+            },
+            component="footnotes",
+        )
+        rows = store._conn.execute(
+            "SELECT payload_json FROM turn_telemetry"
+        ).fetchall()
+        assert len(rows) == 1  # row persisted, not dropped
+        payload = json.loads(rows[0][0])
+        assert payload["summaries"] == ["silver-salts pales the smear"]
+        assert payload["field"] == "footnote"
+    finally:
+        bind_event_store(None)
+        store.close()
+
+
+def test_concurrent_publishers_dont_lose_rows(tmp_path):
+    """Two threads publishing telemetry against the same store must not
+    drop rows to `database is locked`. Regression for 2026-05-18 MP
+    playtest: concurrent turn telemetry from Laverne+Shirley collided on
+    the saves connection and warned `sqlite3.OperationalError: database
+    is locked` for every census/trope_census event."""
+    import threading
+
+    store = _store(tmp_path)
+    try:
+        bind_event_store(store)
+        N = 20  # per-thread publish count
+        errors: list[BaseException] = []
+
+        def burst(label: str) -> None:
+            try:
+                for i in range(N):
+                    publish_event(
+                        "state_transition",
+                        {"field": "census", "label": label, "i": i},
+                        component="mechanical",
+                    )
+            except BaseException as exc:  # pragma: no cover — surfaces in assert
+                errors.append(exc)
+
+        t1 = threading.Thread(target=burst, args=("laverne",))
+        t2 = threading.Thread(target=burst, args=("shirley",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert not errors
+        # Every publish must yield exactly one row — no drops.
+        count = store._conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0]
+        assert count == 2 * N
+    finally:
+        bind_event_store(None)
+        store.close()
+
+
 def test_sink_failure_logs_loudly_and_does_not_crash_the_turn(tmp_path, caplog):
     """A forced sink error must produce a loud turn_telemetry.sink_failed
     WARNING and return — publish_event still completes normally."""

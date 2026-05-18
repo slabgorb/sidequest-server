@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -268,6 +269,18 @@ else:
 
 _event_store = None  # bound at session-handler startup; weakref-safe by class id
 
+# Serializes the persistence helpers below across publisher threads. The
+# bound store's sqlite3 connection is opened with
+# ``check_same_thread=False`` so that ``publish_event`` is safe to call
+# from narrator workers / renderer / daemon threads; this lock is what
+# makes that flag safe. Without it, two threads can interleave inside a
+# single ``conn.execute`` / ``with conn:`` and race to BEGIN a write
+# transaction — which manifested as the 2026-05-18 MP playtest
+# ``sqlite3.OperationalError: database is locked`` warnings on every
+# census / trope_census event. Held only across the sqlite call, never
+# while constructing payloads, so contention is bounded.
+_persist_lock = threading.Lock()
+
 
 def bind_event_store(store) -> None:
     """Bind a SqliteStore so encounter watcher events persist as rows.
@@ -310,13 +323,14 @@ def _maybe_persist_encounter_row(event: dict) -> None:
     kind = _KIND_BY_OP.get(op)
     if kind is None:
         return
-    payload = json.dumps(fields)
+    payload = json.dumps(fields, default=_json_default)
     try:
-        _event_store._conn.execute(
-            "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-            (kind, payload),
-        )
-        _event_store._conn.commit()
+        with _persist_lock:
+            _event_store._conn.execute(
+                "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (kind, payload),
+            )
+            _event_store._conn.commit()
     except sqlite3.ProgrammingError as exc:
         # The bound store's connection has been closed out from under us
         # (typical: session disconnect closed the store but never called
@@ -368,7 +382,7 @@ def _persist_turn_telemetry(event: dict) -> None:
         component = event.get("component", "sidequest-server")
         event_type = event.get("event_type", "")
         fields = event.get("fields", {})
-        payload_json = json.dumps(fields)
+        payload_json = json.dumps(fields, default=_json_default)
         rnd = fields.get("round") if isinstance(fields, dict) else None
         if not isinstance(rnd, int):
             rnd = None
@@ -378,14 +392,15 @@ def _persist_turn_telemetry(event: dict) -> None:
             "(event_seq, round, ts, component, event_type, payload_json) "
             "VALUES (?, ?, ?, ?, ?, ?)"
         )
-        if conn.in_transaction:
-            ev_seq = conn.execute("SELECT MAX(seq) FROM events").fetchone()[0]
-            conn.execute(
-                insert, (ev_seq, rnd, ts, component, event_type, payload_json)
-            )  # NO commit: rides the open turn (C2) transaction
-        else:
-            with conn:
-                conn.execute(insert, (None, rnd, ts, component, event_type, payload_json))
+        with _persist_lock:
+            if conn.in_transaction:
+                ev_seq = conn.execute("SELECT MAX(seq) FROM events").fetchone()[0]
+                conn.execute(
+                    insert, (ev_seq, rnd, ts, component, event_type, payload_json)
+                )  # NO commit: rides the open turn (C2) transaction
+            else:
+                with conn:
+                    conn.execute(insert, (None, rnd, ts, component, event_type, payload_json))
     except Exception:  # noqa: BLE001 — telemetry must never crash a turn
         logger.warning(
             "turn_telemetry.sink_failed component=%s event_type=%s",
