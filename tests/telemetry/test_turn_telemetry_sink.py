@@ -100,3 +100,21 @@ def test_round_absent_or_non_int_is_stored_null(tmp_path):
     finally:
         bind_event_store(None)
         store.close()
+
+
+def test_sink_failure_logs_loudly_and_does_not_crash_the_turn(tmp_path, caplog):
+    """A forced sink error must produce a loud turn_telemetry.sink_failed
+    WARNING and return — publish_event still completes normally."""
+    store = _store(tmp_path)
+    try:
+        bind_event_store(store)
+        # force the INSERT to explode by dropping the table out from under it
+        store._conn.execute("DROP TABLE turn_telemetry")
+        store._conn.commit()
+        with caplog.at_level("WARNING"):
+            publish_event("state_transition", {"field": "x"}, component="trope")  # must NOT raise
+        assert "turn_telemetry.sink_failed" in caplog.text
+        assert "component=trope event_type=state_transition" in caplog.text
+    finally:
+        bind_event_store(None)
+        store.close()
