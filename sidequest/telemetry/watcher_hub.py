@@ -335,6 +335,67 @@ def _maybe_persist_encounter_row(event: dict) -> None:
         _event_store = None
 
 
+def _persist_turn_telemetry(event: dict) -> None:
+    """Append one raw turn_telemetry row for every watcher publish.
+
+    Reuses the same process-global ``_event_store`` binding that
+    ``_maybe_persist_encounter_row`` uses (bound at connect time; its
+    ``_conn`` is the same connection the C2 turn transaction writes
+    events/projection_cache through).
+
+    Transaction discipline (the load-bearing invariant): under this
+    codebase's default *deferred* isolation, ``conn.in_transaction`` is
+    True iff a write transaction is already open on the connection. In the
+    turn path the first DML is the C2 ``events`` INSERT, so
+    ``in_transaction`` True ⟺ this turn's event row already exists ⟺
+    ``MAX(seq) FROM events`` is that in-flight row. So:
+
+      * in_transaction  -> join the open turn txn (NO commit); attribute
+        ``event_seq = MAX(seq)``; the row commits/rolls back atomically
+        with ``events``/``projection_cache``.
+      * not in_transaction -> own short ``with conn:`` txn; ``event_seq``
+        is NULL (fired outside an event frame — the spec's NULL case).
+
+    Fully wrapped: ANY failure logs loudly (``turn_telemetry.sink_failed``)
+    and returns. Never raises, never stalls the turn, never writes to a
+    different DB (No-Silent-Fallbacks).
+    """
+    store = _event_store
+    if store is None:
+        return  # legacy/in-memory session: no durable save bound (not an error)
+    try:
+        conn = store._conn
+        component = event.get("component", "sidequest-server")
+        event_type = event.get("event_type", "")
+        fields = event.get("fields", {})
+        payload_json = json.dumps(fields)
+        rnd = fields.get("round") if isinstance(fields, dict) else None
+        if not isinstance(rnd, int):
+            rnd = None
+        ts = datetime.now(UTC).isoformat()
+        insert = (
+            "INSERT INTO turn_telemetry "
+            "(event_seq, round, ts, component, event_type, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        if conn.in_transaction:
+            ev_seq = conn.execute("SELECT MAX(seq) FROM events").fetchone()[0]
+            conn.execute(
+                insert, (ev_seq, rnd, ts, component, event_type, payload_json)
+            )  # NO commit: rides the open turn (C2) transaction
+        else:
+            with conn:
+                conn.execute(insert, (None, rnd, ts, component, event_type, payload_json))
+    except Exception:  # noqa: BLE001 — telemetry must never crash a turn
+        logger.warning(
+            "turn_telemetry.sink_failed component=%s event_type=%s",
+            event.get("component"),
+            event.get("event_type"),
+            exc_info=True,
+        )
+        return
+
+
 def _coerce_attr_value(value: Any) -> Any:
     """Coerce a watcher field value to an OTEL-attribute-safe primitive.
 
@@ -434,6 +495,7 @@ def publish_event(
         }
     )
     _maybe_persist_encounter_row({"event_type": event_type, "fields": fields})
+    _persist_turn_telemetry({"event_type": event_type, "fields": fields, "component": component})
     if _watcher_as_spans_enabled():
         _emit_watcher_span(event_type, fields, component, severity)
 
