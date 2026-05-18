@@ -523,3 +523,115 @@ def test_list_saves_telemetry_count_zero_when_table_present_but_empty(tmp_path):
     assert (
         save["telemetry_rows"] == 0
     )  # real COUNT(*) on an empty table, not the missing-table guard
+
+
+def _add_mechanical(db, rows):
+    """rows = list of (event_seq, round, event_type, payload_dict)."""
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "CREATE TABLE IF NOT EXISTS turn_telemetry ("
+        " seq INTEGER PRIMARY KEY AUTOINCREMENT, event_seq INTEGER,"
+        " round INTEGER, ts TEXT NOT NULL, component TEXT NOT NULL,"
+        " event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+    )
+    con.executemany(
+        "INSERT INTO turn_telemetry "
+        "(event_seq, round, ts, component, event_type, payload_json) "
+        "VALUES (?,?,?,?,?,?)",
+        [(es, rn, "t", "mechanical", et, json.dumps(p)) for es, rn, et, p in rows],
+    )
+    con.commit()
+    con.close()
+
+
+def test_bundle_mechanical_diffs_round_against_prev_census_round(tmp_path):
+    db = tmp_path / "saves" / "games" / "mech" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = _make_save(tmp_path / "saves", "mech", genre="g", world="w")
+    _seed_rounds(store)            # rounds 1 & 2 of events/narrative
+    store.close()
+    base = {"player_id": "p1", "character_name": "Rux", "seat": 0,
+            "edge": {"current": 10, "max": 10}, "location": "Cave",
+            "inventory": [], "xp": 0, "level": 1,
+            "acquired_advancements": []}
+    _add_mechanical(db, [
+        (None, 1, "census", {**base, "round": 1}),
+        (None, 2, "census", {**base, "round": 2, "xp": 25}),
+    ])
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    conn = _ro_connect(db)
+    try:
+        b = build_turn_bundle(conn, 2)
+        m = b["mechanical"]
+        assert m["state"] == "moved"
+        [pc] = m["pcs"]
+        assert pc["player_id"] == "p1"
+        assert pc["kind"] == "moved"
+        assert dict(pc["deltas"])["xp"] == "+25"
+    finally:
+        conn.close()
+
+
+def test_bundle_missing_turn_telemetry_table_is_absent_not_error(tmp_path):
+    store = _make_save(tmp_path / "saves", "old", genre="g", world="w")
+    _seed_rounds(store)            # NO turn_telemetry table
+    store.close()
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    db = tmp_path / "saves" / "games" / "old" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        b = build_turn_bundle(conn, 1)
+        assert b["mechanical"] == {
+            "state": "absent", "pcs": [], "trope": None,
+            "unparseable_seqs": [],
+        }
+    finally:
+        conn.close()
+
+
+def test_bundle_unknown_round_includes_empty_mechanical_key(tmp_path):
+    store = _make_save(tmp_path / "saves", "uk", genre="g", world="w")
+    _seed_rounds(store)
+    store.close()
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    db = tmp_path / "saves" / "games" / "uk" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        b = build_turn_bundle(conn, 999)
+        assert b["mechanical"] == {
+            "state": "absent", "pcs": [], "trope": None,
+            "unparseable_seqs": [],
+        }
+    finally:
+        conn.close()
+
+
+def test_mechanical_read_does_not_mutate_the_save(tmp_path):
+    store = _make_save(tmp_path / "saves", "bi", genre="g", world="w")
+    _seed_rounds(store)
+    store.close()
+    db = tmp_path / "saves" / "games" / "bi" / "save.db"
+    con = sqlite3.connect(str(db))
+    con.executescript("PRAGMA journal_mode=DELETE;")
+    con.commit()
+    con.close()
+    _add_mechanical(db, [(None, 1, "census",
+                          {"player_id": "p1", "character_name": "Rux",
+                           "seat": 0, "round": 1,
+                           "edge": {"current": 1, "max": 1},
+                           "location": "Cave", "inventory": [], "xp": 0,
+                           "level": 1, "acquired_advancements": []})])
+    bytes_before = db.read_bytes()
+    mtime_before = db.stat().st_mtime_ns
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    conn = _ro_connect(db)
+    try:
+        build_turn_bundle(conn, 1)
+    finally:
+        conn.close()
+    assert db.read_bytes() == bytes_before
+    assert db.stat().st_mtime_ns == mtime_before

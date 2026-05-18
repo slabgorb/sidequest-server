@@ -104,6 +104,7 @@ def test_turn_bundle_unknown_slug_is_empty_not_500(tmp_path):
         "scrapbook": [],
         "unparseable_seqs": [],
         "telemetry": {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []},
+        "mechanical": {"state": "absent", "pcs": [], "trope": None, "unparseable_seqs": []},
     }
 
 
@@ -125,6 +126,7 @@ def test_turn_bundle_corrupt_save_is_empty_not_500(tmp_path):
         "scrapbook": [],
         "unparseable_seqs": [],
         "telemetry": {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []},
+        "mechanical": {"state": "absent", "pcs": [], "trope": None, "unparseable_seqs": []},
     }
 
 

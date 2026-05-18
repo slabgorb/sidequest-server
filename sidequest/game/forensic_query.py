@@ -13,7 +13,12 @@ import sqlite3
 from pathlib import Path
 
 from sidequest.game.event_log import EventRow
-from sidequest.game.forensic_fold import fold_known_facts, fold_turn_telemetry
+from sidequest.game.forensic_fold import (
+    fold_known_facts,
+    fold_mechanical_census,
+    fold_mechanical_strip,
+    fold_turn_telemetry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +202,87 @@ def _empty_telemetry() -> dict:
     return {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []}
 
 
+def _empty_mechanical() -> dict:
+    """Factory: a fresh empty mechanical dict (no shared-reference risk)."""
+    return {"state": "absent", "pcs": [], "trope": None,
+            "unparseable_seqs": []}
+
+
+def _mechanical_for_round(
+    conn: sqlite3.Connection, seq_start: int, seq_end: int, round_number: int
+) -> dict:
+    """Read this round's component='mechanical' rows + the PREVIOUS census
+    round's rows, fold into a per-PC diff. Missing table (pre-Phase-2
+    saves) == absent. ?mode=ro — never creates the table (Phase-1
+    discipline)."""
+    assert seq_start is not None and seq_end is not None, (
+        "_mechanical_for_round requires a real seq window; build_turn_bundle "
+        "must return the empty/unknown-round bundle before calling this"
+    )
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='turn_telemetry'"
+    ).fetchone()
+    if has_table is None:
+        return _empty_mechanical()
+    cur = conn.execute(
+        "SELECT seq, event_seq, round, ts, component, event_type, "
+        "payload_json FROM turn_telemetry "
+        "WHERE component='mechanical' AND ("
+        "  (event_seq IS NOT NULL AND event_seq >= ? AND event_seq <= ?) "
+        "  OR (round = ?)) ORDER BY seq",
+        (seq_start, seq_end, round_number),
+    ).fetchall()
+    prev_round_row = conn.execute(
+        "SELECT MAX(round) FROM turn_telemetry "
+        "WHERE component='mechanical' AND round IS NOT NULL AND round < ?",
+        (round_number,),
+    ).fetchone()
+    prev = []
+    if prev_round_row and prev_round_row[0] is not None:
+        prev = conn.execute(
+            "SELECT seq, event_seq, round, ts, component, event_type, "
+            "payload_json FROM turn_telemetry "
+            "WHERE component='mechanical' AND round = ? ORDER BY seq",
+            (prev_round_row[0],),
+        ).fetchall()
+    fold = fold_mechanical_census(
+        [dict(r) for r in cur], [dict(r) for r in prev]
+    )
+    return {
+        "state": fold.state,
+        "pcs": [
+            {
+                "player_id": pc.player_id,
+                "character_name": pc.character_name,
+                "seat": pc.seat,
+                "kind": pc.kind,
+                "deltas": list(pc.deltas),
+                "absolute": pc.absolute,
+            }
+            for pc in fold.pcs
+        ],
+        "trope": fold.trope,
+        "unparseable_seqs": list(fold.unparseable_seqs),
+    }
+
+
+def mechanical_strip(conn: sqlite3.Connection) -> list:
+    """Whole-save per-round tri-state for the macro strip. Missing table
+    -> []. One pass, ?mode=ro, never creates the table."""
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='turn_telemetry'"
+    ).fetchone()
+    if has_table is None:
+        return []
+    rows = conn.execute(
+        "SELECT seq, round, component, event_type, payload_json "
+        "FROM turn_telemetry WHERE component='mechanical' ORDER BY seq"
+    ).fetchall()
+    return fold_mechanical_strip([dict(r) for r in rows])
+
+
 def _telemetry_for_round(
     conn: sqlite3.Connection, seq_start: int, seq_end: int, round_number: int
 ) -> dict:
@@ -301,10 +387,12 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
             "scrapbook": [],
             "unparseable_seqs": [],
             "telemetry": _empty_telemetry(),
+            "mechanical": _empty_mechanical(),
         }
 
     seq_start, seq_end = entry["seq_start"], entry["seq_end"]
     telemetry = _telemetry_for_round(conn, seq_start, seq_end, round_number)
+    mechanical = _mechanical_for_round(conn, seq_start, seq_end, round_number)
     raw_events = conn.execute(
         "SELECT seq, kind, payload_json, created_at FROM events "
         "WHERE seq >= ? AND seq <= ? ORDER BY seq",
@@ -382,6 +470,7 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
         "scrapbook": scrapbook,
         "unparseable_seqs": list(fold.unparseable_seqs),
         "telemetry": telemetry,
+        "mechanical": mechanical,
     }
 
 
