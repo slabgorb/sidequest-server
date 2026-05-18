@@ -283,3 +283,63 @@ def test_turn_telemetry_insert_count_is_not_pathological(tmp_path: Path) -> None
     # not a tight bound. If a real turn legitimately exceeds it, raise the
     # ceiling AND open a Phase-follow-on coalesce note — do not silently bump.
     assert 0 < n <= 500, f"one turn wrote {n} telemetry rows — investigate/coalesce"
+
+
+def test_a_real_turn_persists_mechanical_census_rows(tmp_path: Path) -> None:
+    """A real production turn writes one component='mechanical' census
+    row per seated PC + one session trope_census row, attributed to the
+    turn's event frame. Proves the emitter is wired into emit_event's
+    NARRATION path, not just importable."""
+    save_db = asyncio.run(_drive_one_real_turn(tmp_path))  # existing harness
+    conn = sqlite3.connect(f"file:{save_db}?mode=ro", uri=True)
+    try:
+        census = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='census'"
+        ).fetchone()[0]
+        tropes = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='trope_census'"
+        ).fetchone()[0]
+        attributed = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_seq IS NOT NULL"
+        ).fetchone()[0]
+        assert census >= 1, (
+            "no mechanical census rows: emit_mechanical_census is not "
+            "wired into emit_event's NARRATION path"
+        )
+        assert tropes >= 1, "no session trope_census row from a real turn"
+        assert attributed >= 1, (
+            "mechanical rows not event_seq-attributed: census did not ride "
+            "the C2 turn txn (R1 violated)"
+        )
+    finally:
+        conn.close()
+
+
+def test_mechanical_census_row_count_per_turn_is_bounded(tmp_path: Path) -> None:
+    """One real turn must write exactly (seated_PCs census rows + 1 session
+    trope_census), NOT once-per-segment. If this explodes, the NARRATION
+    gate (R1 #3) regressed — fix the gate, do not bump the bound."""
+    # INTENTIONAL execution model: sync def wrapping asyncio.run — see the
+    # comment in test_a_real_turn_persists_turn_telemetry_rows for rationale.
+    # Do NOT convert to async def / @pytest.mark.asyncio.
+    save_db = asyncio.run(_drive_one_real_turn(tmp_path))
+    conn = sqlite3.connect(f"file:{save_db}?mode=ro", uri=True)
+    try:
+        census = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='census'"
+        ).fetchone()[0]
+        tropes = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='trope_census'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    # The Phase-1 harness seats a small MP party. Generous ceiling: this
+    # is a regression tripwire, not a tight bound. Once-per-turn gate means
+    # tropes == (number of NARRATION turns played by the harness == 1).
+    assert 0 < census <= 12, f"{census} census rows — NARRATION gate regressed?"
+    assert tropes == 1, f"{tropes} trope rows — expected exactly one per turn"
