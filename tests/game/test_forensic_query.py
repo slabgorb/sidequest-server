@@ -453,3 +453,73 @@ def test_telemetry_read_does_not_mutate_the_save(tmp_path):
         conn.close()
     assert db.read_bytes() == bytes_before
     assert db.stat().st_mtime_ns == mtime_before
+
+
+def test_list_saves_includes_telemetry_row_count(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "tel" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+        "CREATE TABLE turn_telemetry (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER, round INTEGER, ts TEXT NOT NULL,"
+        " component TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+        "INSERT INTO turn_telemetry (event_seq,round,ts,component,event_type,payload_json)"
+        " VALUES (1,1,'t','c','e','{}'),(2,1,'t','c','e','{}');"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["telemetry_rows"] == 2
+
+
+def test_list_saves_telemetry_count_zero_when_table_missing(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "old" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["telemetry_rows"] == 0  # missing table -> 0, not error
+
+
+def test_list_saves_telemetry_count_zero_when_table_present_but_empty(tmp_path):
+    # Distinct from the missing-table guard: the table EXISTS, so the real
+    # SELECT COUNT(*) path executes and must return 0 (not the else-branch).
+    saves = tmp_path / "saves"
+    db = saves / "games" / "empty" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+        "CREATE TABLE turn_telemetry (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER, round INTEGER, ts TEXT NOT NULL,"
+        " component TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+        # NB: no INSERT INTO turn_telemetry — table present, zero rows
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert (
+        save["telemetry_rows"] == 0
+    )  # real COUNT(*) on an empty table, not the missing-table guard

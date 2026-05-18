@@ -75,6 +75,7 @@ const rail = document.getElementById('rail');
 const main = document.getElementById('main');
 let curSlug = null;
 let curTimeline = [];
+let saves = [];
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -84,9 +85,10 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 async function getJSON(u){ const r = await fetch(u); if(!r.ok) throw new Error(u+' '+r.status); return r.json(); }
 
 async function loadSaves(){
-  let saves;
-  try { saves = await getJSON('/api/debug/saves'); }
+  let fetched;
+  try { fetched = await getJSON('/api/debug/saves'); }
   catch(e){ rail.innerHTML = '<div class="save warn">'+esc(e.message)+'</div>'; return; }
+  saves = fetched;
   if(!saves.length){ rail.innerHTML = '<div class="save sub">No saves found.</div>'; return; }
   rail.innerHTML = '';
   for(const s of saves){
@@ -110,9 +112,11 @@ async function selectSave(slug, el){
   if(!Array.isArray(tl) || !tl.length){
     main.innerHTML = '<section><p class="sub">No narrative rounds in this save.</p></section>'; return; }
   curTimeline = tl;
+  const sv = saves.find(s => s.slug === slug);
   main.innerHTML =
     '<section><p class="lbl">macro — '+esc(slug)+' · '+esc(tl.length)+
-      ' rounds · click a column</p><svg id="strip"></svg>'+
+      ' rounds · '+esc(sv && sv.telemetry_rows != null ? sv.telemetry_rows : 0)+
+      ' telemetry rows · click a column</p><svg id="strip"></svg>'+
       '<div id="axis" class="sub" style="font-size:11px;margin-top:4px"></div></section>'+
     '<div id="drill"><section><p class="sub">Pick a round above.</p></section></div>';
   renderStrip(tl);

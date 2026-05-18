@@ -49,12 +49,25 @@ def list_saves(save_dir: Path) -> list[dict]:
         if not db_file.is_file():
             continue
         conn: sqlite3.Connection | None = None
+        row = None
+        telemetry_rows = 0
         try:
             conn = _ro_connect(db_file)
             row = conn.execute(
                 "SELECT genre_slug, world_slug, created_at, last_played "
                 "FROM session_meta WHERE id = 1"
             ).fetchone()
+            try:
+                has_tt = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_telemetry'"
+                ).fetchone()
+                telemetry_rows = (
+                    conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0]
+                    if has_tt
+                    else 0
+                )
+            except sqlite3.Error:
+                telemetry_rows = 0
         except Exception as exc:  # noqa: BLE001 — best-effort enumeration
             logger.warning("forensic_query.open_failed slug=%s err=%s", slug_dir.name, exc)
             continue
@@ -72,6 +85,7 @@ def list_saves(save_dir: Path) -> list[dict]:
                 "created_at": row["created_at"],
                 "last_played": row["last_played"],
                 "last_activity_ts": int(db_file.stat().st_mtime * 1000),
+                "telemetry_rows": telemetry_rows,
             }
         )
     out.sort(key=lambda r: r["last_activity_ts"], reverse=True)
