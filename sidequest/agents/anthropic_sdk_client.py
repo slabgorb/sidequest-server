@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
@@ -18,6 +19,8 @@ from sidequest.agents.tooling_protocol import (
     ToolUseBlock,
 )
 from sidequest.telemetry.spans.llm_request import llm_request_span
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicSdkClientError(LlmClientError):
@@ -113,6 +116,7 @@ class AnthropicSdkClient:
         cumulative_out = 0
         cumulative_cache_read = 0
         cumulative_cache_write = 0
+        cumulative_cost_usd = 0.0
         last_model = model
 
         # ttl:"1h" on the cache_control markers is rejected unless the
@@ -152,6 +156,7 @@ class AnthropicSdkClient:
                     cached_input_write_tokens=cache_write,
                     model=response.model,
                 )
+                cumulative_cost_usd += cost
                 span.set_attributes(
                     {
                         "llm.input_tokens": input_tokens,
@@ -161,6 +166,18 @@ class AnthropicSdkClient:
                         "llm.stop_reason": response.stop_reason,
                         "llm.cost_usd": cost,
                     }
+                )
+                # Per-iter ledger to /tmp/sidequest-server.log so cache
+                # hit/miss is visible without a WS tap (Task B3).
+                logger.info(
+                    "narrator.sdk.usage iter=%d input=%d output=%d "
+                    "cache_read=%d cache_write=%d cost_usd=%.6f",
+                    iteration,
+                    input_tokens,
+                    output_tokens,
+                    cache_read,
+                    cache_write,
+                    cost,
                 )
 
             text_chunks, tool_use_blocks = self._split_content(response.content)
@@ -179,6 +196,7 @@ class AnthropicSdkClient:
                     cached_input_write_tokens=cumulative_cache_write,
                     model=last_model,
                     tool_calls=all_tool_uses,
+                    cumulative_cost_usd=cumulative_cost_usd,
                 )
 
             if tool_dispatch is None:

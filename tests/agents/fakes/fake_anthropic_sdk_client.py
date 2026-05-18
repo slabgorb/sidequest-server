@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from sidequest.agents.anthropic_cost import compute_cost_usd
 from sidequest.agents.tooling_protocol import (
     CacheableBlock,
     Message,
@@ -73,6 +74,7 @@ class FakeAnthropicSdkClient:
         all_tool_calls: list[ToolUseBlock] = []
         iterations = 0
         current_messages = list(messages)
+        cumulative_cost_usd = 0.0
         while True:
             iterations += 1
             if iterations > max_iterations:
@@ -97,6 +99,19 @@ class FakeAnthropicSdkClient:
                 for chunk in response.stream_deltas:
                     on_text_delta(chunk)
 
+            # Mirror production: accumulate per-iter cost so consumers
+            # that assert on ToolingResult.cumulative_cost_usd (Task B1)
+            # see a realistic value through the fake. Scripted responses
+            # use real model IDs from the pricing table; an unknown model
+            # surfaces UnknownModel rather than being silently zero.
+            cumulative_cost_usd += compute_cost_usd(
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cached_input_read_tokens=response.cached_input_read_tokens,
+                cached_input_write_tokens=response.cached_input_write_tokens,
+                model=response.model,
+            )
+
             if response.stop_reason != "tool_use":
                 return ToolingResult(
                     text=response.text,
@@ -107,6 +122,7 @@ class FakeAnthropicSdkClient:
                     cached_input_write_tokens=response.cached_input_write_tokens,
                     model=response.model,
                     tool_calls=all_tool_calls,
+                    cumulative_cost_usd=cumulative_cost_usd,
                 )
 
             if tool_dispatch is None:

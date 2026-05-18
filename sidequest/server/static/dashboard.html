@@ -241,6 +241,10 @@ const S = {
   // Streaming pipeline spans collected from agent_span_close events
   streamFirstTokenSpans: [],  // narrator.stream.first_token — carries ttft_seconds
   streamCompleteSpans: [],    // narrator.stream.complete — carries json_parse_status
+  // narration.turn cost-rollup spans, keyed by turn_number. Populated
+  // from agent_span_close events; consumed by the Turn Details panel
+  // to surface per-turn cache hit-rate + $ spend (Task B2).
+  narrationTurnByNumber: {},
 };
 
 const SPAN_COLORS = {
@@ -280,7 +284,7 @@ function switchTab(i) {
   if (i===7) renderStreaming();
 }
 function togglePause() { S.paused = !S.paused; }
-function clearAll() { S.turns.length=0; S.allEvents.length=0; Object.keys(S.componentMap).forEach(k=>delete S.componentMap[k]); S.selectedTurn=null; updateAll(); }
+function clearAll() { S.turns.length=0; S.allEvents.length=0; Object.keys(S.componentMap).forEach(k=>delete S.componentMap[k]); Object.keys(S.narrationTurnByNumber).forEach(k=>delete S.narrationTurnByNumber[k]); S.selectedTurn=null; updateAll(); }
 
 // ── Header update ──
 function updateHeader() {
@@ -351,6 +355,17 @@ function dispatch(ev) {
       S.streamCompleteSpans.push(ev.fields);
       document.getElementById('tab7-badge').textContent = S.streamFirstTokenSpans.length;
       if (S.activeTab === 7) renderStreaming();
+    } else if (spanName === 'narration.turn') {
+      // Cost-rollup attributes arrive as flat dotted keys via the
+      // WatcherSpanProcessor (see server/watcher.py). Key by the
+      // seeded `turn_number` attribute so Turn Details can join on
+      // the turn the operator selects in Timeline.
+      const f = ev.fields || {};
+      const tn = f.turn_number;
+      if (tn !== undefined && tn !== null) {
+        S.narrationTurnByNumber[tn] = f;
+        if (S.activeTab === 0 && S.selectedTurn !== null) selectTurn(S.selectedTurn);
+      }
     }
   }
   // trope.time_skip — badge +Nd on affected trope rows (Story 50-4).
@@ -430,11 +445,35 @@ function selectTurn(i) {
   meta.style.display = 'block';
   const patches = (f.patches||[]).map(p=>`${p.patch_type}(${(p.fields_changed||[]).join(',')})`).join(', ') || 'none';
   const beats = (f.beats_fired||[]).map(b=>`${b.trope}@${(b.threshold||0).toFixed(1)}`).join(', ') || 'none';
+
+  // Cache + cost line from the narration.turn rollup span (Task B2).
+  // turn_complete carries turn_id; the rollup span seeds turn_number;
+  // they are aliases (telemetry/validator.py:482). Join on that.
+  const nt = S.narrationTurnByNumber[f.turn_id];
+  let cacheRow = '';
+  if (nt) {
+    const read = nt['narration.turn.cache_read_tokens'] || 0;
+    const write = nt['narration.turn.cache_write_tokens'] || 0;
+    const inTok = nt['narration.turn.total_input_tokens'] || 0;
+    // Hit-rate as a share of total input-side tokens (fresh + cache_read).
+    // cache_write is excluded — that's the prefix-mint event, not a hit.
+    const denom = inTok + read;
+    const hitPct = denom > 0 ? (read / denom * 100) : 0;
+    const cost = nt['narration.turn.total_cost_usd'];
+    const ttl = nt['narration.turn.cache_ttl'] || 'n/a';
+    const costStr = (typeof cost === 'number') ? '$' + cost.toFixed(4) : '—';
+    const hitColor = hitPct > 50 ? 'var(--green)' : hitPct > 10 ? 'var(--amber)' : 'var(--red)';
+    cacheRow = `
+    <br>· <b>Cost:</b> <span style="color:var(--accent)">${costStr}</span>
+    &nbsp; <b>Cache:</b> <span style="color:${hitColor}">${hitPct.toFixed(0)}%</span>
+    (read ${read} / write ${write}) &nbsp; <b>TTL:</b> ${esc(String(ttl))}`;
+  }
+
   document.getElementById('turn-meta-body').innerHTML = `
     <div style="color:var(--muted);font-size:12px;line-height:1.8">
     · <b>Input:</b> ${esc(f.player_input||'')}
     <br>· <b>Agent:</b> ${f.agent_name||'?'}
-    <br>· <b>Tokens:</b> ${f.token_count_in||0} in / ${f.token_count_out||0} out &nbsp; <b>Tier:</b> ${f.extraction_tier||'?'} &nbsp; <b>Degraded:</b> ${f.is_degraded?'<span style="color:var(--red)">YES</span>':'no'}
+    <br>· <b>Tokens:</b> ${f.token_count_in||0} in / ${f.token_count_out||0} out &nbsp; <b>Tier:</b> ${f.extraction_tier||'?'} &nbsp; <b>Degraded:</b> ${f.is_degraded?'<span style="color:var(--red)">YES</span>':'no'}${cacheRow}
     <br>· <b>Patches:</b> ${esc(patches)}
     <br>· <b>Beats:</b> ${esc(beats)}
     <br>· <b>Knowledge:</b> ${f.footnotes_count||0} ${(f.footnotes_count||0) > 0 ? 'new entries' : ''}

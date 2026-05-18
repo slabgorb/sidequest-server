@@ -81,6 +81,37 @@ async def test_compose_split_system_prefix_byte_identical_across_3_turns(
     )
 
 
+@pytest.mark.asyncio
+async def test_sdk_path_emits_zone_aligned_cacheable_blocks(
+    simple_turn_context,
+) -> None:
+    """Phase D Task 6 — system_blocks split by attention zone.
+
+    The orchestrator should ship one cache=True block (Primacy + Early
+    scaffolding) and at most two uncached follow-on blocks for Valley
+    and Late+Recency content. Only the first block is cache-marked;
+    Anthropic's cache_control semantics treat the first marker as the
+    prefix end-point, and uncached blocks past that point may mutate
+    per turn without invalidating the cache.
+    """
+    fake = FakeAnthropicSdkClient(responses=[_end_turn("turn one")])
+    orch = Orchestrator(client=fake)
+    await orch.run_narration_turn("look around", simple_turn_context)
+
+    assert len(fake.recorded_requests) == 1
+    blocks = fake.recorded_requests[0].system_blocks
+    assert len(blocks) >= 1, "must always ship at least one system block"
+    assert blocks[0].cache is True, (
+        f"the first block carries the cache marker; got cache={blocks[0].cache}"
+    )
+    assert blocks[0].text, "the cached prefix must not be empty"
+    for i, block in enumerate(blocks[1:], start=1):
+        assert block.cache is False, (
+            f"only system_blocks[0] is cache-marked; "
+            f"system_blocks[{i}].cache should be False, got True"
+        )
+
+
 # --- OTEL wiring: narration.turn.cache_ttl ---------------------------------
 
 
@@ -157,3 +188,58 @@ async def test_narration_turn_span_carries_cache_ttl(
         f"narration.turn.cache_ttl should reflect the client's configured "
         f"TTL; got {attrs.get('narration.turn.cache_ttl')!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_narration_turn_span_carries_total_cost_usd(
+    simple_turn_context,
+    otel_capture: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Task B1 — narration.turn.total_cost_usd is populated from the
+    SDK client's cumulative cost. Also covers Task B3 — the SDK client
+    emits a `narrator.sdk.usage` log line per iteration so cache numbers
+    show up in /tmp/sidequest-server.log without needing a WS tap.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sdk = _Sdk(
+        responses=[
+            _Resp(
+                content=[_TextBlock(type="text", text="The torch sputters.")],
+                stop_reason="end_turn",
+                usage=_Usage(
+                    input_tokens=500,
+                    output_tokens=80,
+                    cache_read_input_tokens=12000,
+                    cache_creation_input_tokens=0,
+                ),
+                model="claude-sonnet-4-6",
+            )
+        ]
+    )
+    client = AnthropicSdkClient(sdk=sdk, cache_ttl="1h")
+    orch = Orchestrator(client=client)
+
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="sidequest.agents.anthropic_sdk_client"):
+        await orch.run_narration_turn("look around", simple_turn_context)
+
+    turn_spans = [s for s in otel_capture.get_finished_spans() if s.name == "narration.turn"]
+    assert turn_spans, "expected a narration.turn span"
+    attrs = dict(turn_spans[0].attributes or {})
+    cost = attrs.get("narration.turn.total_cost_usd")
+    assert isinstance(cost, float) and cost > 0.0, (
+        f"narration.turn.total_cost_usd should be a positive float when "
+        f"tokens were consumed; got {cost!r}"
+    )
+
+    # Task B3 — per-iter usage line includes cache numbers and cost.
+    usage_lines = [r.message for r in caplog.records if "narrator.sdk.usage" in r.message]
+    assert usage_lines, (
+        "expected at least one `narrator.sdk.usage` log line per turn"
+    )
+    line = usage_lines[0]
+    for needle in ("iter=1", "input=500", "output=80", "cache_read=12000", "cost_usd="):
+        assert needle in line, f"missing {needle!r} in usage line: {line!r}"

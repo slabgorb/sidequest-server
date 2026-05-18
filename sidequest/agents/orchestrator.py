@@ -3156,11 +3156,41 @@ class Orchestrator:
             agent_name = self._narrator.name()
 
             prompt_text, registry = await self.build_narrator_prompt(action, context)
-            system_prompt, user_message = registry.compose_split(agent_name)
+            zone_text, user_message = registry.compose_split_by_zone(agent_name)
 
-            # Single cache-marked block for Phase D Task 1. Phase D Task 6 will
-            # split the system prompt into the three-zone cacheable layout.
-            system_blocks = [CacheableBlock(text=system_prompt, cache=True)]
+            # Three-zone cacheable layout (ADR-101 Phase D Task 6).
+            # Block 0 is the only cache=True block — it carries the stable
+            # identity/voice/guardrails/SOUL (Primacy + Early). Valley and
+            # Late+Recency ride uncached follow-on blocks so per-turn drift
+            # (e.g. narrator_vocabulary, genre_transition_hints) does not
+            # invalidate the cache prefix. The byte-stability gate in
+            # tests/agents/test_cache_ttl_prefix_and_otel.py protects
+            # system_blocks[0] across turns; the uncached blocks are free
+            # to mutate.
+            stable_text = "\n\n".join(
+                t
+                for t in (
+                    zone_text.get(AttentionZone.Primacy, ""),
+                    zone_text.get(AttentionZone.Early, ""),
+                )
+                if t
+            )
+            valley_text = zone_text.get(AttentionZone.Valley, "")
+            recency_text = "\n\n".join(
+                t
+                for t in (
+                    zone_text.get(AttentionZone.Late, ""),
+                    zone_text.get(AttentionZone.Recency, ""),
+                )
+                if t
+            )
+            system_blocks: list[CacheableBlock] = [
+                CacheableBlock(text=stable_text, cache=True)
+            ]
+            if valley_text:
+                system_blocks.append(CacheableBlock(text=valley_text, cache=False))
+            if recency_text:
+                system_blocks.append(CacheableBlock(text=recency_text, cache=False))
             messages = [Message(role="user", content=user_message)]
 
             model = resolve_model(CallType.NARRATION)
@@ -3255,6 +3285,13 @@ class Orchestrator:
                 span.set_attribute(
                     "narration.turn.cache_ttl",
                     getattr(self._client, "cache_ttl", "n/a"),
+                )
+                # Total per-turn API spend — sum of compute_cost_usd
+                # across every tool-loop iteration. Documented at
+                # telemetry/spans/cost.py:15; the GM panel reads this to
+                # show $/turn next to cache hit-rate (Task B1).
+                span.set_attribute(
+                    "narration.turn.total_cost_usd", result.cumulative_cost_usd
                 )
                 span.set_attribute("narration.turn.tool_call_count", len(result.tool_calls))
 
