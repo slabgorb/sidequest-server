@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -34,6 +34,27 @@ HttpFn = Callable[[Request], Any]
 
 def _default_http(req: Request) -> Any:
     return urlopen(req, timeout=120)  # noqa: S310 — fixed localhost Ollama URL
+
+
+def genre_model_map(
+    genres: Iterable[str], *, base: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Build an OllamaClient model_map with genre-specialized narrator routes.
+
+    Story 48-3 substep (e): genre-tagged requests must resolve to the
+    adapter-fused model. Each genre adds a ``"genre:<slug>"`` hint mapping to
+    ``"sidequest-narrator-<slug>:latest"``; the default sonnet/haiku/opus
+    hints (or ``base`` if supplied) are preserved so existing routing is
+    unaffected. An unmapped genre still raises ``UnknownModel`` at resolve
+    time — no silent fallback to the generic narrator.
+    """
+    result = dict(DEFAULT_MODEL_MAP if base is None else base)
+    for genre in genres:
+        slug = genre.strip()
+        if not slug:
+            raise ValueError("genre must be a non-empty string")
+        result[f"genre:{slug}"] = f"sidequest-narrator-{slug}:latest"
+    return result
 
 
 class OllamaClientError(LlmClientError):
