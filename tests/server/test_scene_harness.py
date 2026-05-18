@@ -853,3 +853,182 @@ def test_dev_scene_route_rejects_scenario_state_dag_violation_with_422(
     assert r.status_code == 422, (
         f"scenario_state DAG violation must 422 at the wire; got {r.status_code} body={r.text}"
     )
+
+
+# ── Story 50-22: magic_state + character.abilities through the HTTP path ─────
+#
+# AC-6 (wiring): a synthetic fixture declaring BOTH new blocks must hydrate
+# via the real ``/dev/scene/{name}`` route, persist through SqliteStore, and
+# load back with both fields intact. This is the CLAUDE.md-mandated
+# integration test — it proves the 50-22 hydration branch is reachable from
+# the production HTTP code path (router → hydrate_fixture → SqliteStore),
+# not merely unit-correct.
+
+_MAGIC_FIXTURE_50_22 = (
+    "genre: space_opera\n"
+    "world: coyote_star\n"
+    "character:\n"
+    "  name: Practitioner\n"
+    "  description: A focused adept of the deep arts\n"
+    "  personality: Focused and wary\n"
+    "  backstory: Apprenticed in the classified registers\n"
+    "  char_class: Mage\n"
+    "  race: Human\n"
+    "  abilities:\n"
+    "    - name: Voidstep\n"
+    "      genre_description: Slip a half-second sideways out of causality\n"
+    "      mechanical_effect: Once per scene, negate one incoming consequence\n"
+    "      source: Class\n"
+    "      involuntary: false\n"
+    "magic_state:\n"
+    "  config:\n"
+    "    world_slug: coyote_star\n"
+    "    genre_slug: space_opera\n"
+    "    allowed_sources: [innate]\n"
+    "    active_plugins: [innate_v1]\n"
+    "    intensity: 0.25\n"
+    "    world_knowledge:\n"
+    "      primary: classified\n"
+    "      local_register: folkloric\n"
+    "    visibility:\n"
+    "      primary: feared\n"
+    "      local_register: dismissed\n"
+    "    hard_limits:\n"
+    "      - id: psionics_never_decisive\n"
+    "        description: psionics can never be the decisive factor\n"
+    "    cost_types: [sanity]\n"
+    "    ledger_bars: []\n"
+    "    narrator_register: clinical\n"
+    "  control_tier:\n"
+    "    practitioner: 2\n"
+)
+
+
+def test_scene_post_persists_magic_state_and_abilities_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC-6: the new blocks survive the full production round-trip.
+
+    POST the synthetic fixture through ``/dev/scene/{name}``, then load the
+    saved DB with ``SqliteStore`` and assert ``snapshot.magic_state`` is a
+    non-None MagicState with the declared config + control_tier AND
+    ``snapshot.characters[0].abilities`` carries the declared ability.
+
+    Without persistence fidelity the scene harness can't stage a mid-ritual
+    magic fixture for iteration — the whole point of 50-22.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "magic_50_22.yaml").write_text(_MAGIC_FIXTURE_50_22, encoding="utf-8")
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/magic_50_22")
+    assert r.status_code == 200, (
+        f"magic_state + abilities fixture must hydrate via the endpoint; "
+        f"got {r.status_code} body={r.text}"
+    )
+    slug = r.json()["slug"]
+
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+
+    store = SqliteStore(db_path_for_slug(save_dir, slug))
+    store.initialize()
+    saved = store.load()
+    assert saved is not None, "save file exists but SqliteStore.load returned None"
+    snapshot = saved.snapshot
+
+    assert snapshot.magic_state is not None, (
+        "magic_state must survive the SqliteStore round-trip, not be None"
+    )
+    assert snapshot.magic_state.config.world_slug == "coyote_star"
+    assert snapshot.magic_state.control_tier == {"practitioner": 2}, (
+        f"control_tier drifted across persistence; got {snapshot.magic_state.control_tier!r}"
+    )
+
+    assert len(snapshot.characters) >= 1
+    abilities = snapshot.characters[0].abilities
+    assert [a.name for a in abilities] == ["Voidstep"], (
+        f"character abilities must survive the round-trip; got {abilities!r}"
+    )
+    assert str(abilities[0].source) == "Class"
+
+
+def test_dev_scene_route_rejects_malformed_magic_config_with_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC-2 + AC-3 through the HTTP boundary: a ``magic_state.config``
+    missing a required WorldMagicConfig field must surface as HTTP 422
+    (FixtureValidationError → 422), never a leaked 500 and never a silent
+    200 with magic_state quietly dropped.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    broken = _MAGIC_FIXTURE_50_22.replace("    narrator_register: clinical\n", "")
+    (fixtures_dir / "magic_badcfg_at_wire.yaml").write_text(broken, encoding="utf-8")
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/magic_badcfg_at_wire")
+    assert r.status_code == 422, (
+        f"malformed magic_state.config must 422 at the wire; "
+        f"got {r.status_code} body={r.text}"
+    )
+
+
+def test_scene_harness_emits_magic_state_hydrated_span(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """50-22 OTEL wiring (CLAUDE.md observability principle + "Every Test
+    Suite Needs a Wiring Test"): hydrating a ``magic_state:`` fixture must
+    emit a ``magic.state_hydrated`` watcher event so the GM panel can
+    confirm the fixture staged real magic state rather than the narrator
+    improvising one.
+
+    Found by simplify-quality during verify: the event was emitted but
+    unasserted, and the original bound-import (`publish_event as
+    _watcher_publish`) made it uncapturable by the standard
+    ``_capture_events`` harness. The emitter was realigned to the
+    ``scene_harness_router`` convention (`_hub.publish_event`) so this
+    test exercises the real production path.
+    """
+    captured = _capture_events(monkeypatch)
+
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "magic_otel.yaml").write_text(_MAGIC_FIXTURE_50_22, encoding="utf-8")
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/magic_otel")
+    assert r.status_code == 200, f"fixture must hydrate; got {r.status_code} body={r.text}"
+
+    magic_events = [e for e in captured if e[0] == "magic.state_hydrated"]
+    assert magic_events, (
+        f"hydrating magic_state: must emit a 'magic.state_hydrated' watcher event; "
+        f"captured event types: {sorted({e[0] for e in captured})!r}"
+    )
+    event_type, fields, meta = magic_events[0]
+    # Field-level identity — the lie-detector needs real values, not a bare
+    # truthy (a silently-empty-hydrated fixture would carry wrong slugs).
+    assert fields["world_slug"] == "coyote_star", (
+        f"event must report the hydrated world_slug; got {fields!r}"
+    )
+    assert fields["genre_slug"] == "space_opera"
+    assert fields["control_tier_actors"] == 1, (
+        f"event must report the 1 control_tier actor from the fixture; got {fields!r}"
+    )
+    assert meta["component"] == "magic", (
+        f"event must be tagged component=magic for the Subsystems tab; got {meta!r}"
+    )
