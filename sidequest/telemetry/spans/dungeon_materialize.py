@@ -31,6 +31,9 @@ SPAN_DUNGEON_MATERIALIZE = "dungeon.materialize"
 SPAN_DUNGEON_MATERIALIZE_DESIGN = "dungeon.materialize.design"
 SPAN_DUNGEON_MATERIALIZE_FILL = "dungeon.materialize.fill"
 SPAN_DUNGEON_MATERIALIZE_CURATE = "dungeon.materialize.curate"
+# ADR-106 Amendment A (story 50-26) — curate-stage robustness spans.
+SPAN_DUNGEON_CURATE_PARSE_FAILED = "dungeon.curate.parse_failed"
+SPAN_DUNGEON_CURATE_DEGRADED = "dungeon.curate.degraded"
 SPAN_DUNGEON_MATERIALIZE_ATTACH = "dungeon.materialize.attach"
 SPAN_DUNGEON_MATERIALIZE_COMMIT = "dungeon.materialize.commit"
 SPAN_FRONTIER_EXPAND = "frontier.expand"
@@ -126,6 +129,41 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE] = SpanRoute(
         "manifest_race": _attr("manifest_race")(s),
         "cr_band": _attr("cr_band")(s),
         "raw_seed_reproducible": _attr("raw_seed_reproducible")(s),
+    },
+)
+
+SPAN_ROUTES[SPAN_DUNGEON_CURATE_PARSE_FAILED] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    # ADR-106 Amendment A: one span per FAILED curate attempt (Layer-1
+    # retry). `failure_kind` ∈ {truncated, malformed, llm_error, deadline};
+    # `attempt` is 1-based. GM-panel lie-detector: proves the retry fired
+    # and on what — never a silent re-try.
+    extract=lambda s: {
+        "field": "dungeon_map",
+        "op": "curate.parse_failed",
+        "region_id": _attr("region_id")(s),
+        "failure_kind": _attr("failure_kind")(s),
+        "attempt": _attr("attempt")(s),
+    },
+)
+
+SPAN_ROUTES[SPAN_DUNGEON_CURATE_DEGRADED] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    # ADR-106 Amendment A Layer 2: emitted once per region that
+    # degraded-to-uncurated (ships the deterministic assemble_region
+    # manifest, curated=false). `attempts` is how many curate calls were
+    # spent; `elapsed_ms` the wall-clock the curate stage burned. The
+    # lie-detector for the loud degrade — a degraded room is NEVER a
+    # silent raw-manifest-stamped-curated lie.
+    extract=lambda s: {
+        "field": "dungeon_map",
+        "op": "curate.degraded",
+        "region_id": _attr("region_id")(s),
+        "failure_kind": _attr("failure_kind")(s),
+        "attempts": _attr("attempts")(s),
+        "elapsed_ms": _attr("elapsed_ms")(s),
     },
 )
 
@@ -339,6 +377,57 @@ def dungeon_materialize_curate_span(
 
 
 @contextmanager
+def dungeon_curate_parse_failed_span(
+    *,
+    region_id: str,
+    failure_kind: str,
+    attempt: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """ADR-106 Amendment A: one span per FAILED curate attempt (Layer-1
+    bounded retry). Closed immediately — it is a point event, not a
+    nested stage."""
+    with Span.open(
+        SPAN_DUNGEON_CURATE_PARSE_FAILED,
+        {
+            "region_id": region_id,
+            "failure_kind": failure_kind,
+            "attempt": attempt,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def dungeon_curate_degraded_span(
+    *,
+    region_id: str,
+    failure_kind: str,
+    attempts: int,
+    elapsed_ms: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """ADR-106 Amendment A Layer 2: emitted once per region that
+    degraded-to-uncurated. The loud-degrade lie-detector."""
+    with Span.open(
+        SPAN_DUNGEON_CURATE_DEGRADED,
+        {
+            "region_id": region_id,
+            "failure_kind": failure_kind,
+            "attempts": attempts,
+            "elapsed_ms": elapsed_ms,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
 def dungeon_materialize_attach_span(
     *,
     expansion_id: int,
@@ -448,6 +537,8 @@ def frontier_region_transition_span(
 
 
 __all__ = [
+    "SPAN_DUNGEON_CURATE_DEGRADED",
+    "SPAN_DUNGEON_CURATE_PARSE_FAILED",
     "SPAN_DUNGEON_MATERIALIZE",
     "SPAN_DUNGEON_MATERIALIZE_ATTACH",
     "SPAN_DUNGEON_MATERIALIZE_COMMIT",
@@ -457,6 +548,8 @@ __all__ = [
     "SPAN_FRONTIER_EXPAND",
     "SPAN_FRONTIER_LOOKAHEAD",
     "SPAN_FRONTIER_REGION_TRANSITION",
+    "dungeon_curate_degraded_span",
+    "dungeon_curate_parse_failed_span",
     "dungeon_materialize_attach_span",
     "dungeon_materialize_commit_span",
     "dungeon_materialize_curate_span",

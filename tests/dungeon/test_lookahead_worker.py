@@ -410,8 +410,14 @@ async def test_lookahead_breadth_greater_than_one_materializes_near_set_serially
 
 
 async def test_worker_failure_loud_on_span_and_does_not_abort_transition() -> None:
-    """Force ``materialize()`` to raise (a fake claude_client whose
-    curation subprocess fails). The worker MUST:
+    """Force ``materialize()`` to raise via a RETAINED hard curate
+    failure — ADR-106 Amendment A (story 50-26) carve-out (ii): a parsed
+    curated row missing ``cr`` still raises ``CurationError`` (degrading
+    it would corrupt the CR→Edge seam). NOTE: a *generic* curate failure
+    (unparseable verdict / ``LlmClientError``) no longer raises under
+    Amendment A — it Layer-2-degrades and the expansion commits uncurated,
+    so it would NOT exercise this central-constraint test. The carve-out
+    is the correct still-aborting failure mode. The worker MUST:
 
       - emit a LOUD terminal ``frontier.lookahead`` span carrying the
         failure (routed → GM-panel-visible; the dungeon failed to grow);
@@ -433,7 +439,7 @@ async def test_worker_failure_loud_on_span_and_does_not_abort_transition() -> No
     )
     from tests.dungeon.test_materializer import (
         _attach_pack,
-        _failing_sdk_client,
+        _missing_cr_sdk_client,
         _real_cookbook_bundle,
     )
 
@@ -445,10 +451,12 @@ async def test_worker_failure_loud_on_span_and_does_not_abort_transition() -> No
     frontier = store.load_frontier()
     target = frontier[0].from_region_id
 
-    # A fake SDK client whose curation call FAILS (LlmClientError) →
-    # _stage_curate raises → materialize raises → the background worker
+    # A fake SDK client returning a parseable verdict whose kept rows
+    # dropped `cr` → ADR-106 Amendment A retained carve-out (ii):
+    # _stage_curate STILL raises CurationError (NOT degraded — degrading
+    # would corrupt CR→Edge) → materialize raises → the background worker
     # fails. The ONLY mocked seam (Task-4 SDK precedent).
-    failing_client = _failing_sdk_client()
+    failing_client = _missing_cr_sdk_client()
 
     exporter, _provider, real_tracer = _otel_in_memory()
     original_tracer_fn = _spans_module.tracer
