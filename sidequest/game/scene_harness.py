@@ -38,6 +38,9 @@ from sidequest.game.scenario_state import (
 )
 from sidequest.game.session import GameSnapshot, Npc
 from sidequest.genre.models.scenario import ClueGraph
+from sidequest.magic.state import MagicState
+from sidequest.protocol.models import AbilityDefinition
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +230,23 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
             fixture_name=name,
         )
 
+    # Hydrate magic_state (story 50-22, ADR-092 follow-on).
+    #
+    # Optional top-level ``magic_state:`` block projects to
+    # ``GameSnapshot.magic_state`` (a ``MagicState``). Missing block →
+    # field stays at its pydantic default (None) so pre-50-22 fixtures keep
+    # working. Present-but-malformed (including a present-but-empty ``{}``
+    # with no ``config:``) → FixtureValidationError per ADR-014 (magic
+    # state is Diamond — no synthetic/empty fallback) and ADR-092
+    # "Failure is loud". The ``is not None`` guard deliberately lets an
+    # empty ``{}`` through to _hydrate_magic_state so the missing-config
+    # ValidationError surfaces rather than being silently treated as absent.
+    if "magic_state" in data and data.get("magic_state") is not None:
+        snapshot_kwargs["magic_state"] = _hydrate_magic_state(
+            data["magic_state"],
+            fixture_name=name,
+        )
+
     try:
         snapshot = GameSnapshot(**snapshot_kwargs)
     except ValidationError as exc:
@@ -308,6 +328,29 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
             scrubbed = {k: v for k, v in entry.items() if k != "fact_id"}
             known_facts.append(KnownFact(**scrubbed))
 
+    # Hydrate abilities (story 50-22, ADR-092/095 follow-on).
+    #
+    # Like known_facts, abilities is save-bearing and must fail loudly on a
+    # malformed shape rather than silently skip. The non-list shape guard
+    # raises FixtureValidationError directly; per-entry pydantic
+    # ValidationError (missing/bad ``source``, ``extra="forbid"`` typo)
+    # propagates to the ``hydrate_fixture`` caller, which wraps it as
+    # FixtureValidationError on both the singular and multi-PC paths.
+    abilities: list[AbilityDefinition] = []
+    raw_abilities = data.get("abilities")
+    if raw_abilities is not None:
+        if not isinstance(raw_abilities, list):
+            raise FixtureValidationError(
+                f"character.abilities must be a YAML list, got {type(raw_abilities).__name__}"
+            )
+        for index, entry in enumerate(raw_abilities):
+            if not isinstance(entry, dict):
+                raise FixtureValidationError(
+                    f"character.abilities[{index}] must be a YAML mapping, "
+                    f"got {type(entry).__name__}"
+                )
+            abilities.append(AbilityDefinition(**entry))
+
     return Character(
         core=core,
         backstory=data.get("backstory") or "",
@@ -318,6 +361,7 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
         pronouns=data.get("pronouns", ""),
         stats=dict(data.get("stats") or {}),
         known_facts=known_facts,
+        abilities=abilities,
     )
 
 
@@ -491,3 +535,48 @@ def _hydrate_scenario_state(
         guilty_npc=guilty_npc,
         tension=tension,
     )
+
+
+def _hydrate_magic_state(raw: Any, *, fixture_name: str) -> MagicState:
+    """Hydrate the fixture's ``magic_state:`` block into a ``MagicState``.
+
+    ``MagicState`` is ``extra="forbid"`` with a required ``config:``
+    (``WorldMagicConfig`` — also ``extra="forbid"``, 11 required fields).
+    Pydantic owns all nested validation; this helper's only jobs are the
+    YAML-shape guard and the ``ValidationError`` → ``FixtureValidationError``
+    wrap so the dev-gated HTTP layer returns 422 (never a leaked 500).
+
+    No silent fallback (ADR-014 "magic state is Diamond"; ADR-092 "Failure
+    is loud"; CLAUDE.md "No Silent Fallbacks"): a present-but-empty ``{}``
+    or a missing ``config:`` raises rather than producing an empty
+    MagicState. An OTEL watcher event is emitted on success so the GM
+    panel can confirm a fixture staged real magic state rather than the
+    narrator improvising one.
+    """
+    if not isinstance(raw, dict):
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: 'magic_state' must be a YAML mapping, "
+            f"got {type(raw).__name__}"
+        )
+
+    try:
+        magic_state = MagicState.model_validate(raw)
+    except ValidationError as exc:
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: magic_state validation failed — {exc}"
+        ) from exc
+
+    _watcher_publish(
+        "magic.state_hydrated",
+        {
+            "fixture": fixture_name,
+            "world_slug": magic_state.config.world_slug,
+            "genre_slug": magic_state.config.genre_slug,
+            "ledger_bars": len(magic_state.ledger),
+            "confrontations": len(magic_state.confrontations),
+            "control_tier_actors": len(magic_state.control_tier),
+        },
+        component="magic",
+        severity="info",
+    )
+    return magic_state
