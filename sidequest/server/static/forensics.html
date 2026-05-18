@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Save Forensics — SideQuest</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --line:#2b313a; --txt:#d6deeb;
+          --stored:#3fb950; --derived:#d29922; --absent:#6e7681; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.5 ui-monospace,Menlo,monospace; background:var(--bg); color:var(--txt); }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; }
+  header h1 { font-size:15px; margin:0; }
+  .legend span { margin-right:14px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+  .layout { display:flex; height:calc(100vh - 47px); }
+  aside { width:280px; border-right:1px solid var(--line); overflow:auto; }
+  aside .save, .turn { padding:8px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  aside .save:hover, .turn:hover { background:#1c2230; }
+  aside .save.sel, .turn.sel { background:#1f6feb33; border-left:3px solid var(--acc); }
+  main { flex:1; overflow:auto; padding:16px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-bottom:14px; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; margin:0;
+              padding:8px 12px; border-bottom:1px solid var(--line); color:#9aa7b8; }
+  .panel .body { padding:10px 12px; }
+  pre { white-space:pre-wrap; word-break:break-word; margin:4px 0; }
+  .tier-stored { color:var(--stored); }
+  .tier-derived { color:var(--derived); }
+  .tier-absent  { color:var(--absent); font-style:italic; }
+  .badge { font-size:10px; padding:1px 6px; border-radius:8px; border:1px solid currentColor; margin-left:6px; }
+  table { width:100%; border-collapse:collapse; }
+  td,th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+  .muted { color:var(--absent); }
+  .seqs { color:var(--absent); font-size:11px; }
+  .warn { color:#f85149; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Save Forensics</h1>
+  <span class="muted">read-only post-mortem · sibling of the OTEL dashboard</span>
+  <span class="legend" style="margin-left:auto">
+    <span><i class="dot" style="background:var(--stored)"></i>stored</span>
+    <span><i class="dot" style="background:var(--derived)"></i>derived</span>
+    <span><i class="dot" style="background:var(--absent)"></i>absent</span>
+  </span>
+</header>
+<div class="layout">
+  <aside id="rail"><div class="save muted" style="padding:12px">Loading saves…</div></aside>
+  <main id="main"><p class="muted">Pick a save on the left.</p></main>
+</div>
+<script>
+const rail = document.getElementById('rail');
+const main = document.getElementById('main');
+let curSlug = null;
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const j = o => esc(JSON.stringify(o, null, 2));
+
+async function getJSON(u){ const r = await fetch(u); if(!r.ok) throw new Error(u+' '+r.status); return r.json(); }
+
+async function loadSaves(){
+  let saves;
+  try { saves = await getJSON('/api/debug/saves'); }
+  catch(e){ rail.innerHTML = '<div class="save warn">'+esc(e.message)+'</div>'; return; }
+  if(!saves.length){ rail.innerHTML = '<div class="save muted">No saves found.</div>'; return; }
+  rail.innerHTML = '';
+  for(const s of saves){
+    const d = document.createElement('div');
+    d.className = 'save'; d.dataset.slug = s.slug;
+    d.innerHTML = '<b>'+esc(s.slug)+'</b><br><span class="muted">'+
+      esc(s.genre)+' / '+esc(s.world)+'</span>';
+    d.onclick = () => selectSave(s.slug, d);
+    rail.appendChild(d);
+  }
+}
+
+async function selectSave(slug, el){
+  curSlug = slug;
+  document.querySelectorAll('.save').forEach(n => n.classList.remove('sel'));
+  el.classList.add('sel');
+  main.innerHTML = '<p class="muted">Loading timeline…</p>';
+  let tl;
+  try { tl = await getJSON('/api/debug/save/'+encodeURIComponent(slug)+'/timeline'); }
+  catch(e){ main.innerHTML = '<p class="warn">'+esc(e.message)+'</p>'; return; }
+  if(!tl.length){ main.innerHTML = '<p class="muted">No narrative rounds in this save.</p>'; return; }
+  main.innerHTML = '<div class="panel"><h2>Timeline — '+esc(slug)+
+    '</h2><div class="body" id="tl"></div></div><div id="drill"></div>';
+  const tlBox = document.getElementById('tl');
+  for(const t of tl){
+    const kinds = Object.entries(t.event_kind_counts||{})
+      .map(([k,n]) => k+'×'+n).join(' ');
+    const r = document.createElement('div');
+    r.className = 'turn';
+    r.innerHTML = '<b>Round '+esc(t.round)+'</b> <span class="seqs">seq '+
+      esc(t.seq_start??'–')+'–'+esc(t.seq_end??'–')+'</span><br>'+
+      '<span class="muted">'+esc(kinds||'no events')+'</span>';
+    r.onclick = () => selectTurn(t.round, r);
+    tlBox.appendChild(r);
+  }
+}
+
+async function selectTurn(round, el){
+  document.querySelectorAll('.turn').forEach(n => n.classList.remove('sel'));
+  el.classList.add('sel');
+  const drill = document.getElementById('drill');
+  drill.innerHTML = '<p class="muted">Loading round '+esc(round)+'…</p>';
+  let b;
+  try { b = await getJSON('/api/debug/save/'+encodeURIComponent(curSlug)+
+    '/turn/'+round); }
+  catch(e){ drill.innerHTML = '<p class="warn">'+esc(e.message)+'</p>'; return; }
+  let snap = null;
+  try { snap = await getJSON('/api/debug/save/'+
+    encodeURIComponent(curSlug)+'/snapshot'); } catch(e){ snap = {error:e.message}; }
+
+  const narr = b.narrative.map(n =>
+    '<pre class="tier-stored"><b>'+esc(n.author)+':</b> '+esc(n.content)+'</pre>')
+    .join('') || '<span class="tier-absent">— no narrative this round</span>';
+
+  const evs = b.events.map(e =>
+    '<pre class="tier-stored">#'+esc(e.seq)+' '+esc(e.kind)+'\n'+j(e.payload)+'</pre>')
+    .join('') || '<span class="tier-absent">— no events this round</span>';
+
+  let der = Object.entries(b.derived).map(([k,v]) =>
+    '<tr><td class="tier-derived">'+esc(k)+
+    '<span class="badge tier-derived">derived</span></td>'+
+    '<td><pre class="tier-derived">'+j(v.value)+'</pre></td>'+
+    '<td class="seqs">seq '+(v.source_seqs||[]).map(esc).join(', ')+'</td></tr>').join('');
+  if(!der) der = '<tr><td colspan="3" class="tier-absent">'+
+    '— no event carried any state through this turn</td></tr>';
+  const unp = (b.unparseable_seqs||[]).length
+    ? '<p class="warn">⚠ unparseable event seqs: '+
+      b.unparseable_seqs.map(esc).join(', ')+'</p>' : '';
+
+  const proj = b.projection.map(p =>
+    '<tr><td>'+esc(p.event_seq)+'</td><td>'+esc(p.player_id)+'</td>'+
+    '<td class="'+(p.include?'tier-stored':'tier-absent')+'">'+
+    (p.include?'shown':'hidden')+'</td>'+
+    '<td><pre>'+j(p.payload)+'</pre></td></tr>').join('') ||
+    '<tr><td colspan="4" class="tier-absent">— no projection rows</td></tr>';
+
+  const scrap = b.scrapbook.map(s =>
+    '<pre class="tier-stored"><b>'+esc(s.scene_title)+'</b> ('+
+    esc(s.scene_type)+' @ '+esc(s.location)+') ['+esc(s.render_status)+
+    ']\n'+esc(s.narrative_excerpt)+'</pre>').join('') ||
+    '<span class="tier-absent">— no scrapbook entry</span>';
+
+  drill.innerHTML =
+    '<div class="panel"><h2>Narrative · Round '+esc(round)+'</h2><div class="body">'+narr+'</div></div>'+
+    '<div class="panel"><h2>Event stream (verbatim)</h2><div class="body">'+evs+'</div></div>'+
+    '<div class="panel"><h2>Derived state — NOT a stored snapshot</h2><div class="body">'+
+      unp+'<table><tr><th>field</th><th>value</th><th>provenance</th></tr>'+der+'</table></div></div>'+
+    '<div class="panel"><h2>Per-player projection lens</h2><div class="body">'+
+      '<table><tr><th>seq</th><th>player</th><th>visibility</th><th>projected payload</th></tr>'+
+      proj+'</table></div></div>'+
+    '<div class="panel"><h2>Scrapbook</h2><div class="body">'+scrap+'</div></div>'+
+    '<div class="panel"><h2>Final stored snapshot (the ONLY absolute state)</h2>'+
+      '<div class="body"><pre class="tier-stored">'+j(snap)+'</pre></div></div>';
+}
+
+loadSaves();
+</script>
+</body>
+</html>
