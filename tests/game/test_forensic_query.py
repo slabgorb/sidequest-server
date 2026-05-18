@@ -122,12 +122,27 @@ def _seed_rounds(store):
     conn.execute(
         "INSERT INTO events (kind, payload_json, created_at) VALUES "
         "('NARRATION', ?, '2026-05-18T00:01:01.000000+00:00')",
-        (json.dumps({"type": "NARRATION", "state_delta": {"location": "Cave"}}),),
+        (
+            json.dumps(
+                {
+                    "text": "You enter the cave.",
+                    "footnotes": [
+                        {
+                            "fact_id": "fn-cave",
+                            "summary": "The cave mouth opens into darkness.",
+                            "category": "Place",
+                            "is_new": True,
+                        }
+                    ],
+                    "_visibility": {"visible_to": "all"},
+                }
+            ),
+        ),
     )
     conn.execute(
         "INSERT INTO events (kind, payload_json, created_at) VALUES "
-        "('TURN_STATUS', ?, '2026-05-18T00:01:02.000000+00:00')",
-        (json.dumps({"type": "TURN_STATUS", "state_delta": None}),),
+        "('SCRAPBOOK_ENTRY', ?, '2026-05-18T00:01:02.000000+00:00')",
+        (json.dumps({"turn_id": 1, "location": "Cave"}),),
     )
     conn.execute(
         "INSERT INTO narrative_log (round_number, author, content, tags, created_at) "
@@ -136,7 +151,22 @@ def _seed_rounds(store):
     conn.execute(
         "INSERT INTO events (kind, payload_json, created_at) VALUES "
         "('NARRATION', ?, '2026-05-18T00:02:01.000000+00:00')",
-        (json.dumps({"type": "NARRATION", "state_delta": {"location": "Hall"}}),),
+        (
+            json.dumps(
+                {
+                    "text": "A goblin lunges.",
+                    "footnotes": [
+                        {
+                            "fact_id": "fn-goblin",
+                            "summary": "A goblin guards the hall.",
+                            "category": "Person",
+                            "is_new": True,
+                        }
+                    ],
+                    "_visibility": {"visible_to": "all"},
+                }
+            ),
+        ),
     )
     conn.commit()
 
@@ -158,7 +188,7 @@ def test_build_timeline_buckets_events_by_round(tmp_path):
     assert [t["round"] for t in timeline] == [1, 2]
     r1, r2 = timeline
     assert r1["seq_start"] == 1 and r1["seq_end"] == 2
-    assert r1["event_kind_counts"] == {"NARRATION": 1, "TURN_STATUS": 1}
+    assert r1["event_kind_counts"] == {"NARRATION": 1, "SCRAPBOOK_ENTRY": 1}
     assert r1["narrative_authors"] == ["narrator"]
     assert r2["seq_start"] == 3 and r2["seq_end"] == 3
     assert r2["event_kind_counts"] == {"NARRATION": 1}
@@ -196,8 +226,11 @@ def test_build_turn_bundle_assembles_all_panels(tmp_path):
     assert [n["content"] for n in bundle["narrative"]] == ["You enter the cave."]
     assert [e["seq"] for e in bundle["events"]] == [1, 2]
     assert bundle["events"][0]["kind"] == "NARRATION"
-    assert bundle["derived"]["location"]["value"] == "Cave"
-    assert bundle["derived"]["location"]["source_seqs"] == [1]
+    assert bundle["derived"]["fn-cave"]["value"] == {
+        "summary": "The cave mouth opens into darkness.",
+        "category": "Place",
+    }
+    assert bundle["derived"]["fn-cave"]["source_seqs"] == [1]
     assert bundle["unparseable_seqs"] == []
     assert bundle["projection"][0]["player_id"] == "player1"
     assert bundle["projection"][0]["include"] == 1

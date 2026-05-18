@@ -14,6 +14,10 @@ from typing import Any
 
 import yaml
 
+from sidequest.game.disposition import (
+    DEFAULT_ATTITUDE_THRESHOLDS,
+    configure_attitude_thresholds,
+)
 from sidequest.genre.cache import GenreCache
 from sidequest.genre.error import GenreLoadError, GenreNotFoundError, PackError
 from sidequest.genre.genre_code import GenreCode
@@ -1191,6 +1195,16 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         },
         component="genre",
     )
+
+    # Story 50-13: apply this pack's disposition→attitude bands process-
+    # wide. ``or DEFAULT`` overwrites any prior pack's custom band when
+    # this pack opts out, so two sessions on different packs cannot
+    # cross-contaminate NPC attitudes. Applied only here, on the fully-
+    # assembled success path — a malformed block already failed loudly at
+    # _load_rules_config (GenreLoadError) before reaching this line, so a
+    # failed load never half-applies a partial config.
+    configure_attitude_thresholds(rules.disposition_thresholds or DEFAULT_ATTITUDE_THRESHOLDS)
+
     return pack
 
 

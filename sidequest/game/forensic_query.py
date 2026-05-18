@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from sidequest.game.event_log import EventRow
-from sidequest.game.forensic_fold import fold_state_deltas
+from sidequest.game.forensic_fold import fold_known_facts
 
 logger = logging.getLogger(__name__)
 
@@ -188,9 +188,10 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
     """Assemble every drill-down panel for one round.
 
     Truth tiers stay separate: ``narrative``/``events``/``projection``/
-    ``scrapbook`` are verbatim DB rows; ``derived`` is the fold of every
-    event up to and including this round's last seq, badged by the UI.
-    Unknown round → empty bundle (lossy/best-effort, never raises).
+    ``scrapbook`` are verbatim DB rows; ``derived`` is the KnownFacts
+    ledger folded from every event's footnotes up to and including this
+    round's last seq (amber-badged by the UI — distinct from the stored
+    snapshot). Unknown round → empty bundle (lossy/best-effort, never raises).
     Read-only: caller supplies a read-only connection (D4).
     """
     entry = _timeline_entry(conn, round_number)
@@ -241,7 +242,7 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
         "SELECT seq, kind, payload_json, created_at FROM events WHERE seq <= ? ORDER BY seq",
         (seq_end,),
     ).fetchall()
-    fold = fold_state_deltas(
+    fold = fold_known_facts(
         [
             EventRow(
                 seq=r["seq"],
