@@ -498,6 +498,64 @@ def test_list_saves_telemetry_count_zero_when_table_missing(tmp_path):
     assert save["telemetry_rows"] == 0  # missing table -> 0, not error
 
 
+def test_list_saves_includes_mechanical_row_count(tmp_path):
+    import sqlite3
+
+    from sidequest.game.forensic_query import list_saves
+
+    saves = tmp_path / "saves"
+    db = saves / "games" / "mech" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES "
+        "(1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+        "CREATE TABLE turn_telemetry (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER, round INTEGER, ts TEXT NOT NULL,"
+        " component TEXT NOT NULL, event_type TEXT NOT NULL,"
+        " payload_json TEXT NOT NULL);"
+        "INSERT INTO turn_telemetry "
+        "(event_seq,round,ts,component,event_type,payload_json) VALUES "
+        "(1,1,'t','mechanical','census','{}'),"
+        "(1,1,'t','intent','state_transition','{}'),"
+        "(2,2,'t','mechanical','census','{}');"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["mechanical_rows"] == 2   # only component='mechanical'
+    assert save["telemetry_rows"] == 3    # Phase-1 count unchanged (all rows)
+
+
+def test_list_saves_mechanical_count_zero_when_table_missing(tmp_path):
+    import sqlite3
+
+    from sidequest.game.forensic_query import list_saves
+
+    saves = tmp_path / "saves"
+    db = saves / "games" / "old" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES "
+        "(1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["mechanical_rows"] == 0   # missing table -> 0, not error
+
+
 def test_list_saves_telemetry_count_zero_when_table_present_but_empty(tmp_path):
     # Distinct from the missing-table guard: the table EXISTS, so the real
     # SELECT COUNT(*) path executes and must return 0 (not the else-branch).

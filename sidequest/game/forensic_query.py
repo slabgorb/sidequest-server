@@ -56,6 +56,7 @@ def list_saves(save_dir: Path) -> list[dict]:
         conn: sqlite3.Connection | None = None
         row = None
         telemetry_rows = 0
+        mechanical_rows = 0
         try:
             conn = _ro_connect(db_file)
             row = conn.execute(
@@ -71,6 +72,17 @@ def list_saves(save_dir: Path) -> list[dict]:
                     if has_tt
                     else 0
                 )
+                try:
+                    mechanical_rows = (
+                        conn.execute(
+                            "SELECT COUNT(*) FROM turn_telemetry "
+                            "WHERE component='mechanical'"
+                        ).fetchone()[0]
+                        if has_tt
+                        else 0
+                    )
+                except sqlite3.Error:
+                    mechanical_rows = 0
             except sqlite3.Error as exc:
                 logger.warning(
                     "forensic_query.telemetry_count_failed save=%s err=%s",
@@ -97,6 +109,7 @@ def list_saves(save_dir: Path) -> list[dict]:
                 "last_played": row["last_played"],
                 "last_activity_ts": int(db_file.stat().st_mtime * 1000),
                 "telemetry_rows": telemetry_rows,
+                "mechanical_rows": mechanical_rows,
             }
         )
     out.sort(key=lambda r: r["last_activity_ts"], reverse=True)

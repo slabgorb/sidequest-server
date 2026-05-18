@@ -34,7 +34,7 @@
   #strip { width:100%; display:block; }
   #strip rect.r { cursor:pointer; }
   #strip rect.r:hover { fill:var(--acc); }
-  #strip rect.sel { stroke:var(--acc); stroke-width:1.5; }
+  #strip rect.r.sel { stroke:var(--acc); stroke-width:1.5; }
   .axis { fill:var(--absent); font-size:10px; }
   /* P0.3 — the comparison: two aligned, like-formatted columns, adjacent */
   .cmp { display:grid; grid-template-columns:1fr 1fr; gap:0 28px; }
@@ -77,6 +77,10 @@ const main = document.getElementById('main');
 let curSlug = null;
 let curTimeline = [];
 let saves = [];
+// mechStateCache: round -> state string ('absent'|'populated'|'static'|…)
+// populated on column-click as the per-round mechanical bundle is fetched.
+// The strip mechanical row re-renders each time a new column is visited.
+const mechStateCache = new Map();
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -113,11 +117,14 @@ async function selectSave(slug, el){
   if(!Array.isArray(tl) || !tl.length){
     main.innerHTML = '<section><p class="sub">No narrative rounds in this save.</p></section>'; return; }
   curTimeline = tl;
+  mechStateCache.clear();  // reset per-round cache when a new save is selected
   const sv = saves.find(s => s.slug === slug);
   main.innerHTML =
     '<section><p class="lbl">macro — '+esc(slug)+' · '+esc(tl.length)+
       ' rounds · '+esc(sv && sv.telemetry_rows != null ? sv.telemetry_rows : 0)+
-      ' telemetry rows · click a column</p><svg id="strip"></svg>'+
+      ' telemetry · '+
+      esc(sv && sv.mechanical_rows != null ? sv.mechanical_rows : 0)+
+      ' mechanical · click a column</p><svg id="strip"></svg>'+
       '<div id="axis" class="sub" style="font-size:11px;margin-top:4px"></div></section>'+
     '<div id="drill"><section><p class="sub">Pick a round above.</p></section></div>';
   renderStrip(tl);
@@ -156,6 +163,29 @@ function renderStrip(tl){
     rect.appendChild(tip);
     rect.addEventListener('click', () => selectTurn(t.round));
     svg.appendChild(rect);
+  });
+  // mechanical lane: thin second row (≤8px) at y=H-8, one rect per round.
+  // Source: mechStateCache populated on column-click (binary present/absent
+  // until visited; tri-state once fetched). No new fetch — R8 decision.
+  tl.forEach((t, i) => {
+    const state = mechStateCache.get(t.round);
+    const fill = !state || state === 'absent'
+      ? 'var(--absent)'
+      : 'var(--derived)';
+    const x = PAD + i*bw;
+    const mr = document.createElementNS(SVGNS, 'rect');
+    mr.setAttribute('class', 'mech-lane');
+    mr.setAttribute('x', x.toFixed(2));
+    mr.setAttribute('y', H - 8);
+    mr.setAttribute('width', Math.max(0.5, bw - 0.5).toFixed(2));
+    mr.setAttribute('height', 6);
+    mr.setAttribute('fill', fill);
+    mr.dataset.round = t.round;
+    const mtip = document.createElementNS(SVGNS, 'title');
+    mtip.textContent = 'Round '+t.round+' mechanical · '+
+      (state == null ? 'not yet visited' : state);
+    mr.appendChild(mtip);
+    svg.appendChild(mr);
   });
   // sparse round axis: first · mid · last
   const ax = document.getElementById('axis');
@@ -204,6 +234,11 @@ async function selectTurn(round){
   let snap = null;
   try { snap = await getJSON('/api/debug/save/'+
     encodeURIComponent(curSlug)+'/snapshot'); } catch(e){ snap = {error:e.message}; }
+
+  // cache the tri-state for the mechanical strip lane and re-render the lane
+  const mechState = (b.mechanical && b.mechanical.state) || 'absent';
+  mechStateCache.set(round, mechState);
+  if(curTimeline.length) renderStrip(curTimeline);
 
   // ---- DERIVED summary (KnownFacts the narrator had by this round) ----
   const derEntries = Object.entries(b.derived || {});
