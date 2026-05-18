@@ -111,3 +111,13 @@ def test_timeline_corrupt_save_is_empty_not_500(tmp_path):
     resp = _client(tmp_path).get("/api/debug/save/corruptslug/timeline")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_forensics_route_is_wired_and_serves_html(tmp_path):
+    """Mandatory wiring test: proves app.py registered the router and the
+    static asset resolves — not merely that the module imports."""
+    client = _client(tmp_path)
+    resp = client.get("/forensics")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "Save Forensics" in resp.text

@@ -25,6 +25,7 @@ from sidequest.agents.llm_factory import build_llm_client
 from sidequest.agents.tooling_protocol import ToolingLlmClient
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.dashboard import dashboard_router
+from sidequest.server.forensics import forensics_router
 from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import RoomRegistry
@@ -292,6 +293,9 @@ def create_app(
 
     # --- /dashboard — OTEL dashboard HTML (browser opens its own WS). ---
     app.include_router(dashboard_router)
+
+    # --- /forensics — Save Forensics read-only post-mortem page. ---
+    app.include_router(forensics_router)
 
     # --- Static /genre/* mount — serve genre pack assets (POI images, portraits, etc.) ---
     # URL /genre/<genre>/worlds/<world>/assets/poi/<file> → first-matching genre_packs dir.
