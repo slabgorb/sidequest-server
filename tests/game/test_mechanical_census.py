@@ -4,10 +4,13 @@ against real state, not a hoped-for emitter)."""
 from sidequest.game.mechanical_census import (
     build_pc_census,
     build_trope_census,
+    emit_mechanical_census,
     inv_hash,
     inventory_digest,
     seat_index,
 )
+from sidequest.game.persistence import SqliteStore
+from sidequest.telemetry.watcher_hub import bind_event_store
 
 
 # --- inventory_digest: aggregate by name, sum quantity, singleton-safe ---
@@ -155,3 +158,96 @@ def test_build_trope_census_is_session_scoped():
             "last_fired_turn": 3,
         }
     ]
+
+
+def test_one_bad_pc_is_isolated_others_and_trope_still_emit(
+    tmp_path, caplog
+):
+    """A PC whose build raises must loud-log mechanical_census.build_failed
+    and NOT drop the healthy PC or the session trope row."""
+    store = SqliteStore.open(str(tmp_path / "s.db"))
+    try:
+        bind_event_store(store)
+
+        class _GoodCore:
+            name = "Rux"
+            xp = 0
+            level = 1
+            acquired_advancements: list = []
+            statuses: list = []
+            edge = type("E", (), {"current": 5, "max": 5, "base_max": 5})()
+            inventory = type("I", (), {"items": [], "gold": 0})()
+
+        good = type(
+            "G", (), {"core": _GoodCore(), "current_room": None,
+                      "abilities": [], "is_broken": lambda self: False}
+        )()
+
+        class _BadCore:
+            name = "Vex"
+
+            @property
+            def edge(self):
+                raise RuntimeError("corrupt edge pool")
+
+        bad = type(
+            "B", (), {"core": _BadCore(), "current_room": None,
+                      "abilities": [], "is_broken": lambda self: False}
+        )()
+
+        class _Snap:
+            active_tropes: list = []
+            turns_since_meaningful = 0
+            total_beats_fired = 0
+            character_locations = {"Rux": "Cave", "Vex": "Cave"}
+            characters = [good, bad]
+            player_seats = {"p1": "Rux", "p2": "Vex"}
+
+            class turn_manager:  # noqa: N801
+                interaction = 2
+
+        class _Room:
+            def playing_player_ids(self):
+                return ["p1", "p2"]
+
+        with caplog.at_level("WARNING"), store._conn:
+            store._conn.execute(
+                "INSERT INTO events (kind, payload_json, created_at) "
+                "VALUES ('NARRATION','{}','t')"
+            )
+            emit_mechanical_census(_Room(), _Snap())  # must not raise
+        rows = store._conn.execute(
+            "SELECT event_type, payload_json FROM turn_telemetry ORDER BY seq"
+        ).fetchall()
+        types = [r[0] for r in rows]
+        assert types == ["census", "trope_census"]  # good PC + trope kept
+        assert "mechanical_census.build_failed pc=p2" in caplog.text
+    finally:
+        bind_event_store(None)
+        store.close()
+
+
+def test_census_payload_never_sets_encounter_field(tmp_path):
+    """The adjacent _maybe_persist_encounter_row hazard only fires on
+    fields['field']=='encounter'. A census must never carry that key
+    (defends the open C2 txn from a premature commit)."""
+
+    class _C:
+        core = type(
+            "C", (), {"name": "Rux", "xp": 0, "level": 1,
+                      "acquired_advancements": [], "statuses": [],
+                      "edge": type("E", (), {"current": 1, "max": 1,
+                                              "base_max": 1})(),
+                      "inventory": type("I", (), {"items": [], "gold": 0})()}
+        )()
+        current_room = None
+        abilities: list = []
+
+        def is_broken(self):
+            return False
+
+    c = build_pc_census(
+        character=_C(), player_id="p1", character_name="Rux",
+        seat=0, round_number=1, location=None,
+    )
+    assert "field" not in c or c.get("field") != "encounter"
