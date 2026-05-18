@@ -375,10 +375,17 @@ async def test_items_consumed_emits_state_transition_via_span_route(
 async def test_inventory_route_is_single_source_no_double_emission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Spec §6.6 dedupe rule: when ``narration_apply.py`` opens the span
-    helper, the prior direct ``_watcher_publish`` for the same
-    component must NOT also fire — otherwise the dashboard
-    double-counts. The route is the single source."""
+    """Spec §6.6 dedupe rule: the aggregate ``narrator_extracted``
+    inventory route must fire exactly once — the prior direct
+    ``_watcher_publish`` it replaced must NOT also fire, or the
+    dashboard double-counts. The route is the single source for the
+    turn-level rollup.
+
+    ADR-108 adds a *separate, deliberate* per-applied-item
+    ``item_recipient_resolved`` ``inventory`` event (recipient
+    attribution, one per entry) — that is new signal, not a double
+    emission of the rollup, so the dedupe assertion scopes to
+    ``op == "narrator_extracted"``."""
     captured = await _setup(monkeypatch, "test-inventory-single-source")
 
     snapshot = GameSnapshot(
@@ -402,12 +409,25 @@ async def test_inventory_route_is_single_source_no_double_emission(
     )
     await asyncio.sleep(0.05)
 
-    inventory_events = [
+    rollup_events = [
         e
         for e in captured
-        if e["event_type"] == "state_transition" and e["component"] == "inventory"
+        if e["event_type"] == "state_transition"
+        and e["component"] == "inventory"
+        and e["fields"].get("op") == "narrator_extracted"
     ]
-    assert len(inventory_events) == 1, (
-        "expected exactly one state_transition for inventory "
-        f"(got {len(inventory_events)}: {inventory_events})"
+    assert len(rollup_events) == 1, (
+        "expected exactly one narrator_extracted (rollup) state_transition "
+        f"for inventory (got {len(rollup_events)}: {rollup_events})"
+    )
+    # ADR-108: exactly one per-applied-item recipient event for the lone
+    # gained entry — proves the new signal is present and not duplicated.
+    resolved_events = [
+        e
+        for e in captured
+        if e["component"] == "inventory" and e["fields"].get("op") == "item_recipient_resolved"
+    ]
+    assert len(resolved_events) == 1, (
+        "expected exactly one item_recipient_resolved event for the single "
+        f"gained item (got {len(resolved_events)}: {resolved_events})"
     )

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from sidequest.agents.orchestrator import BeatSelection
+    from sidequest.game.character import Character
     from sidequest.game.encounter import EncounterActor
     from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
@@ -1576,6 +1577,122 @@ def _apply_morale_sidecar(
             _apply_flee_consequences(enc, cdef, sidecar_fired)
 
 
+def resolve_item_recipient(
+    snapshot: GameSnapshot,
+    entry: dict[str, object],
+    *,
+    narrating_character_name: str,
+    lane: str,
+) -> Character:
+    """ADR-108: resolve which seated PC a narrator item entry belongs to.
+
+    Sealed MP rounds (ADR-036) have no single "acting player" and
+    inventory is per-player (ADR-037), so the recipient is an explicit
+    narrator-supplied signal (``entry["recipient"]`` — the same
+    convention as ``BeatSelection.actor``) validated against the seated
+    set. Resolution modes, mirrored onto every per-item ``inventory``
+    watcher so the GM panel can answer "did Catalina actually get the
+    medpatch, or did the narrator wing it?":
+
+    - ``tagged`` — ``recipient`` names a seated PC (∈
+      ``player_seats.values()``) → that Character. Also the
+      single-player / empty-manifest lone PC: behaviour unchanged, NOT a
+      contract violation (ADR-108 §2).
+    - ``recipient_missing`` — ``recipient`` absent/empty in a seated
+      round (narrator contract violation).
+    - ``non_seated_recipient`` — ``recipient`` present but not a seated
+      PC (narrator contract violation).
+
+    On either violation the item degrades to the **narrating socket's
+    PC** (``narrating_character_name``) — deterministic and observable —
+    and a loud ``inventory`` / ``recipient_missing`` watcher
+    (severity=warning) fires. It is NEVER attributed to
+    ``snapshot.characters[0]`` as a positional default in a seated round
+    (that positional default IS the ADR-108 bug); the narrated item is
+    never dropped (*Yes, And*).
+
+    Always emits one per-item ``item_recipient_resolved`` watcher
+    (severity=info, ``component=inventory``) naming the resolved
+    recipient + lane + mode — the CLAUDE.md OTEL lie-detector for
+    inventory attribution.
+    """
+    chars = snapshot.characters
+
+    def _by_name(name: str) -> Character | None:
+        for c in chars:
+            if c.core.name == name:
+                return c
+        return None
+
+    seated = {n for n in snapshot.player_seats.values() if n}
+    offered = str(entry.get("recipient", "") or "").strip()
+    item_name = str(entry.get("name", "") or "").strip()
+
+    if not seated:
+        # Single-player / pre-MP save: the lone first character is the
+        # only resolution. Behaviour is unchanged and this is NOT a
+        # contract violation — the loud watcher stays silent so
+        # single-player saves don't pollute the GM panel (ADR-108 §2).
+        resolved = chars[0]
+        mode = "tagged"
+    elif offered and (_seated_match := _by_name(offered)) is not None and offered in seated:
+        resolved = _seated_match
+        mode = "tagged"
+    else:
+        mode = "non_seated_recipient" if offered else "recipient_missing"
+        # Absent-recipient rule (ADR-108 §3): degrade to the narrating
+        # socket's PC — never characters[0].
+        fallback = _by_name(narrating_character_name)
+        if fallback is None:
+            # Deep name-skew: the narrating socket's PC is absent from
+            # the snapshot's character list. Unreachable in a normal
+            # sealed round (the narrating socket always seats a PC), but
+            # we must neither drop the narrated item (*Yes, And*) nor
+            # crash the apply pipeline. Fail LOUD and degrade to the
+            # first character as the only remaining non-dropping option.
+            logger.warning(
+                "inventory.narrating_pc_unresolved narrating=%r seated=%s "
+                "offered=%r lane=%s — degrading to first character",
+                narrating_character_name,
+                sorted(seated),
+                offered,
+                lane,
+            )
+            fallback = chars[0]
+        resolved = fallback
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "inventory",
+                "op": "recipient_missing",
+                "resolution_mode": mode,
+                "lane": lane,
+                "item": item_name,
+                "offered_recipient": offered,
+                "fallback_recipient": resolved.core.name,
+                "narrating_character": narrating_character_name,
+                "seated": sorted(seated),
+            },
+            component="inventory",
+            severity="warning",
+        )
+
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "inventory",
+            "op": "item_recipient_resolved",
+            "resolution_mode": mode,
+            "lane": lane,
+            "item": item_name,
+            "recipient": resolved.core.name,
+        },
+        component="inventory",
+        severity="info",
+    )
+    return resolved
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -1941,7 +2058,14 @@ def _apply_narration_result_to_snapshot(
     if (
         result.items_gained or result.items_lost or items_discarded or items_consumed
     ) and snapshot.characters:
-        character = snapshot.characters[0]
+        # ADR-108: NO single ``snapshot.characters[0]`` recipient. In a
+        # sealed MP round (ADR-036) there is no "acting player" and
+        # inventory is per-player (ADR-037); each item entry resolves its
+        # own seated-PC recipient via ``resolve_item_recipient``. The
+        # narrating socket's PC (``acting_character_name`` falling back to
+        # ``player_name`` — the same idiom as ``actor_for_location``
+        # above) is the deterministic absent-recipient degradation.
+        narrating_name = acting_character_name or player_name
         turn_num = snapshot.turn_manager.interaction
 
         def _narrator_item_dict(entry: dict[str, object]) -> dict[str, object]:
@@ -2081,17 +2205,29 @@ def _apply_narration_result_to_snapshot(
                     )
 
             item_dict = _narrator_item_dict(entry)
-            character.core.inventory.items.append(item_dict)
+            recipient_char = resolve_item_recipient(
+                snapshot,
+                entry,
+                narrating_character_name=narrating_name,
+                lane="gained",
+            )
+            recipient_char.core.inventory.items.append(item_dict)
             added_names.append(str(item_dict["name"]))
 
         for entry in result.items_lost or []:
             lost_name = str(entry.get("name", "") or "").strip().lower()
             if not lost_name:
                 continue
-            for idx, existing in enumerate(character.core.inventory.items):
+            recipient_char = resolve_item_recipient(
+                snapshot,
+                entry,
+                narrating_character_name=narrating_name,
+                lane="lost",
+            )
+            for idx, existing in enumerate(recipient_char.core.inventory.items):
                 existing_name = str(existing.get("name", "") or "").strip().lower()
                 if existing_name == lost_name:
-                    character.core.inventory.items.pop(idx)
+                    recipient_char.core.inventory.items.pop(idx)
                     removed_names.append(lost_name)
                     break
 
@@ -2105,8 +2241,14 @@ def _apply_narration_result_to_snapshot(
             discard_name = str(entry.get("name", "") or "").strip().lower()
             if not discard_name:
                 continue
+            recipient_char = resolve_item_recipient(
+                snapshot,
+                entry,
+                narrating_character_name=narrating_name,
+                lane="discarded",
+            )
             matched = False
-            for existing in character.core.inventory.items:
+            for existing in recipient_char.core.inventory.items:
                 existing_name = str(existing.get("name", "") or "").strip().lower()
                 if existing_name == discard_name and (
                     str(existing.get("state", "Carried")) == "Carried"
@@ -2138,11 +2280,17 @@ def _apply_narration_result_to_snapshot(
             consume_name = str(entry.get("name", "") or "").strip().lower()
             if not consume_name:
                 continue
+            recipient_char = resolve_item_recipient(
+                snapshot,
+                entry,
+                narrating_character_name=narrating_name,
+                lane="consumed",
+            )
             matched = False
-            for idx, existing in enumerate(character.core.inventory.items):
+            for idx, existing in enumerate(recipient_char.core.inventory.items):
                 existing_name = str(existing.get("name", "") or "").strip().lower()
                 if existing_name == consume_name:
-                    character.core.inventory.items.pop(idx)
+                    recipient_char.core.inventory.items.pop(idx)
                     consumed_names.append(consume_name)
                     matched = True
                     break

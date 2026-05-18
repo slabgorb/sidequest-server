@@ -182,7 +182,7 @@ of them — do NOT attempt to send them as tool calls; only this JSON block
 records them. Only include fields that changed.
 
 items_gained: Array. Emit when the player acquires, picks up, finds, loots, receives, or is given a new item during this turn. Each entry:
-  {"name": "<short item name>", "description": "<one-sentence description>", "category": "weapon|armor|tool|consumable|quest|treasure|misc"}
+  {"name": "<short item name>", "description": "<one-sentence description>", "category": "weapon|armor|tool|consumable|quest|treasure|misc", "recipient": "<exact name of the seated PC who gains this item>"}
 
 items_lost: Array. Same format as items_gained. Emit when the player loses an item to the world — given away, traded, stolen, destroyed. The item is GONE from continuity. Only for non-currency items — currency changes use gold_change.
 
@@ -191,6 +191,8 @@ items_discarded: Array. Same format as items_gained. Emit when the player intent
 items_consumed: Array. Same format as items_gained. Emit when the player USES UP a consumable — patch-foam applied, foil-strip torn open, potion drunk, ration eaten, charge expended. The item is GONE from inventory because its function was spent (distinct from items_lost and items_gained). Use items_consumed for one-shot consumables that vanish on use.
 
 CRITICAL INVENTORY RULE: If your narration describes ANY item changing hands or leaving the player's possession — acquiring, losing, trading, giving, dropping, abandoning, having an item taken, or USING UP a consumable — you MUST emit the corresponding items_gained, items_lost, items_discarded, or items_consumed in game_patch. The game state ONLY changes through these fields. If you write "the merchant takes your sword" but don't emit items_lost, the sword stays in inventory and the narrative diverges. Every item transaction in your prose MUST have a matching JSON field. No exceptions. (Inventory has NO tool — it is sidecar-only on this path.)
+
+CRITICAL ITEM RECIPIENT RULE: For EVERY entry in items_gained, items_lost, items_discarded, and items_consumed, set "recipient" to the exact name of the specific PC who gains, loses, discards, or consumes that item — the same name you use for that PC's beat actor. In a multi-PC round this is MANDATORY and you must NEVER omit it: each PC has their own inventory, so without "recipient" the item lands on the wrong character (e.g. the officer hands the map chip to Catalina but it shows up on Ritali's sheet). If your prose says "Catalina pockets the chip and tosses the spanner to Pell", emit items_gained recipient="Catalina ..." for the chip and items_gained recipient="Pell ..." for the spanner. One item to one PC per entry — split a multi-recipient hand-off into one entry per recipient. (Single-PC games: still name that one PC.)
 
 gold_change: Integer. Emit when the player gains or loses gold/currency outside of beat costs (winning a poker hand: +50, paying a bribe: -20, finding a coin purse: +10). Beat costs are handled automatically — only emit gold_change for narrator-determined outcomes.
 
