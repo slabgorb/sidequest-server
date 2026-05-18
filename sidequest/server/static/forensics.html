@@ -222,9 +222,25 @@ async function selectTurn(round){
         : '<span class="ok">clean</span>')+'</span>'+
     '</div>';
 
-  // ---- STORED column (flattened ground truth) ----
-  const sRows = storedRows(snap);
-  const stoCol = '<div class="kv">'+ sRows.map(([k,v]) =>
+  // ---- RECORDED THIS ROUND (per-round, varies — scrapbook + narrative +
+  // events). The game_state snapshot is TERMINAL-only (one row, round 117);
+  // showing it per-round is a lie. The per-round recorded reality lives in
+  // scrapbook_entries.location/scene + narrative + events. ----
+  const sb = b.scrapbook || [];
+  const locs = [...new Set(sb.map(s => s.location).filter(x => x != null && x !== ''))];
+  const scenes = sb.map(s => (s.scene_title||'?')+' ('+(s.scene_type||'?')+
+    ') ['+(s.render_status||'?')+']');
+  const authors = [...new Set((b.narrative||[]).map(n => n.author).filter(Boolean))];
+  const evKinds = {};
+  for(const e of (b.events||[])) evKinds[e.kind] = (evKinds[e.kind]||0)+1;
+  const evLine = Object.entries(evKinds).map(([k,n]) => k+'×'+n).join(' ') || '—';
+  const recRows = [
+    ['location', locs.length ? locs.join('  ·  ') : '— none recorded this round'],
+    ['scene', scenes.length ? scenes.join('  ·  ') : '—'],
+    ['narrators', authors.length ? authors.join(', ') : '—'],
+    ['events', evLine],
+  ];
+  const recCol = '<div class="kv">'+ recRows.map(([k,v]) =>
     '<span class="k">'+esc(k)+'</span><span class="tier-stored">'+esc(v)+'</span>').join('') +'</div>';
 
   // ---- evidence (collapsed) ----
@@ -259,9 +275,11 @@ async function selectTurn(round){
 
   drill.innerHTML =
     '<section><p class="lbl">comparison · round '+esc(round)+
-      ' — derived belief vs stored ground truth</p>'+ unp +
-      '<div class="cmp"><div class="d"><h3>DERIVED — narrator believed</h3>'+derCol+'</div>'+
-      '<div class="s"><h3>STORED — ground truth (final snapshot)</h3>'+stoCol+'</div></div></section>'+
+      ' — what the narrator had established, vs what was recorded this round'+
+      ' (SideQuest stores no per-round snapshot — see terminal snapshot below)</p>'+ unp +
+      '<div class="cmp"><div class="d"><h3>DERIVED — narrator believed (by R'+esc(round)+
+        ')</h3>'+derCol+'</div>'+
+      '<div class="s"><h3>RECORDED THIS ROUND</h3>'+recCol+'</div></div></section>'+
     '<section><p class="lbl">evidence</p>'+
       '<details><summary>narrative<span class="meta">round '+esc(round)+
         '</span></summary><div class="ev-body">'+narr+'</div></details>'+
@@ -275,8 +293,14 @@ async function selectTurn(round){
         proj+'</table></div></details>'+
       '<details><summary>scrapbook<span class="meta">'+esc(scCount)+
         ' entries</span></summary><div class="ev-body">'+scrap+'</div></details>'+
-      '<details><summary>stored snapshot — raw JSON<span class="meta">the only absolute state</span>'+
-        '</summary><div class="ev-body"><pre class="tier-stored">'+j(snap)+'</pre></div></details>'+
+      '<details><summary>terminal snapshot<span class="meta">round '+
+        esc((snap && snap.turn_manager && snap.turn_manager.round) ?? '?')+
+        ' · the ONLY stored snapshot — identical on every round, NOT this round’s state'+
+        '</span></summary><div class="ev-body"><div class="kv">'+
+        storedRows(snap).map(([k,v]) => '<span class="k">'+esc(k)+
+          '</span><span class="tier-stored">'+esc(v)+'</span>').join('')+
+        '</div><details><summary>raw JSON</summary><div class="ev-body">'+
+        '<pre class="tier-stored">'+j(snap)+'</pre></div></details></div></details>'+
     '</section>';
 }
 
