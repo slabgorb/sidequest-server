@@ -145,6 +145,93 @@ def _fake_narration_result_with_secret():
     )
 
 
+async def _drive_one_real_turn(tmp_path: Path) -> Path:
+    """Shared harness: seed a MULTIPLAYER game, drive ONE real production turn
+    through connect.py (alice connects, bob joins as unseated observer, alice
+    submits a PLAYER_ACTION), and return the save.db Path.
+
+    Extracted from the original test_a_real_turn_persists_turn_telemetry_rows
+    body() so that both the wiring test and the cost-measurement test can
+    reuse the SAME scenario without duplicating the setup.  The extraction is
+    purely mechanical — no observable behaviour was changed; the existing
+    test's assertions remain identical.
+
+    INTENTIONAL execution model: callers MUST wrap this in ``asyncio.run()``.
+    Do NOT call this from an ``async def`` test or add @pytest.mark.asyncio —
+    that would create a nested-event-loop RuntimeError.  See the wiring test
+    below for the authoritative comment.
+    """
+    _seed_with_character(tmp_path, _SLUG)
+    registry = RoomRegistry()
+    handler = WebSocketSessionHandler(
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
+    )
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=registry,
+        socket_id="sock-alice",
+        out_queue=queue,
+    )
+
+    connect = GameMessage.model_validate(
+        {
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG,
+                "last_seen_seq": 0,
+            },
+        }
+    )
+    with patch(
+        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+        new=AsyncMock(return_value=_fake_narration_result_with_secret()),
+    ):
+        connect_out = await handler.handle_message(connect)
+
+        # Verify slug-connect succeeded (has_character=True — alice's
+        # pre-seeded character lets us skip chargen and go straight to
+        # Playing).
+        connected_msgs = [
+            m
+            for m in connect_out
+            if getattr(m, "type", None) == MessageType.SESSION_EVENT
+            and getattr(getattr(m, "payload", None), "event", None) == "connected"
+        ]
+        assert connected_msgs, (
+            f"slug-connect did not emit SESSION_EVENT{{connected}}; got: {connect_out}"
+        )
+        assert getattr(connected_msgs[0].payload, "has_character", False) is True, (
+            "slug-connect must see the pre-seeded character (has_character=True) "
+            "so the handler is in Playing state for the PLAYER_ACTION below"
+        )
+
+        # Add bob as a connected-but-unseated observer to the room.
+        # This ensures emit_event("SECRET_NOTE", ...) has a non-empty
+        # recipient list → _project_frames fires for bob → VISIBILITY_GATED
+        # branch → _publish_secret_routed → C2 join-path write.
+        # Bob is NOT seated so playing_player_count() == 1 and the
+        # turn barrier fires immediately on alice's submission (no deadlock).
+        assert handler._room is not None, (
+            "handler._room must be set after slug-connect — "
+            "connect.py wires the room during the connected branch"
+        )
+        handler._room.connect("bob", socket_id="sock-bob")
+
+        action = GameMessage.model_validate(
+            {
+                "type": "PLAYER_ACTION",
+                "player_id": "alice",
+                "payload": {"action": "I look around the dungeon."},
+            }
+        )
+        await handler.handle_message(action)
+
+    return db_path_for_slug(tmp_path, _SLUG)
+
+
 def test_a_real_turn_persists_turn_telemetry_rows(tmp_path: Path) -> None:
     """Drive ONE real turn through the production connect path and assert
     that turn_telemetry rows are written, including at least one with a
@@ -157,87 +244,15 @@ def test_a_real_turn_persists_turn_telemetry_rows(tmp_path: Path) -> None:
     verifies that end-to-end wiring actually persists rows — not just that
     the sink function is importable.
     """
-
-    async def body() -> Path:
-        _seed_with_character(tmp_path, _SLUG)
-        registry = RoomRegistry()
-        handler = WebSocketSessionHandler(
-            save_dir=tmp_path,
-            genre_pack_search_paths=[_FIXTURE_PACKS],
-        )
-        queue: asyncio.Queue[object] = asyncio.Queue()
-        handler.attach_room_context(
-            registry=registry,
-            socket_id="sock-alice",
-            out_queue=queue,
-        )
-
-        connect = GameMessage.model_validate(
-            {
-                "type": "SESSION_EVENT",
-                "player_id": "alice",
-                "payload": {
-                    "event": "connect",
-                    "game_slug": _SLUG,
-                    "last_seen_seq": 0,
-                },
-            }
-        )
-        with patch(
-            "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-            new=AsyncMock(return_value=_fake_narration_result_with_secret()),
-        ):
-            connect_out = await handler.handle_message(connect)
-
-            # Verify slug-connect succeeded (has_character=True — alice's
-            # pre-seeded character lets us skip chargen and go straight to
-            # Playing).
-            connected_msgs = [
-                m
-                for m in connect_out
-                if getattr(m, "type", None) == MessageType.SESSION_EVENT
-                and getattr(getattr(m, "payload", None), "event", None) == "connected"
-            ]
-            assert connected_msgs, (
-                f"slug-connect did not emit SESSION_EVENT{{connected}}; got: {connect_out}"
-            )
-            assert getattr(connected_msgs[0].payload, "has_character", False) is True, (
-                "slug-connect must see the pre-seeded character (has_character=True) "
-                "so the handler is in Playing state for the PLAYER_ACTION below"
-            )
-
-            # Add bob as a connected-but-unseated observer to the room.
-            # This ensures emit_event("SECRET_NOTE", ...) has a non-empty
-            # recipient list → _project_frames fires for bob → VISIBILITY_GATED
-            # branch → _publish_secret_routed → C2 join-path write.
-            # Bob is NOT seated so playing_player_count() == 1 and the
-            # turn barrier fires immediately on alice's submission (no deadlock).
-            assert handler._room is not None, (
-                "handler._room must be set after slug-connect — "
-                "connect.py wires the room during the connected branch"
-            )
-            handler._room.connect("bob", socket_id="sock-bob")
-
-            action = GameMessage.model_validate(
-                {
-                    "type": "PLAYER_ACTION",
-                    "player_id": "alice",
-                    "payload": {"action": "I look around the dungeon."},
-                }
-            )
-            await handler.handle_message(action)
-
-        return db_path_for_slug(tmp_path, _SLUG)
-
     # INTENTIONAL execution model: this test is a sync ``def`` that wraps
-    # the turn drive in ``asyncio.run(body())`` — NOT an ``async def``,
+    # the turn drive in ``asyncio.run(...)`` — NOT an ``async def``,
     # even though pyproject.toml sets asyncio_mode="auto" and the sibling
     # test_event_log_wiring.py uses ``async def``. Do NOT "fix" this to
     # ``async def`` and do NOT add @pytest.mark.asyncio: either change,
     # combined with the internal ``asyncio.run`` below, raises a
     # nested-event-loop RuntimeError. The sync wrapper is required so the
     # read-only sqlite assertions run after the loop has fully closed.
-    save_db = asyncio.run(body())
+    save_db = asyncio.run(_drive_one_real_turn(tmp_path))
     conn = sqlite3.connect(f"file:{save_db}?mode=ro", uri=True)
     try:
         total = conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0]
@@ -248,3 +263,23 @@ def test_a_real_turn_persists_turn_telemetry_rows(tmp_path: Path) -> None:
         assert attributed > 0, "no event_seq-attributed rows: C2 join path not exercised"
     finally:
         conn.close()
+
+
+def test_turn_telemetry_insert_count_is_not_pathological(tmp_path: Path) -> None:
+    """Sink cost guard: one real turn must not explode telemetry inserts.
+    The C2 model batches in-txn inserts into one commit; out-of-txn
+    publishes each take a short txn. This pins a sane ceiling; if a future
+    change blows it, that is the signal to coalesce per-turn (spec risk)."""
+    # INTENTIONAL execution model: sync def wrapping asyncio.run — see the
+    # comment in test_a_real_turn_persists_turn_telemetry_rows for rationale.
+    # Do NOT convert to async def / @pytest.mark.asyncio.
+    save_db = asyncio.run(_drive_one_real_turn(tmp_path))
+    conn = sqlite3.connect(f"file:{save_db}?mode=ro", uri=True)
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0]
+    finally:
+        conn.close()
+    # One turn's watcher publishes. Generous ceiling: regression tripwire,
+    # not a tight bound. If a real turn legitimately exceeds it, raise the
+    # ceiling AND open a Phase-follow-on coalesce note — do not silently bump.
+    assert 0 < n <= 500, f"one turn wrote {n} telemetry rows — investigate/coalesce"
