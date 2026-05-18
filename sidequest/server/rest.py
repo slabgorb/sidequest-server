@@ -23,6 +23,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from sidequest.game.forensic_query import (
+    build_timeline,
+    build_turn_bundle,
+    list_saves,
+    open_save_readonly,
+)
 from sidequest.game.game_slug import generate_slug
 from sidequest.game.persistence import (
     GameMode,
@@ -429,6 +435,49 @@ def create_rest_router() -> APIRouter:
             reverse=True,
         )
         return views
+
+    @router.get("/api/debug/saves")
+    async def debug_saves(request: Request) -> list[dict[str, Any]]:
+        """List local saves for the forensics page. Read-only, lossy."""
+        return list_saves(request.app.state.save_dir)
+
+    @router.get("/api/debug/save/{slug}/timeline")
+    async def debug_save_timeline(
+        request: Request, slug: str
+    ) -> list[dict[str, Any]]:
+        """Round-keyed timeline for one save. [] if absent/broken — never 500."""
+        conn = open_save_readonly(request.app.state.save_dir, slug)
+        if conn is None:
+            return []
+        try:
+            return build_timeline(conn)
+        except Exception:  # noqa: BLE001 — never 500 a forensics read
+            logger.warning("forensic.timeline_failed slug=%s", slug, exc_info=True)
+            return []
+        finally:
+            conn.close()
+
+    @router.get("/api/debug/save/{slug}/turn/{round_number}")
+    async def debug_save_turn(
+        request: Request, slug: str, round_number: int
+    ) -> dict[str, Any]:
+        """Drill-down bundle for one round. Empty bundle if absent/broken."""
+        empty = {"round": round_number, "narrative": [], "events": [],
+                 "derived": {}, "projection": [], "scrapbook": [],
+                 "unparseable_seqs": []}
+        conn = open_save_readonly(request.app.state.save_dir, slug)
+        if conn is None:
+            return empty
+        try:
+            return build_turn_bundle(conn, round_number)
+        except Exception:  # noqa: BLE001 — never 500 a forensics read
+            logger.warning(
+                "forensic.turn_failed slug=%s round=%s", slug, round_number,
+                exc_info=True,
+            )
+            return empty
+        finally:
+            conn.close()
 
     @router.post("/api/games", status_code=201)
     async def create_or_resume_game(req: CreateGameRequest, request: Request) -> Any:

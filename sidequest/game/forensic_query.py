@@ -271,3 +271,25 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
             "derived": derived, "projection": projection,
             "scrapbook": scrapbook,
             "unparseable_seqs": list(fold.unparseable_seqs)}
+
+
+def open_save_readonly(save_dir: Path, slug: str) -> sqlite3.Connection | None:
+    """Open ``<save_dir>/games/<slug>/save.db`` strictly read-only.
+
+    Returns None (logged loudly) if the save is absent, unopenable, or not
+    a valid sqlite database — forensics endpoints degrade to an empty
+    result rather than 500 (lossy/best-effort, mirrors /api/debug/state).
+    """
+    db = Path(save_dir) / "games" / slug / "save.db"
+    if not db.is_file():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _ro_connect(db)
+        conn.execute("SELECT 1").fetchone()  # probe: raises on non-sqlite/corrupt
+        return conn
+    except Exception as exc:  # noqa: BLE001 — best-effort, mirrors debug_state
+        logger.warning("forensic_query.open_save_failed slug=%s err=%s", slug, exc)
+        if conn is not None:
+            conn.close()
+        return None
