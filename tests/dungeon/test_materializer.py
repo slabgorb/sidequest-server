@@ -1309,6 +1309,231 @@ def _failing_sdk_client() -> Any:
     return _FailingSdk()
 
 
+# ---------------------------------------------------------------------------
+# Story 50-26 — curate-stage robustness fakes (ADR-106 Amendment A).
+# The pingpong failure shape: the SDK verdict is cut mid-`wandering_table`
+# string (the 4096-token-default deterministic truncation OQ-1 captured:
+# "Unterminated string starting at: line 452 column 17").
+# ---------------------------------------------------------------------------
+
+# Unterminated JSON — `json.loads` raises json.JSONDecodeError on this exact
+# shape (open string after "Skeleton", no closing quote/brace). This is the
+# verbatim head OQ-1 recorded in sq-playtest-pingpong.md.
+_PINGPONG_TRUNCATED_VERDICT = (
+    '{"exp001.r0": {"race": "undead", "cr_band": "shallow", '
+    '"wandering_table": [{"name": "Skeleton",'
+)
+
+
+def _tooling_result(text: str, model: str) -> Any:
+    from sidequest.agents.tooling_protocol import ToolingResult
+
+    return ToolingResult(
+        text=text,
+        stop_reason="end_turn",
+        input_tokens=1,
+        output_tokens=7,
+        cached_input_read_tokens=0,
+        cached_input_write_tokens=0,
+        model=model,
+    )
+
+
+def _well_formed_verdict_text(messages: Any) -> str:
+    """Echo the curate prompt's INPUT as a well-formed per-region verdict
+    (same logic as _reflecting_sdk_client — a SUCCESS curation)."""
+    import json as _json
+
+    prompt = messages[0].content
+    _, _, input_blob = prompt.partition("INPUT:\n")
+    payload = _json.loads(input_blob)
+    verdict = {
+        region_id: {
+            "race": region["race"],
+            "cr_band": region["cr_band"],
+            "wandering_table": [
+                {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                for row in region["wandering_table"]
+            ],
+            "big_bad": region["big_bad"],
+        }
+        for region_id, region in payload.items()
+    }
+    return _json.dumps(verdict)
+
+
+def _truncating_sdk_client(call_log: list[int] | None = None) -> Any:
+    """ALWAYS returns the pingpong unterminated-JSON verdict — every
+    attempt. Drives Layer-1 retry-exhaustion → Layer-2 loud degrade.
+    `call_log` (if given) gets one entry appended per curate call so the
+    test can assert the attempt count is bounded (AC-4)."""
+
+    class _Truncating:
+        async def complete_with_tools(
+            self, *a: Any, model: str, **k: Any
+        ) -> Any:
+            if call_log is not None:
+                call_log.append(1)
+            return _tooling_result(_PINGPONG_TRUNCATED_VERDICT, model)
+
+    return _Truncating()
+
+
+def _truncated_then_valid_sdk_client(call_log: list[int] | None = None) -> Any:
+    """Attempt 1 → unterminated JSON; attempt 2 → a well-formed verdict.
+    Drives the Layer-1 retry-RECOVERS path (no degrade, curated=True,
+    exactly one parse_failed span for attempt 1)."""
+
+    state = {"n": 0}
+
+    class _TruncatedThenValid:
+        async def complete_with_tools(
+            self, *a: Any, model: str, messages: Any, **k: Any
+        ) -> Any:
+            state["n"] += 1
+            if call_log is not None:
+                call_log.append(state["n"])
+            if state["n"] == 1:
+                return _tooling_result(_PINGPONG_TRUNCATED_VERDICT, model)
+            return _tooling_result(_well_formed_verdict_text(messages), model)
+
+    return _TruncatedThenValid()
+
+
+def _slow_then_valid_sdk_client(delay_s: float) -> Any:
+    """Sleeps `delay_s` then returns a well-formed verdict. With an
+    injected tiny curate deadline this drives the Layer-1 wall-clock-cap
+    → Layer-2 degrade (failure_kind='deadline')."""
+    import asyncio as _asyncio
+
+    class _Slow:
+        async def complete_with_tools(
+            self, *a: Any, model: str, messages: Any, **k: Any
+        ) -> Any:
+            await _asyncio.sleep(delay_s)
+            return _tooling_result(_well_formed_verdict_text(messages), model)
+
+    return _Slow()
+
+
+def _per_region_partial_sdk_client() -> Any:
+    """Top-level JSON PARSES, but one region's value is structurally
+    broken (a string, not an object). Drives per-region isolation: the
+    broken region degrades loudly; sibling regions stay curated; the
+    whole expansion is NOT aborted (ADR-106 Amendment A — per-region)."""
+    import json as _json
+
+    class _PartialVerdict:
+        async def complete_with_tools(
+            self, *a: Any, model: str, messages: Any, **k: Any
+        ) -> Any:
+            prompt = messages[0].content
+            _, _, input_blob = prompt.partition("INPUT:\n")
+            payload = _json.loads(input_blob)
+            region_ids = list(payload)
+            verdict: dict[str, Any] = {}
+            for i, region_id in enumerate(region_ids):
+                region = payload[region_id]
+                if i == len(region_ids) - 1 and len(region_ids) > 1:
+                    # Last region: structurally broken (degradable).
+                    verdict[region_id] = "THE_CURATOR_RETURNED_PROSE_HERE"
+                else:
+                    verdict[region_id] = {
+                        "race": region["race"],
+                        "cr_band": region["cr_band"],
+                        "wandering_table": [
+                            {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                            for row in region["wandering_table"]
+                        ],
+                        "big_bad": region["big_bad"],
+                    }
+            return _tooling_result(_json.dumps(verdict), model)
+
+    return _PartialVerdict()
+
+
+def _missing_cr_sdk_client() -> Any:
+    """Parseable verdict whose kept wandering row DROPPED `cr`. Per
+    Amendment A this is the RETAINED `CurationError` carve-out (ii):
+    degrading would corrupt the CR→Edge seam, so it MUST still raise —
+    NOT degrade. This fake guards against over-degradation."""
+    import json as _json
+
+    class _MissingCr:
+        async def complete_with_tools(
+            self, *a: Any, model: str, messages: Any, **k: Any
+        ) -> Any:
+            prompt = messages[0].content
+            _, _, input_blob = prompt.partition("INPUT:\n")
+            payload = _json.loads(input_blob)
+            verdict = {
+                region_id: {
+                    "race": region["race"],
+                    "cr_band": region["cr_band"],
+                    "wandering_table": [
+                        {k: v for k, v in row.items() if k != "cr"}
+                        for row in region["wandering_table"]
+                    ],
+                    "big_bad": region["big_bad"],
+                }
+                for region_id, region in payload.items()
+            }
+            return _tooling_result(_json.dumps(verdict), model)
+
+    return _MissingCr()
+
+
+def _curate_inputs_two_regions(
+    *, algorithm: str = "prim", expansion_id: int = 9, depth_score: float = 0.5
+) -> tuple[Any, Any, Any, Any]:
+    """Like `_curate_inputs` but a TWO-region expansion (r0, r1) so
+    per-region isolation is testable. Returns (request, palette,
+    expansion, fill_result)."""
+    from sidequest.dungeon.materializer import MaterializationRequest, RegionFill
+    from sidequest.dungeon.persistence import FrontierEdge
+    from sidequest.dungeon.region_graph import Expansion
+    from sidequest.dungeon.region_graph.model import RegionNode
+    from sidequest.dungeon.themes import ThemePalette
+
+    theme_id = f"t_{algorithm}"
+    palette = ThemePalette(themes={theme_id: _theme_bound_to_look(theme_id, algorithm)})
+    r0 = f"exp{expansion_id:03d}.r0"
+    r1 = f"exp{expansion_id:03d}.r1"
+    nodes = [
+        RegionNode(id=r0, expansion_id=expansion_id, theme=theme_id),
+        RegionNode(id=r1, expansion_id=expansion_id, theme=theme_id),
+    ]
+    expansion = Expansion(expansion_id=expansion_id, new_nodes=nodes, new_edges=[])
+    fe = FrontierEdge(
+        frontier_edge_id="fe1",
+        from_region_id="entrance",
+        heading="north",
+        spawn_depth_score=depth_score,
+    )
+    request = MaterializationRequest.build(
+        campaign_seed=7,
+        expansion_id=expansion_id,
+        frontier_edge=fe,
+        frontier=[fe],
+        attach_region_ids=["entrance"],
+        heading="north",
+        burst_magnitude=3,
+        lookahead_breadth=2,
+    )
+    fill_result = {
+        rid: RegionFill(
+            region_id=rid,
+            algorithm=algorithm,
+            width=49,
+            height=49,
+            braid_ratio=0.0,
+            grid=[[0]],
+        )
+        for rid in (r0, r1)
+    }
+    return request, palette, expansion, fill_result
+
+
 def _theme_bound_to_look(theme_id: str, algorithm: str) -> Any:
     """A real DungeonTheme whose interior.algorithm is the join key onto
     a LookDef.generator_binding (the resolved look→theme seam)."""
@@ -1490,10 +1715,25 @@ class TestStageCurate:
             "(pre-curation determinism contract, up to the curation seam)"
         )
 
-    async def test_curation_subprocess_failure_raises_and_records_curated_false(
+    async def test_curation_llm_failure_degrades_loudly_not_raises_amendment_a(
         self,
     ) -> None:
+        """SUPERSEDED CONTRACT (story 50-26 / ADR-106 Amendment A).
+
+        This test previously asserted an `LlmClientError` curate failure
+        RAISES `CurationError` and aborts. Amendment A makes that the
+        frozen/aborted turn the contract exists to eliminate: `llm_error`
+        is an enumerated degrade `failure_kind`, and it is NOT one of the
+        two retained `CurationError` carve-outs ((i) invalid assembled
+        manifest, (ii) post-parse mechanical corruption). So a persistent
+        LLM-call failure must Layer-1-retry (2 attempts) then Layer-2
+        LOUD-degrade — NOT raise. RED on develop (current code raises on
+        the first LlmClientError). The retained lie-detector assertion
+        (`dungeon.materialize.curate` stage span records curated=False)
+        stays — only the raise becomes a loud degrade.
+        """
         import sidequest.dungeon.materializer as _mat
+        from sidequest.dungeon.materializer import CurationError
         from sidequest.telemetry.spans import SPAN_ROUTES
         from sidequest.telemetry.spans.dungeon_materialize import (
             SPAN_DUNGEON_MATERIALIZE_CURATE,
@@ -1502,49 +1742,55 @@ class TestStageCurate:
 
         bundle = _real_cookbook_bundle()
         request, palette, expansion, fill_result, _look = _curate_inputs()
-
-        # The curation LLM call fails (LlmClientError) — a hard
-        # one-shot SDK failure (SDK analog of the prior subprocess fail).
+        rid = expansion.new_nodes[0].id
 
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
-            with (
-                pytest.raises(Exception) as exc_info,
-                dungeon_materialize_curate_span(  # noqa: PT011
-                    expansion_id=request.expansion_id
-                ) as span,
-            ):
-                await _mat._stage_curate(
-                    request,
-                    bundle=bundle,
-                    palette=palette,
-                    expansion=expansion,
-                    fill_result=fill_result,
-                    is_first_band_entry=True,
-                    claude_client=_failing_sdk_client(),
-                    span=span,
-                )
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                try:
+                    result = await _mat._stage_curate(
+                        request,
+                        bundle=bundle,
+                        palette=palette,
+                        expansion=expansion,
+                        fill_result=fill_result,
+                        is_first_band_entry=True,
+                        claude_client=_failing_sdk_client(),
+                        span=span,
+                    )
+                except CurationError as exc:  # pragma: no cover - RED proof
+                    pytest.fail(
+                        "Amendment A: a persistent LLM-call failure is "
+                        "failure_kind='llm_error' — it must Layer-2 "
+                        f"degrade, not raise CurationError. Got: {exc}"
+                    )
         finally:
             _spans_mod.tracer = original_tracer_fn
 
-        # Loud: NOT NotImplementedError, NOT a swallowed pass.
-        assert not isinstance(exc_info.value, NotImplementedError)
-
-        finished = exporter.get_finished_spans()
-        curate_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE]
-        assert curate_spans, "curate span must be emitted even on failure"
-        route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE]
-        fields = route.extract(curate_spans[0])  # type: ignore[arg-type]
-        # The routed extract (what the GM panel renders) must show the
-        # failure — set-but-not-routed is the Task-2 defect lesson.
-        assert fields.get("curated") is False, (
-            f"routed extract must surface curated=false on failure; got {fields}"
+        # New contract: loud degrade, turn proceeds.
+        assert result.curated is False
+        assert result.curated is not True  # forbidden silent fallback
+        assert rid in result.uncurated_regions
+        assert rid in result.region_manifests  # honest coal shipped
+        degraded = self._spans_named(exporter, "dungeon.curate.degraded")
+        assert degraded, "llm_error must Layer-2 degrade loudly"
+        assert dict(degraded[0].attributes or {}).get("failure_kind") == "llm_error"
+        # RETAINED: the stage span still surfaces curated=False to the GM
+        # panel (set-but-not-routed was the Task-2 defect lesson).
+        curate_spans = [
+            s
+            for s in exporter.get_finished_spans()
+            if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE
+        ]
+        assert curate_spans, "stage curate span must be emitted even on degrade"
+        fields = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE].extract(
+            curate_spans[0]  # type: ignore[arg-type]
         )
-        assert fields.get("reason"), (
-            f"routed extract must surface a specific failure reason; got {fields}"
-        )
-        # Decisive: the raw manifest was NOT shipped stamped curated.
+        assert fields.get("curated") is False
         assert fields.get("curated") is not True
+
+    def _spans_named(self, exporter: Any, name: str) -> list[Any]:
+        return [s for s in exporter.get_finished_spans() if s.name == name]
 
     async def test_every_corpus_creature_emerges_with_edge_no_raw_cr_hp(
         self,
@@ -1685,6 +1931,440 @@ class TestStageCurate:
         # Commit is immediately live: curate's RegionCuration reached
         # commit through attach.
         assert "entrance" in store.load_map(entrance_id="entrance").nodes
+
+
+class TestStageCurateRobustness:
+    """Story 50-26 — RED against ADR-106 Amendment A (Curate-stage
+    robustness contract). Every test here MUST FAIL on current `develop`
+    (strict `json.loads` → fatal `CurationError` → frozen turn, no retry,
+    no loud degrade, no `dungeon.curate.*` spans, no per-region
+    `uncurated` marker). They pin the layered bounded contract: Layer 1
+    one bounded whole-call retry → Layer 2 LOUD degrade-to-uncurated;
+    `CurationError` retained only for the two carve-outs; per-region
+    isolation; clause-12 routed spans.
+
+    Test-pinned API (the observable contract RED proposes; Architect
+    spec-check / Dev may rename at GREEN but the behaviour is fixed):
+      * `RegionCuration.uncurated_regions: frozenset[str]` — region ids
+        that Layer-2-degraded; empty on a fully-curated expansion.
+      * `RegionCuration.curated` is the expansion-level rollup: False iff
+        any region degraded (a degraded region must NOT be stamped True —
+        the forbidden silent fallback).
+      * Span names `dungeon.curate.parse_failed` (per attempt) and
+        `dungeon.curate.degraded` (Layer 2 fired), both registered in
+        `SPAN_ROUTES` (clause-12 GM-panel-visible / routed).
+      * An injectable curate wall-clock cap so AC-4's deadline is
+        verifiable without a 25 s test (proposed
+        `materializer.CURATE_DEADLINE_S`).
+    """
+
+    def _spans_named(self, exporter: Any, name: str) -> list[Any]:
+        return [s for s in exporter.get_finished_spans() if s.name == name]
+
+    async def test_truncated_verdict_does_not_escape_stage_curate(self) -> None:
+        """AC-2 / target (a): the pingpong unterminated-JSON verdict no
+        longer propagates an unhandled `CurationError` that freezes the
+        turn — `_stage_curate` RETURNS a `RegionCuration`."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.dungeon.materializer import CurationError, RegionCuration
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                try:
+                    result = await _mat._stage_curate(
+                        request,
+                        bundle=bundle,
+                        palette=palette,
+                        expansion=expansion,
+                        fill_result=fill_result,
+                        is_first_band_entry=True,
+                        claude_client=_truncating_sdk_client(),
+                        span=span,
+                    )
+                except CurationError as exc:  # pragma: no cover - RED proof
+                    pytest.fail(
+                        "ADR-106 Amendment A: a truncated verdict must "
+                        "Layer-2 degrade, not raise CurationError and "
+                        f"freeze the turn. Got: {exc}"
+                    )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+        assert isinstance(result, RegionCuration)
+
+    async def test_truncated_verdict_degrades_loud_curated_false_with_content(
+        self,
+    ) -> None:
+        """target (b) + AC-3 + Forbidden invariant: the degraded region
+        ships the deterministic assemble_region manifest, stamped
+        `curated=False` and marked uncurated — NEVER stamped curated=True
+        (the prior architect's correctly-rejected silent fallback)."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        rid = expansion.new_nodes[0].id
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_truncating_sdk_client(),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        # Forbidden invariant: a degraded region is NEVER curated=True.
+        assert result.curated is False
+        assert result.curated is not True
+        # Per-region uncurated marker (test-pinned API).
+        assert rid in result.uncurated_regions
+        # Layer 2 ships the deterministic assemble_region manifest as
+        # content — the region is honest coal, not empty/garbage.
+        assert rid in result.region_manifests
+        assert result.region_manifests[rid].wandering_table, (
+            "Layer-2 degrade must ship the pre-curation assemble_region "
+            "manifest as content (ADR-106 clause 9), not an empty region"
+        )
+
+    async def test_degrade_emits_routed_dungeon_curate_degraded_span(self) -> None:
+        """target (c) + AC-3 + clause 12: Layer 2 emits a routed
+        `dungeon.curate.degraded` span carrying region_id, failure_kind,
+        attempts, elapsed_ms — GM-panel-visible (the lie detector)."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans import SPAN_ROUTES
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        rid = expansion.new_nodes[0].id
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_truncating_sdk_client(),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        degraded = self._spans_named(exporter, "dungeon.curate.degraded")
+        assert degraded, (
+            "Layer 2 must emit a `dungeon.curate.degraded` span "
+            "(clause-12 OTEL mandate)"
+        )
+        attrs = dict(degraded[0].attributes or {})
+        assert attrs.get("region_id") == rid
+        assert attrs.get("failure_kind") in {"truncated", "malformed"}
+        assert int(attrs.get("attempts", 0)) >= 1
+        assert "elapsed_ms" in attrs
+        # Clause 12: the span must be ROUTED (GM-panel visible), not just
+        # emitted into the void.
+        assert "dungeon.curate.degraded" in SPAN_ROUTES, (
+            "`dungeon.curate.degraded` must be registered in SPAN_ROUTES "
+            "so the GM panel can render it (ADR-106 clause 12)"
+        )
+
+    async def test_retry_is_bounded_exactly_one_retry_then_degrade(self) -> None:
+        """AC-4 + target (d): exactly 1 retry (2 attempts total), then
+        deterministic Layer-2 degrade — provably non-looping. A
+        `dungeon.curate.parse_failed` span fires per attempt."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        call_log: list[int] = []
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_truncating_sdk_client(call_log=call_log),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        assert len(call_log) == 2, (
+            "Layer 1 budget is EXACTLY 1 retry (2 attempts total) — "
+            f"got {len(call_log)} curate calls (no loop, no single-shot)"
+        )
+        parse_failed = self._spans_named(exporter, "dungeon.curate.parse_failed")
+        assert len(parse_failed) == 2, (
+            "one `dungeon.curate.parse_failed` span per attempt "
+            f"(expected 2, got {len(parse_failed)})"
+        )
+        attempts = sorted(
+            int(dict(s.attributes or {}).get("attempt", -1)) for s in parse_failed
+        )
+        assert attempts == [1, 2], f"parse_failed spans must tag attempt 1,2; got {attempts}"
+
+    async def test_retry_recovers_no_degrade_when_second_attempt_valid(
+        self,
+    ) -> None:
+        """Layer-1 RECOVERS: attempt 1 truncated, attempt 2 valid →
+        curated=True, region NOT degraded, NO degraded span, exactly one
+        parse_failed (attempt 1). Proves retry actually retries — not a
+        vacuous always-degrade."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        rid = expansion.new_nodes[0].id
+        call_log: list[int] = []
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_truncated_then_valid_sdk_client(call_log=call_log),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        assert len(call_log) == 2, "retry must fire the second attempt"
+        assert result.curated is True, "a recovered retry is fully curated"
+        assert rid not in result.uncurated_regions
+        assert not self._spans_named(exporter, "dungeon.curate.degraded"), (
+            "no degrade when the retry recovered"
+        )
+        assert len(self._spans_named(exporter, "dungeon.curate.parse_failed")) == 1, (
+            "exactly one parse_failed (attempt 1) — attempt 2 succeeded"
+        )
+
+    async def test_per_region_isolation_one_bad_region_siblings_curated(
+        self,
+    ) -> None:
+        """target (f): a verdict that parses but has ONE structurally
+        broken region degrades only that region; the sibling stays
+        curated; `_stage_curate` does NOT raise and returns content for
+        BOTH (one bad region never aborts the expansion)."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result = _curate_inputs_two_regions(
+            algorithm="prim", expansion_id=9, depth_score=0.5
+        )
+        r0, r1 = (n.id for n in expansion.new_nodes)
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_per_region_partial_sdk_client(),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        # r1 (last) is the broken one → degraded; r0 stays curated.
+        assert r1 in result.uncurated_regions
+        assert r0 not in result.uncurated_regions
+        assert result.curated is False  # rollup: any degrade ⇒ False
+        # BOTH regions still have content — the expansion was not aborted.
+        assert r0 in result.region_manifests
+        assert r1 in result.region_manifests
+        assert result.region_manifests[r1].wandering_table, (
+            "the degraded region still ships its assemble_region manifest"
+        )
+
+    async def test_wall_clock_cap_degrades_with_deadline_failure_kind(
+        self,
+    ) -> None:
+        """AC-4 (wall-clock half): a curate call slower than the injected
+        deadline degrades (failure_kind='deadline') and RETURNS quickly —
+        the load-bearing no-multi-minute-freeze guarantee. Pins an
+        injectable cap (proposed `materializer.CURATE_DEADLINE_S`)."""
+        import time as _time
+
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        if not hasattr(_mat, "CURATE_DEADLINE_S"):
+            pytest.fail(
+                "AC-4 requires an injectable curate wall-clock cap "
+                "(proposed `materializer.CURATE_DEADLINE_S`) so the "
+                "deadline path is verifiable without a 25 s test"
+            )
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        rid = expansion.new_nodes[0].id
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        original_deadline = _mat.CURATE_DEADLINE_S
+        _mat.CURATE_DEADLINE_S = 0.05  # type: ignore[attr-defined]
+        started = _time.monotonic()
+        try:
+            with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                result = await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_slow_then_valid_sdk_client(2.0),
+                    span=span,
+                )
+        finally:
+            _mat.CURATE_DEADLINE_S = original_deadline  # type: ignore[attr-defined]
+            _spans_mod.tracer = original_tracer_fn
+
+        elapsed = _time.monotonic() - started
+        assert elapsed < 1.5, (
+            f"the wall-clock cap must abort the slow curate fast "
+            f"(no multi-minute freeze); took {elapsed:.2f}s"
+        )
+        assert result.curated is False
+        assert rid in result.uncurated_regions
+        degraded = self._spans_named(exporter, "dungeon.curate.degraded")
+        assert degraded, "deadline path must Layer-2 degrade loudly"
+        assert dict(degraded[0].attributes or {}).get("failure_kind") == "deadline"
+
+    async def test_missing_cr_still_raises_curation_error_retained_carveout(
+        self,
+    ) -> None:
+        """RETAINED `CurationError` carve-out (ii) — REGRESSION GUARD
+        (may already be green on develop; MUST stay green after GREEN):
+        a parseable verdict whose kept row dropped `cr` would corrupt the
+        CR→Edge seam, so it MUST still raise — degrading here is
+        forbidden over-degradation."""
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.dungeon.materializer import CurationError
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with (
+                pytest.raises(CurationError),
+                dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span,
+            ):
+                await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_missing_cr_sdk_client(),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+    async def test_truncated_verdict_completes_through_real_materialize_chain(
+        self,
+    ) -> None:
+        """AC-5 + target (e) — MANDATORY WIRING TEST (CLAUDE.md): the
+        robustness path is reachable from the real
+        `materialize → _stage_curate → _parse_curation_verdict` chain. A
+        truncating curator no longer aborts the turn — `materialize`
+        completes and the expansion commits (the turn proceeds)."""
+        import sidequest.telemetry.spans as _spans_module
+        from sidequest.dungeon.materializer import materialize
+        from sidequest.dungeon.persistence import DungeonStore
+        from sidequest.dungeon.region_graph import RegionNode
+
+        bundle = _real_cookbook_bundle()
+        request, palette, _expansion, _fill, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        theme_id = next(iter(palette.themes))
+        graph = _make_seed_graph("entrance")
+        graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
+
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        store.ensure_schema()
+        exporter, _provider, real_tracer = _otel_in_memory()
+        original_tracer_fn = _spans_module.tracer
+        _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+        try:
+            await materialize(
+                request,
+                graph=graph,
+                bundle=bundle,
+                palette=palette,
+                persistence=store,
+                snapshot=_fresh_snapshot(),
+                pack_tropes=_attach_pack("cave_in"),
+                claude_client=_truncating_sdk_client(),
+            )
+        finally:
+            _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+        # The turn proceeded: the expansion committed despite the
+        # truncating curator (no frozen turn, no aborted materialize).
+        assert "entrance" in store.load_map(entrance_id="entrance").nodes
+        assert [
+            s for s in exporter.get_finished_spans() if s.name == "dungeon.curate.degraded"
+        ], "the degrade must be observable through the real chain too"
 
 
 # ===========================================================================
