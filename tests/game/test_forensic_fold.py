@@ -67,3 +67,13 @@ def test_independent_fields_tracked_separately():
     assert result.derived["quests"].value == {"q1": "open"}
     assert result.derived["quests"].source_seqs == (2,)
     assert "characters" not in result.derived  # absent, not fabricated
+
+
+def test_unparseable_payload_is_recorded_and_logged_not_silently_dropped(caplog):
+    bad = EventRow(seq=7, kind="NARRATION", payload_json="{not json", created_at="t")
+    good = _ev(8, {"type": "NARRATION", "state_delta": {"location": "Cave"}})
+    with caplog.at_level("WARNING"):
+        result = fold_state_deltas([bad, good])
+    assert result.unparseable_seqs == (7,)
+    assert result.derived["location"].value == "Cave"  # good event still folds
+    assert "forensic_fold.unparseable_payload seq=7" in caplog.text
