@@ -17,14 +17,23 @@ stable wire contract — OTEL spans (``SPAN_DISPOSITION_SHIFT``), the GM
 panel, the scrapbook, and the narrator's NPC serialization all match on
 those exact literals.
 
-Boundaries (strict, per ADR-020):
+Boundaries (strict, defaulting to ADR-020 ±10):
 
-- ``value > 10`` → friendly
-- ``value < -10`` → hostile
+- ``value > friendly_at`` → friendly
+- ``value < hostile_at`` → hostile
 - otherwise → neutral
 
-10 is neutral, 11 is friendly. -10 is neutral, -11 is hostile. The
+With the default thresholds (``friendly_at=10`` / ``hostile_at=-10``):
+10 is neutral, 11 is friendly; -10 is neutral, -11 is hostile. The
 ``Disposition`` constructor clamps any integer to ``-100..+100``.
+
+Story 50-13 makes the numeric cut points genre-pack-configurable. The
+qualitative bands stay the locked three-tier ``Attitude`` contract — only
+the boundaries move. A pack declares ``disposition_thresholds`` in
+rules.yaml; ``load_genre_pack`` applies them process-wide via
+``configure_attitude_thresholds`` so the no-argument
+``Disposition.attitude()`` callsites (``session.apply_world_patch``,
+``opening.py``, the narrator roster) need no rework.
 """
 
 from __future__ import annotations
@@ -32,10 +41,17 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import GetCoreSchemaHandler
+from pydantic import BaseModel, GetCoreSchemaHandler, model_validator
 from pydantic_core import CoreSchema, core_schema
 
-__all__ = ["Attitude", "Disposition"]
+__all__ = [
+    "Attitude",
+    "AttitudeThresholds",
+    "DEFAULT_ATTITUDE_THRESHOLDS",
+    "Disposition",
+    "configure_attitude_thresholds",
+    "reset_attitude_thresholds",
+]
 
 
 class Attitude(StrEnum):
@@ -52,6 +68,62 @@ class Attitude(StrEnum):
     FRIENDLY = "friendly"
     NEUTRAL = "neutral"
     HOSTILE = "hostile"
+
+
+class AttitudeThresholds(BaseModel):
+    """Genre-configurable numeric cut points for attitude derivation.
+
+    ``friendly_at`` / ``hostile_at`` are the strict boundaries:
+    ``value > friendly_at`` → friendly, ``value < hostile_at`` → hostile,
+    otherwise neutral. Defaults reproduce the pre-50-13 ADR-020 ±10
+    contract exactly.
+
+    ``extra="forbid"`` matches the rest of ``rules.py``: a typo'd key
+    (``frendly_at``) fails the pack load loudly rather than silently
+    falling back to default ±10 while the author believes they set a
+    custom band (SOUL: No Silent Fallbacks).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    friendly_at: int = 10
+    hostile_at: int = -10
+
+    @model_validator(mode="after")
+    def _validate_strict_ordering(self) -> AttitudeThresholds:
+        if not self.hostile_at < self.friendly_at:
+            raise ValueError(
+                f"disposition_thresholds: hostile_at ({self.hostile_at}) must be "
+                f"strictly less than friendly_at ({self.friendly_at}); an "
+                f"inverted or zero-width band is a pack authoring error, not a "
+                f"silently-clamped default"
+            )
+        return self
+
+
+DEFAULT_ATTITUDE_THRESHOLDS = AttitudeThresholds()
+"""The pre-50-13 ADR-020 ±10 contract. The loader passes this when a pack
+declares no ``disposition_thresholds`` block, so an opted-out pack is
+byte-identical to legacy behavior and a prior pack's custom band is
+overwritten rather than inherited (cross-pack / multiplayer no-leak)."""
+
+_active_thresholds: AttitudeThresholds = DEFAULT_ATTITUDE_THRESHOLDS
+
+
+def configure_attitude_thresholds(thresholds: AttitudeThresholds) -> None:
+    """Set the process-wide attitude bands. Called once per pack load by
+    ``load_genre_pack``. Overwrites (never merges) the prior value so two
+    sessions on different packs in one server process cannot cross-
+    contaminate NPC attitudes."""
+    global _active_thresholds
+    _active_thresholds = thresholds
+
+
+def reset_attitude_thresholds() -> None:
+    """Restore the default ±10 bands. Used by the loader's 'pack opted
+    out' path and by test isolation fixtures."""
+    global _active_thresholds
+    _active_thresholds = DEFAULT_ATTITUDE_THRESHOLDS
 
 
 class Disposition:
@@ -75,9 +147,9 @@ class Disposition:
         self.value = max(-100, min(100, int(value)))
 
     def attitude(self) -> Attitude:
-        if self.value > 10:
+        if self.value > _active_thresholds.friendly_at:
             return Attitude.FRIENDLY
-        if self.value < -10:
+        if self.value < _active_thresholds.hostile_at:
             return Attitude.HOSTILE
         return Attitude.NEUTRAL
 

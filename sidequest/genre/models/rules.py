@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from sidequest.game.beat_kinds import BeatKind
+from sidequest.game.disposition import AttitudeThresholds
 
 
 class MoraleTrigger(StrEnum):
@@ -446,6 +447,11 @@ class RulesConfig(BaseModel):
     allowed_classes: list[str] = Field(default_factory=list)
     allowed_races: list[str] = Field(default_factory=list)
     edge_config: EdgeConfig | None = None
+    # Story 50-13: genre-configurable disposition→attitude numeric bands.
+    # None ⇒ the loader applies DEFAULT_ATTITUDE_THRESHOLDS (±10, the
+    # pre-50-13 ADR-020 contract). The qualitative bands stay the locked
+    # three-tier Attitude enum — only the cut points move.
+    disposition_thresholds: AttitudeThresholds | None = None
     default_class: str | None = None
     default_race: str | None = None
     race_label: str | None = None
