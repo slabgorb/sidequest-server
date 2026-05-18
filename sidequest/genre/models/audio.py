@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# ADR-033 Pillar 3: alias chains are bounded; a chain that does not terminate
+# in a real mood_tracks key within this many hops is a broken pack.
+MAX_ALIAS_HOPS = 5
 
 
 class MoodTrack(BaseModel):
@@ -119,6 +123,50 @@ class AudioConfig(BaseModel):
     mixer_defaults: MixerConfig | None = None
     mood_aliases: dict[str, str] = Field(default_factory=dict)
     faction_themes: list[FactionThemeDef] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_mood_aliases(self) -> AudioConfig:
+        """ADR-033 Pillar 3 AC-2: every declared ``mood_aliases`` chain MUST
+        terminate in a real ``mood_tracks`` key within ``MAX_ALIAS_HOPS``.
+
+        Fail loud at pack load — no silent substitution or default-filling.
+        A broken target, a cycle, or an over-deep chain makes the pack
+        unloadable and names the offender. Runtime resolution may therefore
+        assume every declared alias is good; the only runtime fallback is an
+        *undeclared* unknown mood.
+        """
+        tracks = self.mood_tracks
+        aliases = self.mood_aliases
+        for start in aliases:
+            seen = {start}
+            cur = aliases[start]
+            hops = 1
+            while True:
+                if cur in tracks:
+                    break
+                if cur in seen:
+                    raise ValueError(
+                        f"mood_aliases: alias chain starting at {start!r} forms "
+                        f"a cycle/loop at {cur!r} (loop_detected) — declared "
+                        f"alias chains must terminate in a mood_tracks key"
+                    )
+                if cur not in aliases:
+                    raise ValueError(
+                        f"mood_aliases: alias {start!r} -> ... -> {cur!r} does "
+                        f"not resolve (broken_chain): {cur!r} is neither a "
+                        f"mood_tracks key nor a declared alias. "
+                        f"Known mood_tracks: {sorted(tracks)}"
+                    )
+                hops += 1
+                if hops > MAX_ALIAS_HOPS:
+                    raise ValueError(
+                        f"mood_aliases: alias chain from {start!r} exceeds the "
+                        f"{MAX_ALIAS_HOPS}-hop limit (depth_exceeded) before "
+                        f"reaching a mood_tracks key"
+                    )
+                seen.add(cur)
+                cur = aliases[cur]
+        return self
 
 
 class TrackVariation(StrEnum):

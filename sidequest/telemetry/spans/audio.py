@@ -69,6 +69,83 @@ SPAN_ROUTES[SPAN_AUDIO_DISPATCHED] = SpanRoute(
 )
 
 
+SPAN_MUSIC_MOOD_ALIAS_RESOLVED = "music.mood_alias_resolved"
+SPAN_ROUTES[SPAN_MUSIC_MOOD_ALIAS_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "music",
+        "op": "mood_alias_resolved",
+        "mood_name": (span.attributes or {}).get("mood_name", ""),
+        "resolved_to": (span.attributes or {}).get("resolved_to", ""),
+        "chain_depth": (span.attributes or {}).get("chain_depth", 0),
+    },
+)
+SPAN_MUSIC_MOOD_ALIAS_FAILED = "music.mood_alias_failed"
+SPAN_ROUTES[SPAN_MUSIC_MOOD_ALIAS_FAILED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "music",
+        "op": "mood_alias_failed",
+        "mood_name": (span.attributes or {}).get("mood_name", ""),
+        "reason": (span.attributes or {}).get("reason", ""),
+        "fallback_mood": (span.attributes or {}).get("fallback_mood", ""),
+    },
+)
+
+
+@contextmanager
+def mood_alias_resolved_span(
+    *,
+    mood_name: str,
+    resolved_to: str,
+    chain_depth: int,
+    latency_ms: float,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """An alias mood resolved to a real mood_tracks key via the alias chain."""
+    attributes: dict[str, Any] = {
+        "mood_name": mood_name,
+        "resolved_to": resolved_to,
+        "chain_depth": chain_depth,
+        "latency_ms": latency_ms,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_MUSIC_MOOD_ALIAS_RESOLVED, attributes, tracer_override=_tracer
+    ) as span:
+        yield span
+
+
+@contextmanager
+def mood_alias_failed_span(
+    *,
+    mood_name: str,
+    reason: str,
+    fallback_mood: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Mood resolution fell back to the default.
+
+    ``reason``: ``broken_chain`` (runtime — unknown/undeclared mood) |
+    ``loop_detected`` | ``depth_exceeded`` (load-time classification, surfaced
+    in the raised pack-load error rather than a runtime span).
+    """
+    attributes: dict[str, Any] = {
+        "mood_name": mood_name,
+        "reason": reason,
+        "fallback_mood": fallback_mood,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_MUSIC_MOOD_ALIAS_FAILED, attributes, tracer_override=_tracer
+    ) as span:
+        yield span
+
+
 @contextmanager
 def audio_backend_enabled_span(
     *,

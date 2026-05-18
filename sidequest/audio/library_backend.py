@@ -5,13 +5,92 @@ Story 5-4: The DJ, not the radio. Picks tracks but does NOT do playback.
 
 from __future__ import annotations
 
+import logging
 import random
+import time
 from pathlib import Path
 
 from sidequest.audio.models import AudioCue, AudioLane, AudioResult
 from sidequest.audio.protocol import AudioBackend
 from sidequest.audio.rotator import ThemeRotator
 from sidequest.genre.models import AudioConfig
+from sidequest.genre.models.audio import MAX_ALIAS_HOPS
+from sidequest.telemetry.spans.audio import (
+    mood_alias_failed_span,
+    mood_alias_resolved_span,
+)
+
+logger = logging.getLogger(__name__)
+
+# ADR-033 Pillar 3: the music fallback mood. The interpreter already treats
+# "exploration" as the universal fallback (interpreter.py classifies to it
+# when no keyword matches); the track-selection fallback reuses that
+# convention rather than introducing a separate config field.
+DEFAULT_FALLBACK_MOOD = "exploration"
+
+
+def resolve_mood_to_track_key(mood: str, cfg: AudioConfig) -> str | None:
+    """Resolve ``mood`` to a key present in ``cfg.mood_tracks`` (ADR-033 Step 3).
+
+    - Direct hit (``mood`` already a mood_tracks key): returned unchanged,
+      no span, no log — the common path stays silent.
+    - Declared alias: the chain is load-validated good (see
+      ``AudioConfig._validate_mood_aliases``), so it resolves to a real
+      mood_tracks key. Emits ``music.mood_alias_resolved``.
+    - Undeclared unknown mood (not a track, not an alias — e.g. a novel
+      string from the narrator/encounter): NOT silent. Emits
+      ``music.mood_alias_failed`` (reason=broken_chain), logs a WARNING,
+      and falls back to ``DEFAULT_FALLBACK_MOOD`` when that mood has tracks.
+      Returns ``None`` only when even the default has no tracks (caller
+      then returns no cue — still observed by the failed span).
+
+    The chain walk stays defensively bounded even though load validation
+    already guarantees declared chains are acyclic and shallow.
+    """
+    if mood in cfg.mood_tracks:
+        return mood
+
+    if mood in cfg.mood_aliases:
+        start = time.perf_counter()
+        seen = {mood}
+        cur = cfg.mood_aliases[mood]
+        depth = 1
+        while cur not in cfg.mood_tracks:
+            # Load validation rejects cycles/over-depth/broken declared
+            # chains, so this defensive break should be unreachable in a
+            # validated pack — but never spin or silently misresolve.
+            if cur in seen or cur not in cfg.mood_aliases or depth >= MAX_ALIAS_HOPS:
+                return _fallback(mood, "broken_chain", cfg)
+            seen.add(cur)
+            cur = cfg.mood_aliases[cur]
+            depth += 1
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        with mood_alias_resolved_span(
+            mood_name=mood,
+            resolved_to=cur,
+            chain_depth=depth,
+            latency_ms=latency_ms,
+        ):
+            pass
+        return cur
+
+    return _fallback(mood, "broken_chain", cfg)
+
+
+def _fallback(mood: str, reason: str, cfg: AudioConfig) -> str | None:
+    """Emit the failed span + WARNING and return the default mood (or None)."""
+    fallback = DEFAULT_FALLBACK_MOOD if DEFAULT_FALLBACK_MOOD in cfg.mood_tracks else ""
+    with mood_alias_failed_span(
+        mood_name=mood, reason=reason, fallback_mood=fallback
+    ):
+        pass
+    logger.warning(
+        "music mood %r did not resolve to a track (%s); falling back to %r",
+        mood,
+        reason,
+        fallback or "<none available>",
+    )
+    return fallback or None
 
 
 def _materialize_chosen(base_path: Path, chosen: str) -> str:
@@ -84,9 +163,12 @@ class LibraryBackend(AudioBackend):
                 return None
             return _materialize_chosen(self._base_path, chosen_path)
 
-        # Fall back to mood_tracks
+        # Fall back to mood_tracks — via the ADR-033 Pillar 3 alias chain.
         mood_val = cue.mood.value if hasattr(cue.mood, "value") else cue.mood
-        tracks = self._config.mood_tracks.get(mood_val, [])
+        resolved_mood = resolve_mood_to_track_key(mood_val, self._config)
+        if resolved_mood is None:
+            return None
+        tracks = self._config.mood_tracks.get(resolved_mood, [])
         if not tracks:
             return None
         chosen_path = self._rotator.pick(tracks, intensity=cue.intensity, mood=cue.mood)
