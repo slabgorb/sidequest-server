@@ -208,7 +208,21 @@ class PlayerActionHandler:
 
             sd_aside = session._session_data
             snap = sd_aside.snapshot
-            char_name = _resolve_acting_character_name(sd_aside, session._room)
+            # Mirror the normal-path guard (Reviewer RT1): an aside must
+            # degrade like a real action if acting-name resolution raises,
+            # not crash the handler.
+            try:
+                char_name = _resolve_acting_character_name(
+                    sd_aside, session._room
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "session.aside_acting_name_resolve_failed error=%s "
+                    "falling_back_to=%s",
+                    exc,
+                    sd_aside.player_name,
+                )
+                char_name = sd_aside.player_name
             core = next(
                 (c.core for c in snap.characters if c.core.name == char_name),
                 None,

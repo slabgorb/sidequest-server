@@ -9,8 +9,13 @@ consumed" is enforced by this object having no hands.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
+
+_RESOLVER_ERROR_ANSWER = "(The GM didn't catch that — ask again.)"
 
 _VALID_OUTCOMES = {
     "answered",
@@ -85,8 +90,29 @@ class AsideResolver:
             f"RECENT: {read_view.recent_narration}\n\n"
             f"PLAYER ASIDE: {question}"
         )
+        # I/O boundary (spec §6: "Resolver LLM call fails/times out →
+        # outcome=resolver_error + ERROR-level log. No turn is lost.").
+        # The resolver is decoupled from the concrete LLM behind
+        # ``AsideLLM`` (Protocol) — it deliberately does NOT import
+        # anthropic, so it cannot enumerate ``anthropic.APITimeoutError``
+        # etc. The correct decoupled realization is a broad catch scoped
+        # to the *single external call only* (timeout / connection / API
+        # error / any backend failure). This is NOT the "bare except over
+        # the whole method" anti-pattern: resolver-logic errors live in
+        # the second block below, which keeps its precise typed except so
+        # a genuine programming bug still surfaces loudly.
         try:
             raw = await self._llm.complete(system=_SYSTEM_PROMPT, user=user)
+        except Exception:  # noqa: BLE001 — LLM call-failure boundary (spec §6)
+            logger.error(
+                "aside.resolver_error reason=llm_call_failed", exc_info=True
+            )
+            return AsideResolution(
+                answer=_RESOLVER_ERROR_ANSWER,
+                outcome="resolver_error",
+                grounded_on=(),
+            )
+        try:
             data = json.loads(raw)
             outcome = str(data.get("outcome", ""))
             if outcome not in _VALID_OUTCOMES:
@@ -100,8 +126,16 @@ class AsideResolver:
             )
         except (json.JSONDecodeError, ValueError, KeyError, TypeError):
             # No Silent Fallbacks: loud, honest, never invents lore.
+            # Narrow + precise so a real programming bug (e.g.
+            # AttributeError) still propagates instead of masquerading
+            # as a resolver_error (Reviewer RT1 guidance).
+            logger.error(
+                "aside.resolver_error reason=malformed_output raw=%r",
+                (raw or "")[:200],
+                exc_info=True,
+            )
             return AsideResolution(
-                answer="(The GM didn't catch that — ask again.)",
+                answer=_RESOLVER_ERROR_ANSWER,
                 outcome="resolver_error",
                 grounded_on=(),
             )
