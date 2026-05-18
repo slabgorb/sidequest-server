@@ -40,8 +40,10 @@ attitudes"): the roster is the broadcast-layer, always-on prompt. It
 must carry ONLY the coarsened band, never the raw ``disposition.value``
 integer. A 3-point "add a string" story must not regress the firewall.
 
-All tests in this file are expected to FAIL until Dev wires the
-attitude band into ``register_npc_roster_section``.
+``register_npc_roster_section`` emits the band as a
+``[attitude: <band>]`` tag on each stateful-NPC roster line
+(`test_pool_only_members_get_no_attitude_token` is an intentional
+invariant guard — pool-only members never acquire a band).
 """
 
 from __future__ import annotations
