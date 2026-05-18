@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -103,3 +104,61 @@ def test_list_saves_skips_save_with_no_meta_loudly(tmp_path, caplog):
     assert {r["slug"] for r in result} == set()  # skipped, not returned
     assert "forensic_query.no_meta" in caplog.text
     assert "no_meta_save" in caplog.text
+
+
+def _seed_rounds(store):
+    """Round 1: 2 events + 1 narrative. Round 2: 1 event + 1 narrative.
+
+    Uses production timestamp SHAPES (Spike F5.2): narrative_log.created_at
+    is sqlite datetime('now') form 'YYYY-MM-DD HH:MM:SS'; events.created_at
+    is Python .isoformat() 'YYYY-MM-DDTHH:MM:SS.ffffff+00:00'.
+    """
+    conn = store.connection()
+    conn.execute(
+        "INSERT INTO narrative_log (round_number, author, content, tags, created_at) "
+        "VALUES (1, 'narrator', 'You enter the cave.', '[]', '2026-05-18 00:01:00')"
+    )
+    conn.commit()
+    conn.execute(
+        "INSERT INTO events (kind, payload_json, created_at) VALUES "
+        "('NARRATION', ?, '2026-05-18T00:01:01.000000+00:00')",
+        (json.dumps({"type": "NARRATION", "state_delta": {"location": "Cave"}}),),
+    )
+    conn.execute(
+        "INSERT INTO events (kind, payload_json, created_at) VALUES "
+        "('TURN_STATUS', ?, '2026-05-18T00:01:02.000000+00:00')",
+        (json.dumps({"type": "TURN_STATUS", "state_delta": None}),),
+    )
+    conn.execute(
+        "INSERT INTO narrative_log (round_number, author, content, tags, created_at) "
+        "VALUES (2, 'narrator', 'A goblin lunges.', '[]', '2026-05-18 00:02:00')"
+    )
+    conn.execute(
+        "INSERT INTO events (kind, payload_json, created_at) VALUES "
+        "('NARRATION', ?, '2026-05-18T00:02:01.000000+00:00')",
+        (json.dumps({"type": "NARRATION", "state_delta": {"location": "Hall"}}),),
+    )
+    conn.commit()
+
+
+def test_build_timeline_buckets_events_by_round(tmp_path):
+    from sidequest.game.forensic_query import _ro_connect, build_timeline
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "tl_test", genre="g", world="w")
+    _seed_rounds(store)
+    store.close()
+    db = saves / "games" / "tl_test" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        timeline = build_timeline(conn)
+    finally:
+        conn.close()
+
+    assert [t["round"] for t in timeline] == [1, 2]
+    r1, r2 = timeline
+    assert r1["seq_start"] == 1 and r1["seq_end"] == 2
+    assert r1["event_kind_counts"] == {"NARRATION": 1, "TURN_STATUS": 1}
+    assert r1["narrative_authors"] == ["narrator"]
+    assert r2["seq_start"] == 3 and r2["seq_end"] == 3
+    assert r2["event_kind_counts"] == {"NARRATION": 1}
