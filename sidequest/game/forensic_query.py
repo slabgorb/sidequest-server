@@ -7,9 +7,13 @@ checkpoints (respects the WAL/save-clobber hazard).
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from pathlib import Path
+
+from sidequest.game.event_log import EventRow
+from sidequest.game.forensic_fold import fold_state_deltas
 
 logger = logging.getLogger(__name__)
 
@@ -148,3 +152,122 @@ def build_timeline(conn: sqlite3.Connection) -> list[dict]:
             }
         )
     return timeline
+
+
+def _timeline_entry(conn: sqlite3.Connection, round_number: int) -> dict | None:
+    for entry in build_timeline(conn):
+        if entry["round"] == round_number:
+            return entry
+    return None
+
+
+def _safe_json(raw: str | None):
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {"__unparseable__": raw}
+
+
+def _safe_json_list(raw: str | None) -> list:
+    """Read-only display decode for list-typed stored columns. Never raises
+    (forensics inspects corrupt saves); on null/parse-failure/non-list it
+    logs LOUDLY (No-Silent-Fallbacks) and degrades to []."""
+    if raw is None:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("forensic_query.unparseable_json_list raw=%r", raw)
+        return []
+    if not isinstance(parsed, list):
+        logger.warning("forensic_query.unparseable_json_list raw=%r", raw)
+        return []
+    return parsed
+
+
+def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
+    """Assemble every drill-down panel for one round.
+
+    Truth tiers stay separate: ``narrative``/``events``/``projection``/
+    ``scrapbook`` are verbatim DB rows; ``derived`` is the fold of every
+    event up to and including this round's last seq, badged by the UI.
+    Unknown round → empty bundle (lossy/best-effort, never raises).
+    Read-only: caller supplies a read-only connection (D4).
+    """
+    entry = _timeline_entry(conn, round_number)
+
+    narrative = [
+        {"round": r["round_number"], "author": r["author"],
+         "content": r["content"], "tags": _safe_json_list(r["tags"]),
+         "created_at": r["created_at"]}
+        for r in conn.execute(
+            "SELECT round_number, author, content, tags, created_at "
+            "FROM narrative_log WHERE round_number = ? ORDER BY id",
+            (round_number,),
+        ).fetchall()
+    ]
+
+    if entry is None or entry["seq_start"] is None:
+        return {"round": round_number, "narrative": narrative, "events": [],
+                "derived": {}, "projection": [], "scrapbook": [],
+                "unparseable_seqs": []}
+
+    seq_start, seq_end = entry["seq_start"], entry["seq_end"]
+    raw_events = conn.execute(
+        "SELECT seq, kind, payload_json, created_at FROM events "
+        "WHERE seq >= ? AND seq <= ? ORDER BY seq",
+        (seq_start, seq_end),
+    ).fetchall()
+    events = [
+        {"seq": e["seq"], "kind": e["kind"],
+         "payload": _safe_json(e["payload_json"]), "created_at": e["created_at"]}
+        for e in raw_events
+    ]
+
+    fold_rows = conn.execute(
+        "SELECT seq, kind, payload_json, created_at FROM events "
+        "WHERE seq <= ? ORDER BY seq",
+        (seq_end,),
+    ).fetchall()
+    fold = fold_state_deltas(
+        [EventRow(seq=r["seq"], kind=r["kind"],
+                  payload_json=r["payload_json"], created_at=r["created_at"])
+         for r in fold_rows]
+    )
+    derived = {
+        k: {"value": v.value, "source_seqs": list(v.source_seqs)}
+        for k, v in fold.derived.items()
+    }
+
+    projection = [
+        {"event_seq": p["event_seq"], "player_id": p["player_id"],
+         "include": p["include"], "payload": _safe_json(p["payload_json"])}
+        for p in conn.execute(
+            "SELECT event_seq, player_id, include, payload_json "
+            "FROM projection_cache WHERE event_seq >= ? AND event_seq <= ? "
+            "ORDER BY event_seq, player_id",
+            (seq_start, seq_end),
+        ).fetchall()
+    ]
+
+    scrapbook = [
+        {"scene_title": s["scene_title"], "scene_type": s["scene_type"],
+         "location": s["location"], "image_url": s["image_url"],
+         "narrative_excerpt": s["narrative_excerpt"],
+         "world_facts": _safe_json_list(s["world_facts"]),
+         "npcs_present": _safe_json_list(s["npcs_present"]),
+         "render_status": s["render_status"]}
+        for s in conn.execute(
+            "SELECT scene_title, scene_type, location, image_url, "
+            "narrative_excerpt, world_facts, npcs_present, render_status "
+            "FROM scrapbook_entries WHERE turn_id = ? ORDER BY id",
+            (round_number,),
+        ).fetchall()
+    ]
+
+    return {"round": round_number, "narrative": narrative, "events": events,
+            "derived": derived, "projection": projection,
+            "scrapbook": scrapbook,
+            "unparseable_seqs": list(fold.unparseable_seqs)}

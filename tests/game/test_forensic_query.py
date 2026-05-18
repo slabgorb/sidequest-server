@@ -162,3 +162,102 @@ def test_build_timeline_buckets_events_by_round(tmp_path):
     assert r1["narrative_authors"] == ["narrator"]
     assert r2["seq_start"] == 3 and r2["seq_end"] == 3
     assert r2["event_kind_counts"] == {"NARRATION": 1}
+
+
+def test_build_turn_bundle_assembles_all_panels(tmp_path):
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "bundle_test", genre="g", world="w")
+    _seed_rounds(store)
+    c = store.connection()
+    c.execute(
+        "INSERT INTO projection_cache (event_seq, player_id, include, payload_json) "
+        "VALUES (1, 'player1', 1, ?)",
+        (json.dumps({"type": "NARRATION", "text": "You enter the cave."}),),
+    )
+    c.execute(
+        "INSERT INTO scrapbook_entries "
+        "(turn_id, scene_title, scene_type, location, image_url, narrative_excerpt, "
+        " world_facts, npcs_present, render_status) "
+        "VALUES (1, 'The Cave Mouth', 'exploration', 'Cave', NULL, 'You enter.', "
+        " '[]', '[]', 'rendered')"
+    )
+    c.commit()
+    store.close()
+    db = saves / "games" / "bundle_test" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        bundle = build_turn_bundle(conn, 1)
+    finally:
+        conn.close()
+
+    assert bundle["round"] == 1
+    assert [n["content"] for n in bundle["narrative"]] == ["You enter the cave."]
+    assert [e["seq"] for e in bundle["events"]] == [1, 2]
+    assert bundle["events"][0]["kind"] == "NARRATION"
+    assert bundle["derived"]["location"]["value"] == "Cave"
+    assert bundle["derived"]["location"]["source_seqs"] == [1]
+    assert bundle["unparseable_seqs"] == []
+    assert bundle["projection"][0]["player_id"] == "player1"
+    assert bundle["projection"][0]["include"] == 1
+    assert bundle["scrapbook"][0]["scene_title"] == "The Cave Mouth"
+
+
+def test_build_turn_bundle_unknown_round_is_empty_not_error(tmp_path):
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "empty_round", genre="g", world="w")
+    _seed_rounds(store)
+    store.close()
+    db = saves / "games" / "empty_round" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        bundle = build_turn_bundle(conn, 999)
+    finally:
+        conn.close()
+    assert bundle["round"] == 999
+    assert bundle["narrative"] == []
+    assert bundle["events"] == []
+    assert bundle["derived"] == {}
+    assert bundle["projection"] == []
+    assert bundle["scrapbook"] == []
+    assert bundle["unparseable_seqs"] == []
+
+
+def test_build_turn_bundle_never_raises_on_corrupt_stored_json(tmp_path, caplog):
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "corrupt", genre="g", world="w")
+    c = store.connection()
+    c.execute(
+        "INSERT INTO narrative_log (round_number, author, content, tags, created_at) "
+        "VALUES (1, 'narrator', 'hi', '{not json', '2026-05-18 00:01:00')"
+    )
+    c.execute(
+        "INSERT INTO events (kind, payload_json, created_at) VALUES "
+        "('NARRATION', '{bad json', '2026-05-18T00:01:01.000000+00:00')"
+    )
+    c.execute(
+        "INSERT INTO scrapbook_entries "
+        "(turn_id, scene_title, scene_type, location, image_url, narrative_excerpt, "
+        " world_facts, npcs_present, render_status) "
+        "VALUES (1, 'S', 't', 'L', NULL, 'x', '{bad', '[]', 'rendered')"
+    )
+    c.commit()
+    store.close()
+    db = saves / "games" / "corrupt" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        with caplog.at_level("WARNING"):
+            bundle = build_turn_bundle(conn, 1)  # must NOT raise
+    finally:
+        conn.close()
+
+    assert bundle["events"][0]["payload"] == {"__unparseable__": "{bad json"}
+    assert 1 in bundle["unparseable_seqs"]
+    assert bundle["narrative"][0]["tags"] == []
+    assert bundle["scrapbook"][0]["world_facts"] == []
+    assert "forensic_query.unparseable_json_list" in caplog.text
