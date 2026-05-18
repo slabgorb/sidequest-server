@@ -96,6 +96,31 @@ def test_possessive_mid_sentence_swaps():
     assert count >= 1
 
 
+def test_possessive_after_paragraph_break_capitalizes():
+    """Regression: 2026-05-18 MP playtest. Narrator returns prose with a
+    paragraph break, and the new paragraph's first sentence starts with
+    a possessive name. The leading capital must be preserved after the
+    swap. Before the fix, `\\n\\n` did not satisfy the `.!?` check in
+    `_is_sentence_start_in`, so "Laverne's hand" became lowercase
+    "your hand"."""
+    text = (
+        "The shaft yawns dark as a swallowed bell —\n\n"
+        "Laverne's hand finds the rope, cold and slick with shaft-damp."
+    )
+    out, _ = swap_to_second_person(text, target_name="Laverne", pronouns="she/her")
+    assert "Your hand finds the rope" in out
+    assert "your hand finds the rope" not in out
+
+
+def test_possessive_after_em_dash_break_capitalizes():
+    """Paragraph break preceded by an em-dash (a common narrator beat
+    closer) must still be recognized as a sentence start."""
+    text = "Old timber groans —\n\nCarl's grip tightens on the handle."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    assert "Your grip tightens" in out
+    assert "your grip tightens" not in out
+
+
 # ---------------------------------------------------------------------------
 # Reflexive
 # ---------------------------------------------------------------------------

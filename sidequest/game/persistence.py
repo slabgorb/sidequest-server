@@ -248,12 +248,17 @@ class SerializationError(PersistError):
 def _configure_connection(conn: sqlite3.Connection) -> None:
     """Configure a SQLite connection with standard PRAGMAs.
 
-    Sets WAL journal mode, enables foreign keys, and configures row factory.
-    Called from both __init__ and open() to prevent PRAGMA drift.
+    Sets WAL journal mode, enables foreign keys, configures row factory,
+    and primes a generous busy_timeout so the telemetry sink (which fires
+    from any thread that calls ``publish_event``) waits for the writer
+    slot instead of failing fast on cross-connection contention.
+    (2026-05-18 MP playtest: census/trope_census telemetry dropped every
+    turn with ``sqlite3.OperationalError: database is locked``.)
     """
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +275,7 @@ class SqliteStore:
 
     def __init__(self, conn: sqlite3.Connection | Path) -> None:
         if isinstance(conn, Path):
-            c = sqlite3.connect(str(conn))
+            c = sqlite3.connect(str(conn), check_same_thread=False)
             _configure_connection(c)
             self._conn = c
             self._path: Path | None = conn
@@ -282,14 +287,22 @@ class SqliteStore:
     @classmethod
     def open_in_memory(cls) -> SqliteStore:
         """Open an in-memory store (for testing)."""
-        conn = sqlite3.connect(":memory:")
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return cls(conn)
 
     @classmethod
     def open(cls, path: str) -> SqliteStore:
-        """Open a file-backed store."""
-        conn = sqlite3.connect(path)
+        """Open a file-backed store.
+
+        ``check_same_thread=False`` is intentional: the watcher hub's
+        telemetry sink (``_persist_turn_telemetry``) is invoked from any
+        thread that calls ``publish_event`` — narrator workers, the
+        renderer, the daemon client. Per-write serialization is enforced
+        at the watcher layer with a module-level lock; without that lock
+        this flag would not be safe.
+        """
+        conn = sqlite3.connect(path, check_same_thread=False)
         _configure_connection(conn)
         store = cls(conn)
         store._path = Path(path)

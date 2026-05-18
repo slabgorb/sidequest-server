@@ -470,17 +470,38 @@ def _rewrite_sentence(
 
 def _is_sentence_start_in(text: str, idx: int) -> bool:
     """Return True if position ``idx`` in ``text`` is the start of a
-    sentence (beginning of string, or preceded by ``.!?`` after
-    skipping whitespace).
+    sentence.
+
+    A position counts as a sentence start when any of these hold:
+
+    * It is the beginning of the string.
+    * The preceding non-space char is terminal punctuation (``.!?``) or
+      a Unicode ellipsis (``…``).
+    * A paragraph break (``\\n\\n`` or more) sits between ``idx`` and
+      the prior content. Narrator prose frequently closes a beat with an
+      em-dash, en-dash, or colon and then opens the next paragraph with
+      a name — the paragraph break alone is enough to make the next
+      capital-letter a sentence start, regardless of the prior char.
+      (2026-05-18 MP playtest: "Laverne's hand" rendered as lowercase
+      "your hand" because an em-dash before ``\\n\\n`` defeated the
+      ``.!?`` check.)
     """
     if idx == 0:
         return True
+    # Paragraph break — if the prior content contains a blank line and
+    # everything between that line and idx is whitespace, we are at the
+    # start of a new paragraph (and therefore a new sentence).
+    prefix = text[:idx]
+    if "\n\n" in prefix:
+        tail_after_break = prefix.rsplit("\n\n", 1)[-1]
+        if tail_after_break.strip() == "":
+            return True
     j = idx - 1
     while j >= 0 and text[j].isspace():
         j -= 1
     if j < 0:
         return True
-    return text[j] in ".!?"
+    return text[j] in ".!?…"
 
 
 def swap_to_second_person(
