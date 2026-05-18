@@ -125,3 +125,75 @@ def build_trope_census(snapshot, round_number: int) -> dict:
         ),
         "total_beats_fired": getattr(snapshot, "total_beats_fired", None),
     }
+
+
+def emit_mechanical_census(room, snapshot) -> None:
+    """Emit one component='mechanical' census per SEATED PC + one session
+    trope_census, via Phase 1's publish_event sink. MUST be called from
+    inside emit_event's open C2 `with conn:` block (R1) so each row rides
+    the turn txn (event_seq attributed, atomic with events).
+
+    Sealed rounds (ADR-036): every seated PC every round, keyed by
+    player_id, no acting-player concept. Fully wrapped: ANY failure
+    loud-logs and returns — telemetry never crashes a turn. Per-PC build
+    failure is isolated (one bad PC never drops the others or the trope
+    row). The census fields NEVER set field='encounter' (so the adjacent
+    _maybe_persist_encounter_row hazard cannot fire on a census)."""
+    # Imported here (not module top) to avoid a telemetry<->game import
+    # cycle; publish_event is the Phase-1 sink entrypoint.
+    from sidequest.telemetry.watcher_hub import publish_event
+
+    try:
+        round_number = int(
+            getattr(getattr(snapshot, "turn_manager", None), "interaction", 0)
+        )
+    except (TypeError, ValueError):
+        round_number = 0
+    try:
+        player_seats = dict(getattr(snapshot, "player_seats", None) or {})
+        by_name = {
+            getattr(getattr(c, "core", None), "name", None): c
+            for c in (getattr(snapshot, "characters", None) or [])
+            if getattr(c, "core", None) is not None
+        }
+        locations = dict(getattr(snapshot, "character_locations", None) or {})
+        seated = list(room.playing_player_ids()) if room is not None else []
+    except Exception:  # noqa: BLE001 — telemetry must never crash a turn
+        logger.warning(
+            "mechanical_census.roster_resolution_failed", exc_info=True
+        )
+        return
+
+    if not seated:
+        # No seated players → nothing to photograph; trope census is also
+        # skipped (no active turn, no recipients to correlate it with).
+        return
+
+    for pid in seated:
+        name = player_seats.get(pid)
+        character = by_name.get(name)
+        if character is None:
+            # seated but no committed PC yet (CHARGEN) -> honest skip,
+            # not a zeroed/fabricated body (No-Silent-Fallback).
+            continue
+        try:
+            census = build_pc_census(
+                character=character,
+                player_id=pid,
+                character_name=name,
+                seat=seat_index(room, pid),
+                round_number=round_number,
+                location=locations.get(name),
+            )
+            publish_event("census", census, component="mechanical")
+        except Exception:  # noqa: BLE001 — isolate one PC's failure
+            logger.warning(
+                "mechanical_census.build_failed pc=%s", pid, exc_info=True
+            )
+            continue
+
+    try:
+        trope = build_trope_census(snapshot, round_number)
+        publish_event("trope_census", trope, component="mechanical")
+    except Exception:  # noqa: BLE001
+        logger.warning("mechanical_census.trope_build_failed", exc_info=True)

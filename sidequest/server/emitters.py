@@ -277,6 +277,20 @@ def emit_event(
             row = event_log.append_in_transaction(kind=kind, payload_json=payload_json, conn=conn)
             seq = row.seq
 
+            if kind == "NARRATION" and event_log is not None:
+                # Phase 2: photograph every seated PC's mechanical state
+                # while the C2 turn txn is open (R1) so it rides the turn.
+                # Gated to the single canonical NARRATION emit so it fires
+                # once per turn, not per segment/confrontation frame.
+                from sidequest.game.mechanical_census import (
+                    emit_mechanical_census,
+                )
+
+                emit_mechanical_census(
+                    room,
+                    handler._session_data.snapshot if handler._session_data else None,
+                )
+
             if room is not None and projection_filter is not None:
                 from sidequest.server import views
 
