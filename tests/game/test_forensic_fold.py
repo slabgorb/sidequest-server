@@ -43,3 +43,27 @@ def test_state_delta_fields_match_protocol_model():
     from sidequest.protocol.models import StateDelta
 
     assert set(STATE_DELTA_FIELDS) == set(StateDelta.model_fields)
+
+
+def test_last_write_wins_with_ordered_provenance():
+    events = [
+        _ev(5, {"type": "NARRATION", "state_delta": {"location": "Cave"}}),
+        _ev(2, {"type": "NARRATION", "state_delta": {"location": "Gate"}}),
+        _ev(9, {"state_delta": {"location": "Hall"}}, kind="TURN_STATUS"),
+    ]
+    result = fold_state_deltas(events)
+    loc = result.derived["location"]
+    assert loc.value == "Hall"  # highest seq wins (sorted internally)
+    assert loc.source_seqs == (2, 5, 9)  # every contributing seq, in order
+
+
+def test_independent_fields_tracked_separately():
+    events = [
+        _ev(1, {"type": "NARRATION", "state_delta": {"location": "Cave"}}),
+        _ev(2, {"type": "NARRATION", "state_delta": {"quests": {"q1": "open"}}}),
+    ]
+    result = fold_state_deltas(events)
+    assert result.derived["location"].source_seqs == (1,)
+    assert result.derived["quests"].value == {"q1": "open"}
+    assert result.derived["quests"].source_seqs == (2,)
+    assert "characters" not in result.derived  # absent, not fabricated
