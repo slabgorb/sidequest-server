@@ -464,10 +464,13 @@ def test_materializer_exports_reachable_from_dungeon_package() -> None:
 
 
 def test_dungeon_materialize_spans_registered_and_routed() -> None:
-    """Every dungeon.materialize.* and frontier.expand constant must be in
-    SPAN_ROUTES — the routing-completeness gate must not fail on our additions."""
+    """Every dungeon.materialize.*, dungeon.curate.* (ADR-106 Amendment A),
+    and frontier.expand constant must be in SPAN_ROUTES — the
+    routing-completeness gate must not fail on our additions."""
     from sidequest.telemetry.spans import SPAN_ROUTES
     from sidequest.telemetry.spans.dungeon_materialize import (
+        SPAN_DUNGEON_CURATE_DEGRADED,
+        SPAN_DUNGEON_CURATE_PARSE_FAILED,
         SPAN_DUNGEON_MATERIALIZE,
         SPAN_DUNGEON_MATERIALIZE_ATTACH,
         SPAN_DUNGEON_MATERIALIZE_COMMIT,
@@ -485,6 +488,10 @@ def test_dungeon_materialize_spans_registered_and_routed() -> None:
         SPAN_DUNGEON_MATERIALIZE_ATTACH,
         SPAN_DUNGEON_MATERIALIZE_COMMIT,
         SPAN_FRONTIER_EXPAND,
+        # ADR-106 Amendment A (story 50-26) — clause-12 routed lie-detector
+        # spans for the curate-stage robustness contract.
+        SPAN_DUNGEON_CURATE_PARSE_FAILED,
+        SPAN_DUNGEON_CURATE_DEGRADED,
     ):
         assert name in SPAN_ROUTES, (
             f"{name!r} not in SPAN_ROUTES — routing-completeness gate will fail"
