@@ -210,9 +210,7 @@ def test_roster_rejects_fictional_five_tier_labels() -> None:
     correct lowercase band must be present (fails now) AND none of the
     fictional/capitalised labels may appear (stays locked post-impl)."""
     content = _roster_content(npcs=[_npc("Bram", disposition=5)])
-    assert "neutral" in content, (
-        "correct lowercase band 'neutral' absent — 50-12 not yet wired."
-    )
+    assert "neutral" in content, "correct lowercase band 'neutral' absent — 50-12 not yet wired."
     for fictional in ("Guarded", "Trusting", "Allied", "Hostile", "Neutral", "Friendly"):
         assert fictional not in content, (
             f"roster emitted fictional/ capitalised label {fictional!r}; the "
