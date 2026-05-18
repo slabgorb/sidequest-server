@@ -121,3 +121,5 @@ def test_forensics_route_is_wired_and_serves_html(tmp_path):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Save Forensics" in resp.text
+    assert "/api/debug/saves" in resp.text  # the page actually calls the API
+    assert "NOT a stored snapshot" in resp.text  # honesty contract visible
