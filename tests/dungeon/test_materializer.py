@@ -2318,6 +2318,55 @@ class TestStageCurateRobustness:
         finally:
             _spans_mod.tracer = original_tracer_fn
 
+    async def test_degrade_logs_at_error_level_not_swallowed_silently(
+        self, caplog: Any
+    ) -> None:
+        """RULE ENFORCEMENT — lang-review/python.md #1 (silent exception
+        swallowing) + #42 (error paths MUST log error/warning) + CLAUDE.md
+        No-Silent-Fallbacks. Layer 2 is an error path: it MUST emit an
+        ERROR-level log, not a silent `except: pass`. Catches a Dev who
+        degrades quietly."""
+        import logging
+
+        import sidequest.dungeon.materializer as _mat
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_curate_span,
+        )
+
+        bundle = _real_cookbook_bundle()
+        request, palette, expansion, fill_result, _look = _curate_inputs(
+            algorithm="prim", expansion_id=1, depth_score=0.5
+        )
+        _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with (
+                caplog.at_level(logging.ERROR),
+                dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span,
+            ):
+                await _mat._stage_curate(
+                    request,
+                    bundle=bundle,
+                    palette=palette,
+                    expansion=expansion,
+                    fill_result=fill_result,
+                    is_first_band_entry=True,
+                    claude_client=_truncating_sdk_client(),
+                    span=span,
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_records, (
+            "Layer-2 degrade MUST log at ERROR (No-Silent-Fallbacks / "
+            "lang-review #1+#42) — a silent degrade is the exact trap "
+            "this story exists to close"
+        )
+        assert any(
+            "curat" in r.getMessage().lower() or "degrad" in r.getMessage().lower()
+            for r in error_records
+        ), "the ERROR log must name the curate degrade, not be generic noise"
+
     async def test_truncated_verdict_completes_through_real_materialize_chain(
         self,
     ) -> None:
