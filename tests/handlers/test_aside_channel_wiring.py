@@ -22,7 +22,12 @@ builds the real objects from scratch instead — see its module docstring.
 import pytest
 
 from sidequest.protocol.enums import MessageType
-from tests.handlers._harness import fake_aside_llm, make_mp_room, submit
+from tests.handlers._harness import (
+    fake_aside_llm,
+    make_mp_room,
+    raising_aside_llm,
+    submit,
+)
 
 
 @pytest.mark.asyncio
@@ -98,5 +103,39 @@ async def test_empty_aside_after_combat_strip_is_rejected_no_resolver_no_span():
     assert room.narrative_log_count() == nlog_before
     assert room.turn_round() == turn_before  # unchanged (no advance)
     assert not room.barrier_fired()
+
+    room.teardown()
+
+
+@pytest.mark.asyncio
+async def test_aside_llm_failure_does_not_crash_handler_no_turn_lost():
+    """Reviewer HIGH + spec §6 end-to-end: an LLM call failure/timeout must
+    NOT propagate out of the real PLAYER_ACTION handler. The aside degrades
+    to a graceful resolver_error answer, the span still fires, and — the
+    §6 promise — no turn is lost (the asker still owes their real action).
+
+    RED: today the raise escapes `AsideResolver.resolve()` and `submit()`
+    raises. Green once Dev catches the call-failure classes.
+    """
+    room = make_mp_room(
+        players=["Carl", "Donut", "Katia"],
+        llm_aside=raising_aside_llm(TimeoutError("anthropic timed out")),
+    )
+    nlog_before = room.narrative_log_count()
+    turn_before = room.turn_round()
+
+    # Must not raise — the handler has to contain the LLM failure.
+    out = await submit(room, "Katia", "can I wade or must I be carried?", aside=True)
+
+    # Graceful degradation: a table-visible ASIDE_ANSWER carrying the loud
+    # "ask again" resolver_error answer (NOT a crash, NOT silent).
+    assert out and out[0].type == MessageType.ASIDE_ANSWER
+    assert out[0].payload.answer  # non-empty loud message
+    assert room.spans_named("aside.resolve")  # the lie-detector still fires
+    # §6: no turn lost — world/turn untouched, barrier still owed.
+    assert room.narrative_log_count() == nlog_before
+    assert room.turn_round() == turn_before
+    assert not room.barrier_fired()
+    assert "Katia" in room.pending_player_ids()  # still owes a real action
 
     room.teardown()

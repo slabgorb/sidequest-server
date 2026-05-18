@@ -70,6 +70,23 @@ def fake_aside_llm(payload: str) -> _FakeAsideLlm:
     return _FakeAsideLlm(payload)
 
 
+class _RaisingAsideLlm:
+    """An ``AsideLLM`` whose ``complete()`` raises — simulates an LLM
+    call failure/timeout. Spec §6: the handler must NOT crash; the aside
+    degrades to a graceful resolver_error answer and no turn is lost."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def complete(self, *, system: str, user: str) -> str:
+        raise self._exc
+
+
+def raising_aside_llm(exc: BaseException | None = None) -> _RaisingAsideLlm:
+    """An ``AsideLLM`` that fails the call (default: TimeoutError)."""
+    return _RaisingAsideLlm(exc or TimeoutError("aside LLM timed out"))
+
+
 class _RecordingSpan:
     def __init__(self) -> None:
         self.attributes: dict[str, Any] = {}
