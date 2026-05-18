@@ -236,7 +236,13 @@ class AudioInterpreter:
         cues: list[AudioCue] = []
 
         # --- Music / mood cue (at most one) ---
-        available_moods = set(audio_config.mood_tracks.keys())
+        # ADR-033 Pillar 3: an alias-only genre mood (declared in
+        # mood_aliases but not mood_tracks) is still classifiable from
+        # prose — the LibraryBackend resolves it through the alias chain
+        # at track-selection time.
+        available_moods = set(audio_config.mood_tracks.keys()) | set(
+            audio_config.mood_aliases.keys()
+        )
         best_mood: str | None = None
         best_score = 0
         best_intensity = 0.5

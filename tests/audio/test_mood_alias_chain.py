@@ -18,6 +18,17 @@ universal music fallback mood (interpreter.py:267-269 hardcodes it when no
 keyword matches). These tests reuse that existing convention as the
 "configured default mood" of AC-1/AC-5 rather than inventing a new config
 field. See the TEA deviation note in the session file.
+
+AC-2/AC-1 reconciliation (Dev): the original RED suite asserted a *declared*
+broken/cyclic alias both fails at LOAD (AC-2) and falls back at RUNTIME
+(AC-1/3/5) — mutually unsatisfiable. AC-2 (story context, higher authority)
+governs: a declared alias chain that does not terminate in a mood_tracks key
+within 5 hops is rejected loudly at pack load. The only mood that reaches
+runtime unresolved is therefore an *undeclared* unknown string (novel
+narrator/encounter mood), which triggers the failed-span + WARNING + default
+fallback. ``loop_detected`` / ``depth_exceeded`` are surfaced in the loud
+LOAD error, not a runtime span. See the Dev deviation + blocking Conflict
+finding in the session file.
 """
 
 from __future__ import annotations
@@ -141,53 +152,58 @@ def test_two_hop_alias_chain_resolves(tmp_path: Path) -> None:
     assert resolved.endswith("tension_a.ogg")
 
 
-def test_broken_alias_falls_back_to_default_not_silent_none(tmp_path: Path) -> None:
-    """AC-1/AC-5: alias target does not exist -> fall back to the configured
-    default mood ('exploration'), NEVER a silent None."""
+def test_undeclared_unknown_mood_falls_back_to_default_not_silent_none(
+    tmp_path: Path,
+) -> None:
+    """AC-1/AC-5: a mood that is neither a mood_track nor a *declared* alias
+    (a novel string from the narrator/encounter) falls back to the
+    configured default mood ('exploration'), NEVER a silent None — even when
+    an unrelated valid alias map is present.
+
+    Reconciled from the original 'broken declared alias -> runtime fallback'
+    shape: AC-2 makes a *declared* broken alias a LOAD failure, so the only
+    mood that reaches runtime unresolved is an undeclared one. See the Dev
+    deviation + blocking Conflict finding in the session file.
+    """
     cfg = _audio_config(
         mood_tracks={"exploration": ["explore.ogg"], "tension": ["tension_a.ogg"]},
-        mood_aliases={"court": "nonexistent_mood"},
+        mood_aliases={"court": "tension"},  # valid, unrelated to the cue
     )
-    resolved = _backend(cfg, tmp_path).resolve(_music_cue("court"))
-    assert resolved is not None, "broken alias must NOT silently resolve to None"
+    resolved = _backend(cfg, tmp_path).resolve(_music_cue("uncharted_mood"))
+    assert resolved is not None, "unknown mood must NOT silently resolve to None"
     assert resolved.endswith("explore.ogg"), (
-        "broken alias must fall back to the default 'exploration' track"
+        "unknown mood must fall back to the default 'exploration' track"
     )
 
 
-def test_alias_depth_is_bounded_at_five_hops(tmp_path: Path) -> None:
-    """AC-1: a chain longer than the 5-hop guard must fail to the default,
-    not resolve and not recurse unboundedly."""
-    cfg = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"], "tension": ["tension_a.ogg"]},
-        mood_aliases={
-            "m0": "m1",
-            "m1": "m2",
-            "m2": "m3",
-            "m3": "m4",
-            "m4": "m5",
-            "m5": "m6",
-            "m6": "tension",
-        },
-    )
-    resolved = _backend(cfg, tmp_path).resolve(_music_cue("m0"))
-    assert resolved is not None
-    assert resolved.endswith("explore.ogg"), (
-        "a 7-hop chain exceeds the 5-hop guard and must fall back to default, "
-        f"not resolve through to tension; got {resolved!r}"
-    )
+def test_overdeep_declared_chain_rejected_at_load() -> None:
+    """AC-2 (reconciled): a chain longer than the 5-hop guard is a broken
+    pack — rejected loudly at LOAD (depth_exceeded), not silently walked at
+    runtime."""
+    with pytest.raises(Exception, match=r"(?i)alias|depth|hop") as exc:
+        _audio_config(
+            mood_tracks={"exploration": ["explore.ogg"], "tension": ["tension_a.ogg"]},
+            mood_aliases={
+                "m0": "m1",
+                "m1": "m2",
+                "m2": "m3",
+                "m3": "m4",
+                "m4": "m5",
+                "m5": "m6",
+                "m6": "tension",
+            },
+        )
+    assert "m0" in str(exc.value)
 
 
-def test_circular_alias_terminates_and_falls_back(tmp_path: Path) -> None:
-    """AC-1: m1 -> m2 -> m1 must be loop-detected (test must terminate),
-    then fall back to the default mood."""
-    cfg = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"]},
-        mood_aliases={"m1": "m2", "m2": "m1"},
-    )
-    resolved = _backend(cfg, tmp_path).resolve(_music_cue("m1"))
-    assert resolved is not None
-    assert resolved.endswith("explore.ogg")
+def test_circular_declared_chain_rejected_at_load_m1_m2() -> None:
+    """AC-2 (reconciled): m1 -> m2 -> m1 is a broken pack — rejected at LOAD
+    (loop_detected). Distinct fixture from the a/b cycle test for breadth."""
+    with pytest.raises(Exception, match=r"(?i)alias|cycle|circular|loop"):
+        _audio_config(
+            mood_tracks={"exploration": ["explore.ogg"]},
+            mood_aliases={"m1": "m2", "m2": "m1"},
+        )
 
 
 # --------------------------------------------------------------------------
@@ -262,13 +278,15 @@ def test_successful_alias_resolution_emits_resolved_span(
     assert attrs.get("chain_depth") == 2
 
 
-def test_broken_chain_emits_failed_span_with_reason(
+def test_unresolved_mood_emits_failed_span_with_reason(
     tmp_path: Path, otel_capture
 ) -> None:
-    """AC-3: music.mood_alias_failed with reason and fallback_mood."""
+    """AC-3: music.mood_alias_failed with reason=broken_chain and
+    fallback_mood for an undeclared unknown mood (the only kind that
+    reaches runtime unresolved after AC-2 load validation)."""
     cfg = _audio_config(
         mood_tracks={"exploration": ["explore.ogg"]},
-        mood_aliases={"court": "nonexistent_mood"},
+        mood_aliases={},
     )
     _backend(cfg, tmp_path).resolve(_music_cue("court"))
 
@@ -280,38 +298,35 @@ def test_broken_chain_emits_failed_span_with_reason(
     assert attrs.get("fallback_mood") == "exploration"
 
 
-def test_loop_detected_failed_span_reason(tmp_path: Path, otel_capture) -> None:
-    """AC-3: circular chain emits failed span with reason=loop_detected."""
-    cfg = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"]},
-        mood_aliases={"m1": "m2", "m2": "m1"},
-    )
-    _backend(cfg, tmp_path).resolve(_music_cue("m1"))
+def test_loop_detected_classified_in_load_error() -> None:
+    """AC-3 (reconciled): the 'loop_detected' classification is surfaced
+    loudly in the LOAD-time pack error (AC-2 makes a declared cycle
+    unloadable, so it never reaches a runtime span)."""
+    with pytest.raises(Exception, match=r"(?i)loop|cycle") as exc:
+        _audio_config(
+            mood_tracks={"exploration": ["explore.ogg"]},
+            mood_aliases={"m1": "m2", "m2": "m1"},
+        )
+    assert "loop_detected" in str(exc.value)
 
-    spans = _alias_spans(otel_capture, "music.mood_alias_failed")
-    assert len(spans) == 1
-    assert dict(spans[0].attributes or {}).get("reason") == "loop_detected"
 
-
-def test_depth_exceeded_failed_span_reason(tmp_path: Path, otel_capture) -> None:
-    """AC-3: over-long chain emits failed span with reason=depth_exceeded."""
-    cfg = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"], "tension": ["t.ogg"]},
-        mood_aliases={
-            "m0": "m1",
-            "m1": "m2",
-            "m2": "m3",
-            "m3": "m4",
-            "m4": "m5",
-            "m5": "m6",
-            "m6": "tension",
-        },
-    )
-    _backend(cfg, tmp_path).resolve(_music_cue("m0"))
-
-    spans = _alias_spans(otel_capture, "music.mood_alias_failed")
-    assert len(spans) == 1
-    assert dict(spans[0].attributes or {}).get("reason") == "depth_exceeded"
+def test_depth_exceeded_classified_in_load_error() -> None:
+    """AC-3 (reconciled): the 'depth_exceeded' classification is surfaced
+    loudly in the LOAD-time pack error."""
+    with pytest.raises(Exception, match=r"(?i)depth|hop") as exc:
+        _audio_config(
+            mood_tracks={"exploration": ["explore.ogg"], "tension": ["t.ogg"]},
+            mood_aliases={
+                "m0": "m1",
+                "m1": "m2",
+                "m2": "m3",
+                "m3": "m4",
+                "m4": "m5",
+                "m5": "m6",
+                "m6": "tension",
+            },
+        )
+    assert "depth_exceeded" in str(exc.value)
 
 
 # --------------------------------------------------------------------------
@@ -406,49 +421,49 @@ def test_unknown_mood_no_alias_no_silent_none(tmp_path: Path, otel_capture) -> N
 
 
 @pytest.mark.parametrize(
-    ("aliases", "cue_mood", "expected_reason"),
+    ("aliases", "cue_mood"),
     [
-        ({"court": "nope"}, "court", "broken_chain"),
-        ({"m1": "m2", "m2": "m1"}, "m1", "loop_detected"),
-        ({}, "ghost", "broken_chain"),
+        ({}, "court"),
+        ({}, "ghost"),
+        ({"court": "tension"}, "uncharted"),  # valid alias map, unrelated cue
     ],
 )
-def test_every_failure_path_is_observable(
-    tmp_path: Path, otel_capture, aliases, cue_mood, expected_reason
+def test_every_runtime_failure_path_is_observable(
+    tmp_path: Path, otel_capture, aliases, cue_mood
 ) -> None:
-    """AC-5: parametrized — distinct failure causes each emit a failed span
-    with a distinguishing reason (not all the same code path)."""
+    """AC-5: every runtime fallback (an undeclared unknown mood — the only
+    kind that survives AC-2 load validation) emits exactly one failed span
+    with reason=broken_chain. No silent fallback path exists."""
     cfg = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"]},
+        mood_tracks={"exploration": ["explore.ogg"], "tension": ["t.ogg"]},
         mood_aliases=aliases,
     )
     _backend(cfg, tmp_path).resolve(_music_cue(cue_mood))
     spans = _alias_spans(otel_capture, "music.mood_alias_failed")
     assert len(spans) == 1
-    assert dict(spans[0].attributes or {}).get("reason") == expected_reason
+    assert dict(spans[0].attributes or {}).get("reason") == "broken_chain"
 
 
-def test_broken_alias_logs_at_warning_level(
+def test_unresolved_mood_logs_at_warning_level(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Rule #4 (logging level correctness): a broken alias is a config
-    problem -> WARNING. A clean direct hit must NOT log a warning."""
+    """Rule #4 (logging level correctness): an unresolved mood is a
+    config/drift problem -> WARNING. A clean direct hit must NOT log."""
     import logging
 
-    cfg_broken = _audio_config(
-        mood_tracks={"exploration": ["explore.ogg"]},
-        mood_aliases={"court": "nope"},
+    cfg = _audio_config(
+        mood_tracks={"exploration": ["explore.ogg"], "tension": ["t.ogg"]},
+        mood_aliases={},
     )
     with caplog.at_level(logging.WARNING):
-        _backend(cfg_broken, tmp_path).resolve(_music_cue("court"))
+        _backend(cfg, tmp_path).resolve(_music_cue("court"))
     assert any(
         rec.levelno >= logging.WARNING for rec in caplog.records
-    ), "broken alias must log at WARNING (config drift, not silent)"
+    ), "unresolved mood must log at WARNING (drift, not silent)"
 
     caplog.clear()
-    cfg_ok = _audio_config(mood_tracks={"tension": ["t.ogg"]})
     with caplog.at_level(logging.WARNING):
-        _backend(cfg_ok, tmp_path).resolve(_music_cue("tension"))
+        _backend(cfg, tmp_path).resolve(_music_cue("tension"))
     assert not any(
         rec.levelno >= logging.WARNING for rec in caplog.records
     ), "a clean direct hit must not emit a warning"
