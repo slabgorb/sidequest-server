@@ -103,6 +103,7 @@ def test_turn_bundle_unknown_slug_is_empty_not_500(tmp_path):
         "projection": [],
         "scrapbook": [],
         "unparseable_seqs": [],
+        "telemetry": {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []},
     }
 
 
@@ -123,6 +124,7 @@ def test_turn_bundle_corrupt_save_is_empty_not_500(tmp_path):
         "projection": [],
         "scrapbook": [],
         "unparseable_seqs": [],
+        "telemetry": {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []},
     }
 
 
@@ -151,7 +153,10 @@ def test_forensics_route_is_wired_and_serves_html(tmp_path):
     assert resp.headers["content-type"].startswith("text/html")
     assert "Save Forensics" in resp.text
     assert "/api/debug/saves" in resp.text  # the page actually calls the API
-    assert "NOT a stored snapshot" in resp.text  # honesty contract visible
+    assert "NOT this round" in resp.text  # honesty contract visible
+    assert "decision telemetry (this round)" in resp.text  # the new lane label
+    assert "save predates the substrate" in resp.text  # honest-empty contract visible
+    assert "signals</span>" in resp.text  # decision-telemetry lane meta count shape
 
 
 def test_snapshot_endpoint_returns_persisted_state(tmp_path):

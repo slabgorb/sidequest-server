@@ -294,3 +294,232 @@ def test_build_turn_bundle_never_raises_on_corrupt_stored_json(tmp_path, caplog)
     assert bundle["narrative"][0]["tags"] == []
     assert bundle["scrapbook"][0]["world_facts"] == []
     assert "forensic_query.unparseable_json_list" in caplog.text
+
+
+def test_bundle_telemetry_buckets_by_event_seq_range_and_round(tmp_path):
+    """Telemetry rows for a round = event_seq within the round's seq
+    range, PLUS rows whose `round` column matches (covers NULL-event_seq)."""
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "tel_bucket", genre="g", world="w")
+    _seed_rounds(store)
+    db = saves / "games" / "tel_bucket" / "save.db"
+    con = store.connection()
+    con.executescript(
+        "CREATE TABLE IF NOT EXISTS turn_telemetry ("
+        " seq INTEGER PRIMARY KEY AUTOINCREMENT, event_seq INTEGER,"
+        " round INTEGER, ts TEXT NOT NULL, component TEXT NOT NULL,"
+        " event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+    )
+    lo = con.execute("SELECT MIN(seq) AS lo_seq FROM events").fetchone()["lo_seq"]
+    con.executemany(
+        "INSERT INTO turn_telemetry "
+        "(event_seq, round, ts, component, event_type, payload_json) "
+        "VALUES (?,?,?,?,?,?)",
+        [
+            (lo, None, "t", "intent", "state_transition", '{"label":"a"}'),
+            (None, 1, "t", "beat", "selected", '{"beat":"b"}'),
+            (None, 2, "t", "intent", "state_transition", '{"label":"c"}'),
+        ],
+    )
+    con.commit()
+    store.close()
+    conn = _ro_connect(db)
+    try:
+        bundle = build_turn_bundle(conn, 1)
+        tel = bundle["telemetry"]
+        assert tel["total"] == 2
+        assert tel["by_component"] == {
+            "intent": {"state_transition": 1},
+            "beat": {"selected": 1},
+        }
+    finally:
+        conn.close()
+
+
+def test_bundle_missing_turn_telemetry_table_is_zero_rows_not_error(tmp_path):
+    """Old saves predate the table. forensics is read-only and must NOT
+    create it; a missing table behaves exactly like zero rows.
+
+    Seeds via plain sqlite3 (NOT SqliteStore) so the turn_telemetry table
+    is genuinely absent — matching the pre-Task-2 save shape.
+    """
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    db = saves / "games" / "no_tel_table" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta ("
+        " id INTEGER PRIMARY KEY CHECK (id = 1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','t','t',1);"
+        "CREATE TABLE narrative_log ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " round_number INTEGER NOT NULL, author TEXT NOT NULL,"
+        " content TEXT NOT NULL, tags TEXT, created_at TEXT NOT NULL);"
+        "CREATE TABLE events ("
+        " seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " kind TEXT NOT NULL, payload_json TEXT NOT NULL,"
+        " created_at TEXT NOT NULL);"
+        "CREATE TABLE projection_cache ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER NOT NULL, player_id TEXT NOT NULL,"
+        " include INTEGER NOT NULL DEFAULT 1, payload_json TEXT NOT NULL);"
+        "CREATE TABLE scrapbook_entries ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id INTEGER NOT NULL,"
+        " scene_title TEXT, scene_type TEXT, location TEXT,"
+        " image_url TEXT, narrative_excerpt TEXT,"
+        " world_facts TEXT, npcs_present TEXT, render_status TEXT);"
+        "INSERT INTO narrative_log (round_number,author,content,tags,created_at)"
+        " VALUES (1,'narrator','hi','[]','2026-05-18 00:01:00');"
+        "INSERT INTO events (kind,payload_json,created_at)"
+        ' VALUES (\'NARRATION\',\'{"text":"hi","footnotes":[],"_visibility":{"visible_to":"all"}}\',\'2026-05-18T00:01:01.000000+00:00\');'
+    )
+    con.commit()
+    con.close()
+    conn = _ro_connect(db)
+    try:
+        bundle = build_turn_bundle(conn, 1)
+        assert bundle["telemetry"] == {
+            "rows": [],
+            "by_component": {},
+            "total": 0,
+            "unparseable_seqs": [],
+        }
+    finally:
+        conn.close()
+
+
+def test_bundle_unknown_round_includes_empty_telemetry_key(tmp_path):
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "unknown_rnd_tel", genre="g", world="w")
+    _seed_rounds(store)
+    store.close()
+    db = saves / "games" / "unknown_rnd_tel" / "save.db"
+    conn = _ro_connect(db)
+    try:
+        bundle = build_turn_bundle(conn, 999)
+        assert bundle["telemetry"] == {
+            "rows": [],
+            "by_component": {},
+            "total": 0,
+            "unparseable_seqs": [],
+        }
+    finally:
+        conn.close()
+
+
+def test_telemetry_read_does_not_mutate_the_save(tmp_path):
+    """Read-only byte-identity: a forensics read over a save WITH
+    turn_telemetry leaves save.db byte-identical.
+
+    SqliteStore already creates turn_telemetry and sets WAL mode, so we
+    seed the row directly via the store connection (no journal_mode flip,
+    no duplicate CREATE TABLE).  We use PRAGMA wal_checkpoint + PRAGMA
+    journal_mode to flush the WAL into the main file before snapshotting
+    bytes_before so the comparison is apples-to-apples.
+    """
+    from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
+
+    saves = tmp_path / "saves"
+    store = _make_save(saves, "tel_ro", genre="g", world="w")
+    _seed_rounds(store)
+    db = saves / "games" / "tel_ro" / "save.db"
+    con = store.connection()
+    con.execute(
+        "INSERT INTO turn_telemetry (event_seq,round,ts,component,event_type,payload_json)"
+        " VALUES (1,1,'t','c','e','{}')"
+    )
+    con.commit()
+    # Checkpoint the WAL so the main db file is the canonical source and
+    # there is no pending -wal that a read-only open could see as a write.
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.commit()
+    store.close()
+    bytes_before = db.read_bytes()
+    mtime_before = db.stat().st_mtime_ns
+    conn = _ro_connect(db)
+    try:
+        build_turn_bundle(conn, 1)
+    finally:
+        conn.close()
+    assert db.read_bytes() == bytes_before
+    assert db.stat().st_mtime_ns == mtime_before
+
+
+def test_list_saves_includes_telemetry_row_count(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "tel" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+        "CREATE TABLE turn_telemetry (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER, round INTEGER, ts TEXT NOT NULL,"
+        " component TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+        "INSERT INTO turn_telemetry (event_seq,round,ts,component,event_type,payload_json)"
+        " VALUES (1,1,'t','c','e','{}'),(2,1,'t','c','e','{}');"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["telemetry_rows"] == 2
+
+
+def test_list_saves_telemetry_count_zero_when_table_missing(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "old" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert save["telemetry_rows"] == 0  # missing table -> 0, not error
+
+
+def test_list_saves_telemetry_count_zero_when_table_present_but_empty(tmp_path):
+    # Distinct from the missing-table guard: the table EXISTS, so the real
+    # SELECT COUNT(*) path executes and must return 0 (not the else-branch).
+    saves = tmp_path / "saves"
+    db = saves / "games" / "empty" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','2026-05-18T00:00:00+00:00','2026-05-18T00:05:00+00:00',1);"
+        "CREATE TABLE turn_telemetry (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " event_seq INTEGER, round INTEGER, ts TEXT NOT NULL,"
+        " component TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL);"
+        # NB: no INSERT INTO turn_telemetry — table present, zero rows
+    )
+    con.commit()
+    con.close()
+    [save] = list_saves(saves)
+    assert (
+        save["telemetry_rows"] == 0
+    )  # real COUNT(*) on an empty table, not the missing-table guard

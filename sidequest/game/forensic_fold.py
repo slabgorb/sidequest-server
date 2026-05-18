@@ -99,3 +99,96 @@ def fold_known_facts(events: list[EventRow]) -> FoldResult:
                 source_seqs=seqs,
             )
     return FoldResult(derived=derived, unparseable_seqs=tuple(unparseable))
+
+
+@dataclass(frozen=True)
+class TelemetryRow:
+    """One folded turn_telemetry row, ready for the forensics lane."""
+
+    seq: int
+    component: str
+    event_type: str
+    ts: str
+    fields: dict
+
+
+@dataclass(frozen=True)
+class TelemetryFold:
+    """Read-time curation of a round's turn_telemetry rows.
+
+    ``rows`` are the parseable rows in seq order; ``by_component`` is
+    component -> {event_type -> count}; ``unparseable_seqs`` records the
+    loud-skipped rows (same contract as ``FoldResult.unparseable_seqs``)."""
+
+    rows: tuple[TelemetryRow, ...] = ()
+    by_component: dict = field(default_factory=dict)
+    total: int = 0
+    unparseable_seqs: tuple[int, ...] = ()
+
+
+def fold_turn_telemetry(raw_rows: list) -> TelemetryFold:
+    """Fold raw turn_telemetry rows (any order) into the forensics view.
+
+    Pure, no I/O, never raises (mirrors ``fold_known_facts``):
+
+    - A row that parses but fails (bad JSON, or a non-dict payload) is
+      loud-logged and its int ``seq`` is recorded in ``unparseable_seqs``,
+      never silently dropped.
+    - A row so malformed it has no usable int ``seq`` (missing/None
+      ``seq``) is loud-logged and skipped; it is NOT added to
+      ``unparseable_seqs`` (there is no seq to record) — it still never
+      raises and never crashes the page.
+    - Output rows are sorted by ``seq``; ``by_component`` counts events
+      grouped component -> event_type.
+    """
+    folded: list[TelemetryRow] = []
+    unparseable: list[int] = []
+    by_component: dict[str, dict[str, int]] = {}
+
+    def _key(row) -> int:
+        try:
+            return int(row.get("seq"))
+        except (TypeError, ValueError, AttributeError):
+            return -1
+
+    for row in sorted(raw_rows, key=_key):
+        try:
+            seq = int(row["seq"])
+            component = str(row.get("component") or "")
+            event_type = str(row.get("event_type") or "")
+            ts = str(row.get("ts") or "")
+            raw_payload = row.get("payload_json")
+        except (KeyError, TypeError, AttributeError):
+            seq_val = row.get("seq") if hasattr(row, "get") else None
+            logger.warning("forensic_fold.telemetry_unparseable_payload seq=%s", seq_val)
+            if isinstance(seq_val, int):
+                unparseable.append(seq_val)
+            continue
+        try:
+            payload = json.loads(raw_payload)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("forensic_fold.telemetry_unparseable_payload seq=%s", seq)
+            unparseable.append(seq)
+            continue
+        if not isinstance(payload, dict):
+            logger.warning("forensic_fold.telemetry_non_dict_payload seq=%s", seq)
+            unparseable.append(seq)
+            continue
+        folded.append(
+            TelemetryRow(
+                seq=seq,
+                component=component,
+                event_type=event_type,
+                ts=ts,
+                fields=payload,
+            )
+        )
+        by_component.setdefault(component, {})
+        by_component[component][event_type] = by_component[component].get(event_type, 0) + 1
+
+    return TelemetryFold(
+        rows=tuple(folded),
+        by_component=by_component,
+        total=len(folded),
+        unparseable_seqs=tuple(unparseable),
+    )

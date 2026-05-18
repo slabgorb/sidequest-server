@@ -467,6 +467,7 @@ def create_rest_router() -> APIRouter:
             "projection": [],
             "scrapbook": [],
             "unparseable_seqs": [],
+            "telemetry": {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []},
         }
         conn = open_save_readonly(request.app.state.save_dir, slug)
         if conn is None:

@@ -181,6 +181,17 @@ CREATE TABLE IF NOT EXISTS world_save (
     payload_json TEXT NOT NULL,
     saved_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS turn_telemetry (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_seq INTEGER,
+    round INTEGER,
+    ts TEXT NOT NULL,
+    component TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_turn_telemetry_round ON turn_telemetry (round);
+CREATE INDEX IF NOT EXISTS idx_turn_telemetry_event_seq ON turn_telemetry (event_seq);
 """
 
 
