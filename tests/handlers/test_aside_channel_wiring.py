@@ -86,6 +86,7 @@ async def test_empty_aside_after_combat_strip_is_rejected_no_resolver_no_span():
         llm_aside=fake_aside_llm('{"answer":"x","outcome":"answered","grounded_on":["a"]}'),
     )
     nlog_before = room.narrative_log_count()
+    turn_before = room.turn_round()
 
     out = await submit(room, "Katia", "[combat]", aside=True)
 
@@ -95,7 +96,7 @@ async def test_empty_aside_after_combat_strip_is_rejected_no_resolver_no_span():
     assert not room.spans_named("aside.resolve")
     assert room.last_broadcast_recipients() == set()
     assert room.narrative_log_count() == nlog_before
-    assert room.turn_round() == room.turn_round()  # unchanged (no advance)
+    assert room.turn_round() == turn_before  # unchanged (no advance)
     assert not room.barrier_fired()
 
     room.teardown()
