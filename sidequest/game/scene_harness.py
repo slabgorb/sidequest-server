@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from sidequest.game.character import Character, KnownFact
 from sidequest.game.creature_core import CreatureCore
+from sidequest.game.encounter import EncounterMetric, StructuredEncounter
 from sidequest.game.scenario_state import (
     ScenarioRole,
     ScenarioState,
@@ -225,6 +226,19 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
             data["scenario_state"],
             npcs=snapshot_kwargs.get("npcs", []),
             fixture_name=name,
+        )
+
+    # Hydrate the encounter (story 50-21, ADR-092 follow-on).
+    #
+    # Optional top-level ``encounter:`` block projects to
+    # ``GameSnapshot.encounter`` (a ``StructuredEncounter``, ADR-033). Missing
+    # block (or an explicit ``encounter:`` with a null value) → snapshot field
+    # stays at its pydantic default (None) so the three canonical fixtures
+    # without an encounter block keep working. Malformed block →
+    # FixtureValidationError per ADR-092 "Failure is loud".
+    if "encounter" in data and data.get("encounter") is not None:
+        snapshot_kwargs["encounter"] = _hydrate_encounter(
+            data["encounter"], fixture_name=name
         )
 
     try:
@@ -491,3 +505,84 @@ def _hydrate_scenario_state(
         guilty_npc=guilty_npc,
         tension=tension,
     )
+
+
+_DEFAULT_METRIC_THRESHOLD = 10
+
+
+def _hydrate_encounter(raw: Any, *, fixture_name: str) -> StructuredEncounter:
+    """Hydrate the fixture's ``encounter:`` block into a StructuredEncounter.
+
+    Validation discipline mirrors the rest of the hydrator: every malformed
+    shape raises ``FixtureValidationError`` so the dev-gated HTTP layer
+    returns 422 with field detail — no silent default for the required
+    ``type``, no leaked ``pydantic.ValidationError``.
+
+    Fixture shape (canonical ``combat_brawl_wasteland`` is the ground truth):
+
+        encounter:
+          type: combat              # → StructuredEncounter.encounter_type
+          player_metric:            # optional per-metric override
+            threshold: 25
+          opponent_metric:
+            threshold: 7
+
+    ``type`` is the short fixture key for ``encounter_type`` (AC-4: the
+    canonical fixture uses ``type: combat`` and is frozen by AC-8). Each
+    metric defaults to ``current=0, starting=0, threshold=10``; a per-metric
+    mapping may override ``threshold``. The legacy single-dial ``metric``
+    key is rejected up front with a clear message rather than letting
+    ``StructuredEncounter._reject_legacy_metric`` raise an unwrapped
+    ``ValueError`` past the module boundary.
+    """
+    if not isinstance(raw, dict):
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: 'encounter' must be a YAML mapping, "
+            f"got {type(raw).__name__}"
+        )
+
+    if "metric" in raw:
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: encounter.metric is the legacy single-dial "
+            "field — StructuredEncounter uses player_metric + opponent_metric; "
+            "remove 'metric'"
+        )
+
+    encounter_type = raw.get("type")
+    if not isinstance(encounter_type, str) or not encounter_type.strip():
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: encounter.type is required and must be a "
+            "non-empty string"
+        )
+
+    def _threshold(key: str) -> Any:
+        override = raw.get(key)
+        if override is None:
+            return _DEFAULT_METRIC_THRESHOLD
+        if not isinstance(override, dict):
+            raise FixtureValidationError(
+                f"fixture {fixture_name!r}: encounter.{key} must be a YAML "
+                f"mapping, got {type(override).__name__}"
+            )
+        return override.get("threshold", _DEFAULT_METRIC_THRESHOLD)
+
+    try:
+        return StructuredEncounter(
+            encounter_type=encounter_type,
+            player_metric=EncounterMetric(
+                name="player",
+                current=0,
+                starting=0,
+                threshold=_threshold("player_metric"),
+            ),
+            opponent_metric=EncounterMetric(
+                name="opponent",
+                current=0,
+                starting=0,
+                threshold=_threshold("opponent_metric"),
+            ),
+        )
+    except ValidationError as exc:
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: encounter validation failed — {exc}"
+        ) from exc
