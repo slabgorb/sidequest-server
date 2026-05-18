@@ -277,7 +277,14 @@ def _mechanical_for_round(
 
 def mechanical_strip(conn: sqlite3.Connection) -> list:
     """Whole-save per-round tri-state for the macro strip. Missing table
-    -> []. One pass, ?mode=ro, never creates the table."""
+    -> []. One pass, ?mode=ro, never creates the table.
+
+    Intentionally unwired in Phase 2: the macro-strip lane is rendered
+    client-side from the per-round bundle cache (Task 9 R8 plan-prescribed
+    fallback — no per-round tri-state is reachable without a new fetch).
+    Retained as the server-side seam for a future server-computed strip
+    (Phase 3); exercised by tests only.
+    """
     has_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_telemetry'"
     ).fetchone()

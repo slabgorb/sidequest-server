@@ -413,7 +413,13 @@ def fold_mechanical_strip(all_rows: list) -> list[dict]:
     """Whole-save per-round tri-state for the macro strip. One pass,
     computed once at save-select (mirrors the P1.1 'needs the per-round
     fold' reservation). Pure, never raises. Returns
-    [{round, state}] in round order; absent rounds simply do not appear."""
+    [{round, state}] in round order; absent rounds simply do not appear.
+
+    Intentionally unconsumed in Phase 2 production: its only caller is
+    ``mechanical_strip()``, itself a deferred Phase-3 seam — the macro strip
+    is rendered client-side per Task 9 R8. Pure/tested; kept as the forward
+    seam, not dead code.
+    """
     census, _ = _mech_rows(all_rows, "census")
     tropes, _ = _mech_rows(all_rows, "trope_census")
     by_round: dict[int, list[dict]] = {}
