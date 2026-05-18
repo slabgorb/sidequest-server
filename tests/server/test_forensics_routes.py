@@ -35,7 +35,22 @@ def _seed(saves: Path, slug: str):
     c.execute(
         "INSERT INTO events (kind, payload_json, created_at) VALUES "
         "('NARRATION', ?, '2026-05-18T00:01:01.000000+00:00')",
-        (json.dumps({"type": "NARRATION", "state_delta": {"location": "Cave"}}),),
+        (
+            json.dumps(
+                {
+                    "text": "You enter.",
+                    "footnotes": [
+                        {
+                            "fact_id": "fn-cave",
+                            "summary": "The cave mouth opens into darkness.",
+                            "category": "Place",
+                            "is_new": True,
+                        }
+                    ],
+                    "_visibility": {"visible_to": "all"},
+                }
+            ),
+        ),
     )
     c.commit()
     store.close()
@@ -72,7 +87,8 @@ def test_turn_bundle_endpoint(tmp_path):
     assert resp.status_code == 200
     body = resp.json()
     assert body["round"] == 1
-    assert body["derived"]["location"]["value"] == "Cave"
+    assert body["derived"]["fn-cave"]["value"]["summary"] == "The cave mouth opens into darkness."
+    assert body["derived"]["fn-cave"]["value"]["category"] == "Place"
 
 
 def test_turn_bundle_unknown_slug_is_empty_not_500(tmp_path):
