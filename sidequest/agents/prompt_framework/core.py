@@ -524,6 +524,14 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
                 parts.append(f"— {npc.appearance}")
             if npc.last_seen_location:
                 parts.append(f"[last seen: {npc.last_seen_location}]")
+            # Coarsened disposition stance — the "emotional perception is
+            # POV" layer the closing instruction references. Story 50-12:
+            # without this the narrator sees who exists but not how they
+            # feel, forcing a per-NPC query_npc round-trip. The raw
+            # disposition.value integer is world-state-agent-only and MUST
+            # NOT reach this always-on narrator section (ADR-104/105
+            # perception firewall) — emit only the qualitative band.
+            parts.append(f"[attitude: {npc.disposition.attitude().value}]")
             lines.append("- " + " ".join(parts))
 
         lines.append(
