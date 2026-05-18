@@ -27,6 +27,7 @@
   .tier-stored { color:var(--stored); }
   .tier-derived { color:var(--derived); }
   .tier-absent  { color:var(--absent); font-style:italic; }
+  .tier-mechanical { color:var(--derived); }
   .warn { color:#f85149; }
   .seqs { color:var(--absent); font-size:11px; }
   /* macro strip */
@@ -315,6 +316,39 @@ async function selectTurn(round){
         : '')
     : '<span class="tier-absent">— no decision telemetry (save predates the substrate)</span>';
 
+  const mech = (b.mechanical) || {state:'absent',pcs:[],trope:null,unparseable_seqs:[]};
+  const mechRow = pc => {
+    if (pc.kind === 'baseline') {
+      const a = pc.absolute || {};
+      return '<tr><td class="tier-mechanical">'+esc(pc.character_name)+
+        ' (seat '+esc(pc.seat)+')</td><td>baseline</td><td><pre '+
+        'class="tel-fields">'+j(a)+'</pre></td></tr>';
+    }
+    if (pc.kind === 'static') {
+      return '<tr><td class="tier-mechanical">'+esc(pc.character_name)+
+        '</td><td colspan="2"><span class="tier-absent">· no mechanical change</span></td></tr>';
+    }
+    const ds = (pc.deltas||[]).map(d =>
+      esc(d[0])+': '+esc(d[1])).join('<br>');
+    return '<tr><td class="tier-mechanical">'+esc(pc.character_name)+
+      '</td><td>moved</td><td>'+ds+'</td></tr>';
+  };
+  const mechBody = (mech.state === 'absent')
+    ? '<span class="tier-absent">— no mechanical census (save predates Phase 2 coverage)</span>'
+    : '<table><tr><th>pc</th><th>state</th><th>change</th></tr>'+
+      (mech.pcs||[]).map(mechRow).join('')+'</table>'+
+      (mech.trope
+        ? '<div class="seqs">trope: '+esc(mech.trope.summary)+
+          ' (since-meaningful '+esc(mech.trope.turns_since_meaningful ?? '?')+
+          ', beats '+esc(mech.trope.total_beats_fired ?? '?')+')</div>'
+        : '')+
+      ((mech.unparseable_seqs||[]).length
+        ? '<div class="tier-absent">— '+
+          esc(mech.unparseable_seqs.length)+
+          ' unparseable census row(s) skipped (seq '+
+          mech.unparseable_seqs.map(esc).join(', ')+')</div>'
+        : '');
+
   drill.innerHTML =
     '<section><p class="lbl">comparison · round '+esc(round)+
       ' — what the narrator had established, vs what was recorded this round'+
@@ -338,6 +372,10 @@ async function selectTurn(round){
       '<details><summary>decision telemetry (this round)<span class="meta">'+
         esc(tel.total)+' signals</span></summary><div class="ev-body">'+
         telBody+'</div></details>'+
+      '<details><summary>mechanical state (this round)<span class="meta">'+
+        esc((mech.pcs||[]).length)+' PCs · '+esc(mech.state)+
+        '</span></summary><div class="ev-body">'+mechBody+
+        '</div></details>'+
       '<details><summary>terminal snapshot<span class="meta">round '+
         esc((snap && snap.turn_manager && snap.turn_manager.round) ?? '?')+
         ' · the ONLY stored snapshot — identical on every round, NOT this round’s state'+
