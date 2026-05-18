@@ -39,6 +39,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 import pydantic
 
@@ -143,7 +144,9 @@ def _build_clients() -> tuple[LlmClient, LlmClient]:
                 f"{type(client).__name__}. The anthropic_sdk ToolingLlmClient "
                 f"is unsupported for the A/B harness."
             )
-    return claude_client, ollama_client  # type: ignore[return-value]
+    # Both isinstance-guarded above; cast narrows the build_llm_client() union
+    # return (LlmClient | ToolingLlmClient) that the loop cannot prove away.
+    return cast(LlmClient, claude_client), cast(LlmClient, ollama_client)
 
 
 def _emit(markdown: str, output_md: str | None) -> None:

@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 
 from sidequest.agents.claude_client import LlmClient
+from sidequest.agents.ollama_client import OllamaClientError
 from sidequest.corpus.schema import TrainingPair
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,17 @@ class AbEvalHarness:
                 user_message=user_prompt,
                 model=model,
             )
-        except Exception as exc:  # noqa: BLE001 — recorded per-side, not swallowed
+        except OllamaClientError:
+            # Infrastructure failure (daemon down / HTTP 000 transport): the
+            # local model is absent, so there is no meaningful A/B to record.
+            # Propagate so the CLI emits the AC4 operator-evidence no-op
+            # (exit 4 + note). This is deliberately NOT folded into rule-#9
+            # per-side isolation — "Ollama unreachable" and "Ollama produced
+            # a bad patch" are different signals and must not be conflated.
+            logger.warning("ab_eval.%s_unreachable", label)
+            raise
+        except Exception as exc:  # noqa: BLE001 — per-side isolation (rule #9): a
+            # single backend's API/output failure must not lose the other side.
             dur = int((time.perf_counter() - start) * 1000)
             logger.warning("ab_eval.%s_backend_error error=%s", label, exc)
             return _Side(
@@ -256,10 +267,19 @@ class AbEvalHarness:
         One backend failing never loses the other's result (rule #9): each
         side is isolated inside ``_run_backend`` and gathered independently.
         """
-        claude_side, ollama_side = await asyncio.gather(
+        # return_exceptions=True so an Ollama-unreachable raise from one side
+        # does not cancel the sibling mid-flight; we then re-raise the
+        # infrastructure failure for the CLI's AC4 no-op. Non-infrastructure
+        # failures never reach here — _run_backend records them per-side.
+        outcomes = await asyncio.gather(
             self._run_backend(self.claude, CLAUDE_MODEL, user_prompt, "claude"),
             self._run_backend(self.ollama, OLLAMA_MODEL, user_prompt, "ollama"),
+            return_exceptions=True,
         )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+        claude_side, ollama_side = outcomes
         ratio = (
             ollama_side.duration_ms / claude_side.duration_ms
             if claude_side.duration_ms > 0

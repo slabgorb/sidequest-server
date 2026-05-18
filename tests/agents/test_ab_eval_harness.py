@@ -45,9 +45,6 @@ from typing import Any
 
 import pytest
 
-from sidequest.agents.claude_client import ClaudeResponse, LlmClient
-from sidequest.corpus.schema import MineProvenance, TrainingPair
-
 # --------------------------------------------------------------------------- #
 # Module-under-test imports. These raise ImportError until Dev lands the code,
 # which is the intended RED signal. Collected at import time on purpose: a
@@ -59,6 +56,9 @@ from sidequest.agents.ab_eval_harness import (  # noqa: E402
     AbEvalReport,
     AbEvalResult,
 )
+from sidequest.agents.claude_client import ClaudeResponse
+from sidequest.agents.ollama_client import OllamaClientError
+from sidequest.corpus.schema import MineProvenance, TrainingPair
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "scripts" / "ab_eval_harness_cli.py"
@@ -307,6 +307,78 @@ async def test_rule9_one_backend_failure_preserves_other() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# AC4 regression (Reviewer HIGH): the REAL harness must propagate
+# OllamaClientError (infrastructure failure) instead of absorbing it per-side,
+# so the CLI can emit the operator-evidence no-op. rule-#9 isolation must
+# still apply to NON-infrastructure ollama failures.
+# --------------------------------------------------------------------------- #
+
+
+async def test_real_harness_propagates_ollama_unreachable() -> None:
+    """A hard OllamaClientError must escape eval_pair, NOT be folded into a
+    recorded _Side. Otherwise the CLI's AC4 exit-4 path is dead in prod.
+    """
+    harness = AbEvalHarness(
+        claude_client=FakeLlmClient(text=VALID_PATCH_RESPONSE, backend="claude"),
+        ollama_client=FakeLlmClient(
+            backend="ollama",
+            raises=OllamaClientError("ollama /api/chat transport error: HTTP 000"),
+        ),
+        system_prompt="sys",
+        genre="caverns_and_claudes",
+    )
+    with pytest.raises(OllamaClientError):
+        await harness.eval_pair(user_prompt="probe")
+
+
+async def test_real_harness_isolates_non_infra_ollama_failure() -> None:
+    """rule-#9 still holds: a NON-OllamaClientError from the ollama side is
+    recorded per-side, not propagated (only infra failure propagates).
+    """
+    harness = AbEvalHarness(
+        claude_client=FakeLlmClient(text=VALID_PATCH_RESPONSE, backend="claude"),
+        ollama_client=FakeLlmClient(
+            backend="ollama", raises=RuntimeError("ollama produced garbage")
+        ),
+        system_prompt="sys",
+        genre="caverns_and_claudes",
+    )
+    result = await harness.eval_pair(user_prompt="probe")
+    assert result.claude_patch_valid is True
+    assert result.ollama_patch_valid is False
+    assert any("garbage" in m or "ollama" in m.lower() for m in result.ollama_patch_errors)
+
+
+def test_cli_real_harness_ollama_unreachable_exit4(tmp_path: Any, monkeypatch: Any) -> None:
+    """Integration: drive cli.main() through the REAL AbEvalHarness (NOT
+    monkeypatched). Only the unavoidable env/network boundary
+    (`_build_clients`) is substituted. Proves AC4 wiring end-to-end —
+    this is the test the prior suite was missing (Reviewer HIGH).
+    """
+    cli = _load_cli_module()
+    out_md = tmp_path / "report.md"
+
+    def _fake_build_clients() -> tuple[Any, Any]:
+        return (
+            FakeLlmClient(text=VALID_PATCH_RESPONSE, backend="claude"),
+            FakeLlmClient(
+                backend="ollama",
+                raises=OllamaClientError("ollama /api/chat transport error: HTTP 000"),
+            ),
+        )
+
+    # Substitute ONLY client construction. cli.AbEvalHarness is the real class.
+    monkeypatch.setattr(cli, "_build_clients", _fake_build_clients)
+    assert cli.AbEvalHarness is AbEvalHarness, "real harness must not be mocked"
+
+    rc = cli.main(["--user-prompt", "probe", "--output-md", str(out_md)])
+
+    assert rc == cli.EXIT_OLLAMA_UNREACHABLE
+    note = out_md.read_text(encoding="utf-8").lower()
+    assert "ollama" in note or "operator" in note or "m3" in note
+
+
+# --------------------------------------------------------------------------- #
 # Rule #2 (mutable defaults) + #3 (boundary annotations)
 # --------------------------------------------------------------------------- #
 
@@ -446,7 +518,6 @@ def test_cli_missing_input_file_is_config_error() -> None:
 
 def test_cli_ollama_unreachable_writes_operator_note(tmp_path: Any, monkeypatch: Any) -> None:
     cli = _load_cli_module()
-    from sidequest.agents.ollama_client import OllamaClientError
 
     out_md = tmp_path / "report.md"
 
@@ -525,9 +596,12 @@ def test_ac3_suite_has_no_live_backend_calls() -> None:
     banned = {"OllamaClient", "ClaudeClient", "AnthropicSdkClient", "build_llm_client"}
     called: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in banned:
-                called.add(node.func.id)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in banned
+        ):
+            called.add(node.func.id)
     assert not called, (
         f"AC3 violation: this suite must not construct real backends; found "
         f"calls to {sorted(called)}. Use FakeLlmClient / monkeypatch."
