@@ -3,8 +3,11 @@ import json
 from sidequest.game.event_log import EventRow
 from sidequest.game.forensic_fold import (
     FoldResult,
+    MechanicalFold,
     TelemetryFold,
     fold_known_facts,
+    fold_mechanical_census,
+    fold_mechanical_strip,
     fold_turn_telemetry,
 )
 
@@ -239,3 +242,122 @@ def test_telemetry_none_component_buckets_under_empty_string():
     assert r.total == 1
     assert r.by_component == {"": {"e": 1}}
     assert r.rows[0].component == ""
+
+
+# ---- Phase 2: mechanical census fold tests ----
+
+
+def _crow(seq, payload: dict, event_type="census"):
+    return _trow(seq, "mechanical", event_type, json.dumps(payload))
+
+
+def test_mechanical_empty_yields_absent():
+    r = fold_mechanical_census([], [])
+    assert isinstance(r, MechanicalFold)
+    assert r.state == "absent"
+    assert r.pcs == ()
+    assert r.unparseable_seqs == ()
+
+
+def test_mechanical_first_round_per_pc_is_baseline_no_deltas():
+    cur = [_crow(1, {"player_id": "p1", "character_name": "Rux", "seat": 0,
+                     "round": 1, "edge": {"current": 10, "max": 10},
+                     "location": "Cave", "inventory": [{"item": "torch",
+                     "qty": 1}], "xp": 0, "level": 1,
+                     "acquired_advancements": []})]
+    r = fold_mechanical_census(cur, [])  # no prior rows
+    assert r.state == "moved"            # round has data
+    [pc] = r.pcs
+    assert pc.player_id == "p1"
+    assert pc.kind == "baseline"         # first census -> absolute, no diff
+    assert pc.deltas == ()
+    assert pc.absolute["edge"] == {"current": 10, "max": 10}
+
+
+def test_mechanical_no_change_is_static_not_moved():
+    body = {"player_id": "p1", "character_name": "Rux", "seat": 0,
+            "edge": {"current": 7, "max": 10}, "location": "Cave",
+            "inventory": [{"item": "torch", "qty": 1}], "xp": 5,
+            "level": 1, "acquired_advancements": []}
+    prior = [_crow(1, {**body, "round": 1})]
+    cur = [_crow(2, {**body, "round": 2})]
+    r = fold_mechanical_census(cur, prior)
+    [pc] = r.pcs
+    assert pc.kind == "static"
+    assert pc.deltas == ()
+    assert r.state == "static"  # the WHOLE round had no mechanical change
+
+
+def test_mechanical_moved_emits_typed_deltas():
+    prior = [_crow(1, {"player_id": "p1", "character_name": "Rux", "seat": 0,
+                       "round": 1, "edge": {"current": 10, "max": 10},
+                       "location": "Ropefoot",
+                       "inventory": [{"item": "torch", "qty": 1}], "xp": 0,
+                       "level": 2, "acquired_advancements": []})]
+    cur = [_crow(2, {"player_id": "p1", "character_name": "Rux", "seat": 0,
+                     "round": 2, "edge": {"current": 7, "max": 10},
+                     "location": "The Kept Fire",
+                     "inventory": [{"item": "brass key", "qty": 1}],
+                     "xp": 15, "level": 3,
+                     "acquired_advancements": ["adv.iron_grip"]})]
+    r = fold_mechanical_census(cur, prior)
+    [pc] = r.pcs
+    assert pc.kind == "moved"
+    d = dict(pc.deltas)
+    assert d["location"] == "Ropefoot → The Kept Fire"
+    assert d["edge"] == "10→7 (−3)"
+    assert d["xp"] == "+15"
+    assert d["level"] == "2→3"
+    assert d["inventory"] == "+brass key, −torch×1"
+    assert d["advancements"] == "+adv.iron_grip"
+    assert r.state == "moved"
+
+
+def test_mechanical_trope_census_folds_session_block():
+    prior = [_crow(1, {"round": 1, "active_tropes": [{"id": "vengeance",
+             "status": "active", "progress": 0.2, "beats_fired": 1}],
+             "turns_since_meaningful": 0, "total_beats_fired": 3},
+             event_type="trope_census")]
+    cur = [_crow(2, {"round": 2, "active_tropes": [{"id": "vengeance",
+           "status": "active", "progress": 0.5, "beats_fired": 2}],
+           "turns_since_meaningful": 1, "total_beats_fired": 4},
+           event_type="trope_census")]
+    r = fold_mechanical_census(cur, prior)
+    assert r.trope is not None
+    assert "vengeance" in r.trope["summary"]
+    assert r.trope["kind"] == "moved"
+
+
+def test_mechanical_unparseable_row_is_loud_skipped_and_recorded(caplog):
+    bad = _trow(9, "mechanical", "census", "{not json")
+    good = _crow(10, {"player_id": "p1", "character_name": "Rux",
+                      "seat": 0, "round": 1, "edge": {"current": 1,
+                      "max": 1}, "location": "Cave", "inventory": [],
+                      "xp": 0, "level": 1, "acquired_advancements": []})
+    with caplog.at_level("WARNING"):
+        r = fold_mechanical_census([bad, good], [])
+    assert r.unparseable_seqs == (9,)
+    assert [pc.player_id for pc in r.pcs] == ["p1"]
+    assert "forensic_fold.mechanical_unparseable_payload seq=9" in caplog.text
+
+
+def test_fold_mechanical_strip_tristate_per_round():
+    body = {"player_id": "p1", "character_name": "Rux", "seat": 0,
+            "edge": {"current": 5, "max": 5}, "location": "Cave",
+            "inventory": [], "xp": 0, "level": 1,
+            "acquired_advancements": []}
+    rows = [
+        _crow(1, {**body, "round": 1}),                       # baseline
+        _crow(2, {**body, "round": 2}),                       # static
+        _crow(3, {**body, "round": 3, "xp": 9}),              # moved
+    ]
+    strip = fold_mechanical_strip(rows)
+    assert strip == [
+        {"round": 1, "state": "moved"},   # first census = has data
+        {"round": 2, "state": "static"},
+        {"round": 3, "state": "moved"},
+    ]
+
+
+def test_fold_mechanical_strip_empty_is_empty_list():
+    assert fold_mechanical_strip([]) == []
