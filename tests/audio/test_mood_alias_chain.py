@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -43,9 +44,14 @@ from sidequest.audio.library_backend import LibraryBackend
 from sidequest.audio.models import AudioCue, AudioLane
 from sidequest.genre.models.audio import AudioConfig
 
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
 
 @pytest.fixture
-def otel_capture() -> Iterator:
+def otel_capture() -> Iterator[InMemorySpanExporter]:
     """In-memory OTEL exporter for span assertions.
 
     Matches the local-fixture pattern used across the suite (e.g.
