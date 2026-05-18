@@ -159,9 +159,9 @@ def test_forensics_route_is_wired_and_serves_html(tmp_path):
     assert "decision telemetry (this round)" in resp.text  # the new lane label
     assert "save predates the substrate" in resp.text  # honest-empty contract visible
     assert "signals</span>" in resp.text  # decision-telemetry lane meta count shape
-    assert "mechanical state (this round)" in resp.text       # lane label
+    assert "mechanical state (this round)" in resp.text  # lane label
     assert "no mechanical census (save predates" in resp.text  # absent
-    assert "no mechanical change" in resp.text                 # static
+    assert "no mechanical change" in resp.text  # static
 
 
 def test_snapshot_endpoint_returns_persisted_state(tmp_path):

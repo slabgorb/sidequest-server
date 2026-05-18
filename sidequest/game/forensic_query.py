@@ -75,8 +75,7 @@ def list_saves(save_dir: Path) -> list[dict]:
                 try:
                     mechanical_rows = (
                         conn.execute(
-                            "SELECT COUNT(*) FROM turn_telemetry "
-                            "WHERE component='mechanical'"
+                            "SELECT COUNT(*) FROM turn_telemetry WHERE component='mechanical'"
                         ).fetchone()[0]
                         if has_tt
                         else 0
@@ -217,8 +216,7 @@ def _empty_telemetry() -> dict:
 
 def _empty_mechanical() -> dict:
     """Factory: a fresh empty mechanical dict (no shared-reference risk)."""
-    return {"state": "absent", "pcs": [], "trope": None,
-            "unparseable_seqs": []}
+    return {"state": "absent", "pcs": [], "trope": None, "unparseable_seqs": []}
 
 
 def _mechanical_for_round(
@@ -233,8 +231,7 @@ def _mechanical_for_round(
         "must return the empty/unknown-round bundle before calling this"
     )
     has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='turn_telemetry'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_telemetry'"
     ).fetchone()
     if has_table is None:
         return _empty_mechanical()
@@ -259,9 +256,7 @@ def _mechanical_for_round(
             "WHERE component='mechanical' AND round = ? ORDER BY seq",
             (prev_round_row[0],),
         ).fetchall()
-    fold = fold_mechanical_census(
-        [dict(r) for r in cur], [dict(r) for r in prev]
-    )
+    fold = fold_mechanical_census([dict(r) for r in cur], [dict(r) for r in prev])
     return {
         "state": fold.state,
         "pcs": [
@@ -284,8 +279,7 @@ def mechanical_strip(conn: sqlite3.Connection) -> list:
     """Whole-save per-round tri-state for the macro strip. Missing table
     -> []. One pass, ?mode=ro, never creates the table."""
     has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='turn_telemetry'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_telemetry'"
     ).fetchone()
     if has_table is None:
         return []

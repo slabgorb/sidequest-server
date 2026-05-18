@@ -528,8 +528,8 @@ def test_list_saves_includes_mechanical_row_count(tmp_path):
     con.commit()
     con.close()
     [save] = list_saves(saves)
-    assert save["mechanical_rows"] == 2   # only component='mechanical'
-    assert save["telemetry_rows"] == 3    # Phase-1 count unchanged (all rows)
+    assert save["mechanical_rows"] == 2  # only component='mechanical'
+    assert save["telemetry_rows"] == 3  # Phase-1 count unchanged (all rows)
 
 
 def test_list_saves_mechanical_count_zero_when_table_missing(tmp_path):
@@ -553,7 +553,7 @@ def test_list_saves_mechanical_count_zero_when_table_missing(tmp_path):
     con.commit()
     con.close()
     [save] = list_saves(saves)
-    assert save["mechanical_rows"] == 0   # missing table -> 0, not error
+    assert save["mechanical_rows"] == 0  # missing table -> 0, not error
 
 
 def test_list_saves_telemetry_count_zero_when_table_present_but_empty(tmp_path):
@@ -606,16 +606,26 @@ def test_bundle_mechanical_diffs_round_against_prev_census_round(tmp_path):
     db = tmp_path / "saves" / "games" / "mech" / "save.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     store = _make_save(tmp_path / "saves", "mech", genre="g", world="w")
-    _seed_rounds(store)            # rounds 1 & 2 of events/narrative
+    _seed_rounds(store)  # rounds 1 & 2 of events/narrative
     store.close()
-    base = {"player_id": "p1", "character_name": "Rux", "seat": 0,
-            "edge": {"current": 10, "max": 10}, "location": "Cave",
-            "inventory": [], "xp": 0, "level": 1,
-            "acquired_advancements": []}
-    _add_mechanical(db, [
-        (None, 1, "census", {**base, "round": 1}),
-        (None, 2, "census", {**base, "round": 2, "xp": 25}),
-    ])
+    base = {
+        "player_id": "p1",
+        "character_name": "Rux",
+        "seat": 0,
+        "edge": {"current": 10, "max": 10},
+        "location": "Cave",
+        "inventory": [],
+        "xp": 0,
+        "level": 1,
+        "acquired_advancements": [],
+    }
+    _add_mechanical(
+        db,
+        [
+            (None, 1, "census", {**base, "round": 1}),
+            (None, 2, "census", {**base, "round": 2, "xp": 25}),
+        ],
+    )
     from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
 
     conn = _ro_connect(db)
@@ -633,7 +643,7 @@ def test_bundle_mechanical_diffs_round_against_prev_census_round(tmp_path):
 
 def test_bundle_missing_turn_telemetry_table_is_absent_not_error(tmp_path):
     store = _make_save(tmp_path / "saves", "old", genre="g", world="w")
-    _seed_rounds(store)            # NO turn_telemetry table
+    _seed_rounds(store)  # NO turn_telemetry table
     store.close()
     from sidequest.game.forensic_query import _ro_connect, build_turn_bundle
 
@@ -642,7 +652,9 @@ def test_bundle_missing_turn_telemetry_table_is_absent_not_error(tmp_path):
     try:
         b = build_turn_bundle(conn, 1)
         assert b["mechanical"] == {
-            "state": "absent", "pcs": [], "trope": None,
+            "state": "absent",
+            "pcs": [],
+            "trope": None,
             "unparseable_seqs": [],
         }
     finally:
@@ -660,7 +672,9 @@ def test_bundle_unknown_round_includes_empty_mechanical_key(tmp_path):
     try:
         b = build_turn_bundle(conn, 999)
         assert b["mechanical"] == {
-            "state": "absent", "pcs": [], "trope": None,
+            "state": "absent",
+            "pcs": [],
+            "trope": None,
             "unparseable_seqs": [],
         }
     finally:
@@ -676,12 +690,28 @@ def test_mechanical_read_does_not_mutate_the_save(tmp_path):
     con.executescript("PRAGMA journal_mode=DELETE;")
     con.commit()
     con.close()
-    _add_mechanical(db, [(None, 1, "census",
-                          {"player_id": "p1", "character_name": "Rux",
-                           "seat": 0, "round": 1,
-                           "edge": {"current": 1, "max": 1},
-                           "location": "Cave", "inventory": [], "xp": 0,
-                           "level": 1, "acquired_advancements": []})])
+    _add_mechanical(
+        db,
+        [
+            (
+                None,
+                1,
+                "census",
+                {
+                    "player_id": "p1",
+                    "character_name": "Rux",
+                    "seat": 0,
+                    "round": 1,
+                    "edge": {"current": 1, "max": 1},
+                    "location": "Cave",
+                    "inventory": [],
+                    "xp": 0,
+                    "level": 1,
+                    "acquired_advancements": [],
+                },
+            )
+        ],
+    )
     bytes_before = db.read_bytes()
     mtime_before = db.stat().st_mtime_ns
     from sidequest.game.forensic_query import _ro_connect, build_turn_bundle

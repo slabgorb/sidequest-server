@@ -1,6 +1,7 @@
 """Per-subsystem accuracy: each census field is read from the CANONICAL
 game model for a seeded character (anti-log-absence — every gap closed
 against real state, not a hoped-for emitter)."""
+
 from sidequest.game.mechanical_census import (
     build_pc_census,
     build_trope_census,
@@ -17,8 +18,8 @@ from sidequest.telemetry.watcher_hub import bind_event_store
 def test_inventory_digest_aggregates_singletons_by_name():
     items = [
         {"name": "torch", "quantity": 1},
-        {"name": "torch", "quantity": 1},   # narrator singleton dup (R7)
-        {"name": "brass key"},               # no quantity -> 1
+        {"name": "torch", "quantity": 1},  # narrator singleton dup (R7)
+        {"name": "brass key"},  # no quantity -> 1
         {"name": "rations", "quantity": 3},
     ]
     assert inventory_digest(items) == [
@@ -53,8 +54,8 @@ class _Room:
 def test_seat_index_is_positional_and_defensive():
     room = _Room(["p2", "p1", "p3"])
     assert seat_index(room, "p1") == 1
-    assert seat_index(room, "ghost") == -1   # absent -> -1, never raises
-    assert seat_index(None, "p1") == -1      # no room -> -1, never raises
+    assert seat_index(room, "ghost") == -1  # absent -> -1, never raises
+    assert seat_index(None, "p1") == -1  # no room -> -1, never raises
 
 
 # --- build_pc_census: canonical reads (R3/R4/R6/R7) ---
@@ -160,9 +161,7 @@ def test_build_trope_census_is_session_scoped():
     ]
 
 
-def test_one_bad_pc_is_isolated_others_and_trope_still_emit(
-    tmp_path, caplog
-):
+def test_one_bad_pc_is_isolated_others_and_trope_still_emit(tmp_path, caplog):
     """A PC whose build raises must loud-log mechanical_census.build_failed
     and NOT drop the healthy PC or the session trope row."""
     store = SqliteStore.open(str(tmp_path / "s.db"))
@@ -179,8 +178,14 @@ def test_one_bad_pc_is_isolated_others_and_trope_still_emit(
             inventory = type("I", (), {"items": [], "gold": 0})()
 
         good = type(
-            "G", (), {"core": _GoodCore(), "current_room": None,
-                      "abilities": [], "is_broken": lambda self: False}
+            "G",
+            (),
+            {
+                "core": _GoodCore(),
+                "current_room": None,
+                "abilities": [],
+                "is_broken": lambda self: False,
+            },
         )()
 
         class _BadCore:
@@ -191,8 +196,14 @@ def test_one_bad_pc_is_isolated_others_and_trope_still_emit(
                 raise RuntimeError("corrupt edge pool")
 
         bad = type(
-            "B", (), {"core": _BadCore(), "current_room": None,
-                      "abilities": [], "is_broken": lambda self: False}
+            "B",
+            (),
+            {
+                "core": _BadCore(),
+                "current_room": None,
+                "abilities": [],
+                "is_broken": lambda self: False,
+            },
         )()
 
         class _Snap:
@@ -212,8 +223,7 @@ def test_one_bad_pc_is_isolated_others_and_trope_still_emit(
 
         with caplog.at_level("WARNING"), store._conn:
             store._conn.execute(
-                "INSERT INTO events (kind, payload_json, created_at) "
-                "VALUES ('NARRATION','{}','t')"
+                "INSERT INTO events (kind, payload_json, created_at) VALUES ('NARRATION','{}','t')"
             )
             emit_mechanical_census(_Room(), _Snap())  # must not raise
         rows = store._conn.execute(
@@ -234,11 +244,17 @@ def test_census_payload_never_sets_encounter_field(tmp_path):
 
     class _C:
         core = type(
-            "C", (), {"name": "Rux", "xp": 0, "level": 1,
-                      "acquired_advancements": [], "statuses": [],
-                      "edge": type("E", (), {"current": 1, "max": 1,
-                                              "base_max": 1})(),
-                      "inventory": type("I", (), {"items": [], "gold": 0})()}
+            "C",
+            (),
+            {
+                "name": "Rux",
+                "xp": 0,
+                "level": 1,
+                "acquired_advancements": [],
+                "statuses": [],
+                "edge": type("E", (), {"current": 1, "max": 1, "base_max": 1})(),
+                "inventory": type("I", (), {"items": [], "gold": 0})(),
+            },
         )()
         current_room = None
         abilities: list = []
@@ -247,7 +263,11 @@ def test_census_payload_never_sets_encounter_field(tmp_path):
             return False
 
     c = build_pc_census(
-        character=_C(), player_id="p1", character_name="Rux",
-        seat=0, round_number=1, location=None,
+        character=_C(),
+        player_id="p1",
+        character_name="Rux",
+        seat=0,
+        round_number=1,
+        location=None,
     )
     assert "field" not in c or c.get("field") != "encounter"

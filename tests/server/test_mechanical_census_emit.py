@@ -2,6 +2,7 @@
 SEATED PC + one session trope_census row, all inside the open C2 txn,
 event_seq attributed, rolled back with the turn. Sealed-rounds: every
 seated PC every round, no acting-player bias (ADR-036)."""
+
 from sidequest.game.mechanical_census import emit_mechanical_census
 from sidequest.game.persistence import SqliteStore
 from sidequest.telemetry.watcher_hub import bind_event_store
@@ -22,15 +23,25 @@ class _Inv:
 
 def _char(name):
     core = type(
-        "C", (), {
-            "name": name, "xp": 0, "level": 1,
-            "acquired_advancements": [], "statuses": [],
-            "edge": _Edge(), "inventory": _Inv(),
+        "C",
+        (),
+        {
+            "name": name,
+            "xp": 0,
+            "level": 1,
+            "acquired_advancements": [],
+            "statuses": [],
+            "edge": _Edge(),
+            "inventory": _Inv(),
         },
     )()
     return type(
-        "Ch", (), {
-            "core": core, "current_room": None, "abilities": [],
+        "Ch",
+        (),
+        {
+            "core": core,
+            "current_room": None,
+            "abilities": [],
             "is_broken": lambda self: False,
         },
     )()
@@ -99,13 +110,12 @@ def test_empty_roster_emits_nothing_and_does_not_raise(tmp_path):
 
         with store._conn:
             store._conn.execute(
-                "INSERT INTO events (kind, payload_json, created_at) "
-                "VALUES ('NARRATION','{}','t')"
+                "INSERT INTO events (kind, payload_json, created_at) VALUES ('NARRATION','{}','t')"
             )
             emit_mechanical_census(_Empty(), _S())  # must not raise
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM turn_telemetry"
-        ).fetchone()[0] == 0  # honest no-rows, not an error
+        assert (
+            store._conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0] == 0
+        )  # honest no-rows, not an error
     finally:
         bind_event_store(None)
         store.close()

@@ -6,6 +6,7 @@ before block exit) rides the C2 txn: in_transaction is True and the sink
 attributes event_seq = MAX(seq) FROM events. If this fails, the census
 cannot be made atomic with the turn — STOP and escalate.
 """
+
 from sidequest.game.persistence import SqliteStore
 from sidequest.telemetry.watcher_hub import bind_event_store, publish_event
 
@@ -29,33 +30,28 @@ def test_publish_inside_emit_style_block_rides_the_c2_txn(tmp_path):
                     "INSERT INTO events (kind, payload_json, created_at) "
                     "VALUES ('NARRATION', '{}', 't')"
                 )
-                assert conn.in_transaction is True  # guard: the first DML opened the C2 txn before we publish
+                assert (
+                    conn.in_transaction is True
+                )  # guard: the first DML opened the C2 txn before we publish
                 publish_event(
                     "census",
                     {"player_id": "p1", "round": 4},
                     component="mechanical",
                 )
-                events_seq = conn.execute(
-                    "SELECT MAX(seq) FROM events"
-                ).fetchone()[0]
+                events_seq = conn.execute("SELECT MAX(seq) FROM events").fetchone()[0]
                 inflight = [
                     tuple(r)
                     for r in conn.execute(
-                        "SELECT event_seq, round, component, event_type "
-                        "FROM turn_telemetry"
+                        "SELECT event_seq, round, component, event_type FROM turn_telemetry"
                     ).fetchall()
                 ]
                 # rides the txn: event_seq = MAX(seq) of the in-flight event
-                assert inflight == [
-                    (events_seq, 4, "mechanical", "census")
-                ]
+                assert inflight == [(events_seq, 4, "mechanical", "census")]
                 raise RuntimeError("force rollback")
         except RuntimeError:
             pass
         # turn rolled back -> census rolled back atomically with it
-        assert conn.execute(
-            "SELECT COUNT(*) FROM turn_telemetry"
-        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM turn_telemetry").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     finally:
         bind_event_store(None)
@@ -69,13 +65,9 @@ def test_publish_outside_any_block_does_not_ride_a_turn(tmp_path):
     store = _store(tmp_path)
     try:
         bind_event_store(store)
-        publish_event(
-            "census", {"player_id": "p1", "round": 4}, component="mechanical"
-        )
+        publish_event("census", {"player_id": "p1", "round": 4}, component="mechanical")
         row = tuple(
-            store._conn.execute(
-                "SELECT event_seq, round, component FROM turn_telemetry"
-            ).fetchone()
+            store._conn.execute("SELECT event_seq, round, component FROM turn_telemetry").fetchone()
         )
         assert row == (None, 4, "mechanical")
     finally:

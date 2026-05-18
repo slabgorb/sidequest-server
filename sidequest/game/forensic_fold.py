@@ -246,16 +246,12 @@ def _mech_rows(raw_rows: list, want_type: str):
             payload = json.loads(row.get("payload_json"))
         except (KeyError, TypeError, AttributeError, ValueError, json.JSONDecodeError):
             seq_val = row.get("seq") if hasattr(row, "get") else None
-            logger.warning(
-                "forensic_fold.mechanical_unparseable_payload seq=%s", seq_val
-            )
+            logger.warning("forensic_fold.mechanical_unparseable_payload seq=%s", seq_val)
             if isinstance(seq_val, int):
                 unparseable.append(seq_val)
             continue
         if not isinstance(payload, dict):
-            logger.warning(
-                "forensic_fold.mechanical_non_dict_payload seq=%s", seq
-            )
+            logger.warning("forensic_fold.mechanical_non_dict_payload seq=%s", seq)
             unparseable.append(seq)
             continue
         parsed.append(payload)
@@ -275,18 +271,13 @@ def _pc_deltas(cur: dict, prior: dict | None) -> tuple[tuple[str, str], ...]:
         return ()
     out: list[tuple[str, str]] = []
     if cur.get("location") != prior.get("location"):
-        out.append(
-            ("location",
-             f"{prior.get('location')} → {cur.get('location')}")
-        )
+        out.append(("location", f"{prior.get('location')} → {cur.get('location')}"))
     ce, pe = cur.get("edge") or {}, prior.get("edge") or {}
     if ce.get("current") != pe.get("current"):
         try:
             d = int(ce.get("current")) - int(pe.get("current"))
             sign = "−" if d < 0 else "+"
-            out.append(("edge",
-                        f"{pe.get('current')}→{ce.get('current')} "
-                        f"({sign}{abs(d)})"))
+            out.append(("edge", f"{pe.get('current')}→{ce.get('current')} ({sign}{abs(d)})"))
         except (TypeError, ValueError):
             out.append(("edge", f"{pe.get('current')}→{ce.get('current')}"))
     if cur.get("xp") != prior.get("xp"):
@@ -297,10 +288,16 @@ def _pc_deltas(cur: dict, prior: dict | None) -> tuple[tuple[str, str], ...]:
     if cur.get("level") != prior.get("level"):
         out.append(("level", f"{prior.get('level')}→{cur.get('level')}"))
     # inventory: set-diff the aggregated digests by item name
-    cmap = {i["item"]: i["qty"] for i in cur.get("inventory") or []
-            if isinstance(i, dict) and "item" in i}
-    pmap = {i["item"]: i["qty"] for i in prior.get("inventory") or []
-            if isinstance(i, dict) and "item" in i}
+    cmap = {
+        i["item"]: i["qty"]
+        for i in cur.get("inventory") or []
+        if isinstance(i, dict) and "item" in i
+    }
+    pmap = {
+        i["item"]: i["qty"]
+        for i in prior.get("inventory") or []
+        if isinstance(i, dict) and "item" in i
+    }
     inv_bits: list[str] = []
     for item in sorted(set(cmap) | set(pmap)):
         cq, pq = cmap.get(item, 0), pmap.get(item, 0)
@@ -317,14 +314,11 @@ def _pc_deltas(cur: dict, prior: dict | None) -> tuple[tuple[str, str], ...]:
     ca = {a for a in (cur.get("acquired_advancements") or []) if isinstance(a, str)}
     pa = {a for a in (prior.get("acquired_advancements") or []) if isinstance(a, str)}
     if ca - pa:
-        out.append(("advancements",
-                    ", ".join("+" + a for a in sorted(ca - pa))))
+        out.append(("advancements", ", ".join("+" + a for a in sorted(ca - pa))))
     return tuple(out)
 
 
-def fold_mechanical_census(
-    current_rows: list, prior_rows: list
-) -> MechanicalFold:
+def fold_mechanical_census(current_rows: list, prior_rows: list) -> MechanicalFold:
     """Pure, no I/O, never raises (mirrors fold_turn_telemetry).
 
     current_rows = this round's component='mechanical' rows; prior_rows =
@@ -363,9 +357,18 @@ def fold_mechanical_census(
                 deltas=deltas,
                 absolute={
                     k: c.get(k)
-                    for k in ("edge", "location", "inventory", "xp",
-                              "level", "acquired_advancements", "down",
-                              "statuses", "gold", "chassis_room")
+                    for k in (
+                        "edge",
+                        "location",
+                        "inventory",
+                        "xp",
+                        "level",
+                        "acquired_advancements",
+                        "down",
+                        "statuses",
+                        "gold",
+                        "chassis_room",
+                    )
                 },
             )
         )
@@ -374,21 +377,22 @@ def fold_mechanical_census(
     if cur_tr:
         ct = cur_tr[-1]
         pt = pri_tr[-1] if pri_tr else None
-        cur_ids = {t.get("id"): t for t in ct.get("active_tropes") or []
-                   if isinstance(t, dict)}
-        pri_ids = {t.get("id"): t for t in (pt or {}).get("active_tropes")
-                   or [] if isinstance(t, dict)} if pt else {}
+        cur_ids = {t.get("id"): t for t in ct.get("active_tropes") or [] if isinstance(t, dict)}
+        pri_ids = (
+            {t.get("id"): t for t in (pt or {}).get("active_tropes") or [] if isinstance(t, dict)}
+            if pt
+            else {}
+        )
         bits: list[str] = []
         for tid in sorted(cur_ids, key=lambda x: (x is None, str(x))):
             ctp = cur_ids[tid]
             ptp = pri_ids.get(tid)
             if ptp is None:
-                bits.append(f"{tid} → {ctp.get('status')} "
-                            f"p={ctp.get('progress')}")
-            elif ptp.get("progress") != ctp.get("progress") or \
-                    ptp.get("status") != ctp.get("status"):
-                bits.append(f"{tid} {ptp.get('progress')}→"
-                            f"{ctp.get('progress')}")
+                bits.append(f"{tid} → {ctp.get('status')} p={ctp.get('progress')}")
+            elif ptp.get("progress") != ctp.get("progress") or ptp.get("status") != ctp.get(
+                "status"
+            ):
+                bits.append(f"{tid} {ptp.get('progress')}→{ctp.get('progress')}")
         trope = {
             "summary": "; ".join(bits) if bits else "· no trope change",
             "kind": "moved" if (pt is None or bits) else "static",
@@ -396,8 +400,7 @@ def fold_mechanical_census(
             "total_beats_fired": ct.get("total_beats_fired"),
         }
 
-    state = "moved" if any_moved or (trope and trope["kind"] == "moved") \
-        else "static"
+    state = "moved" if any_moved or (trope and trope["kind"] == "moved") else "static"
     return MechanicalFold(
         state=state,
         pcs=tuple(pcs),
@@ -438,9 +441,9 @@ def fold_mechanical_strip(all_rows: list) -> list[dict]:
         tlist = tr_by_round.get(rnd, [])
         if tlist:
             ct = tlist[-1]
-            if prev_tr is None or json.dumps(
-                ct.get("active_tropes"), sort_keys=True
-            ) != json.dumps(prev_tr.get("active_tropes"), sort_keys=True):
+            if prev_tr is None or json.dumps(ct.get("active_tropes"), sort_keys=True) != json.dumps(
+                prev_tr.get("active_tropes"), sort_keys=True
+            ):
                 moved = True
             prev_tr = ct
         out.append({"round": rnd, "state": "moved" if moved else "static"})

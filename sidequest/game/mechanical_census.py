@@ -5,6 +5,7 @@ Spec Reconciliation table R3-R9). These functions are PURE (no I/O, never
 raise) EXCEPT emit_mechanical_census, which calls publish_event and is
 fully wrapped so telemetry never crashes a turn (Phase 1 contract).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,9 +26,7 @@ def inventory_digest(items: list) -> list[dict]:
     for entry in items or []:
         name = entry.get("name") if isinstance(entry, dict) else None
         if not name:
-            logger.warning(
-                "mechanical_census.inventory_unnamed_entry entry=%r", entry
-            )
+            logger.warning("mechanical_census.inventory_unnamed_entry entry=%r", entry)
             continue
         qty = entry.get("quantity", 1)
         if not isinstance(qty, int):
@@ -95,9 +94,7 @@ def build_pc_census(
         "gold": getattr(getattr(core, "inventory", None), "gold", 0),
         "xp": getattr(core, "xp", 0),
         "level": getattr(core, "level", 1),
-        "acquired_advancements": list(
-            getattr(core, "acquired_advancements", None) or []
-        ),
+        "acquired_advancements": list(getattr(core, "acquired_advancements", None) or []),
         "ability_count": len(getattr(character, "abilities", None) or []),
     }
 
@@ -120,9 +117,7 @@ def build_trope_census(snapshot, round_number: int) -> dict:
         "round": round_number,
         "interaction": round_number,
         "active_tropes": tropes,
-        "turns_since_meaningful": getattr(
-            snapshot, "turns_since_meaningful", None
-        ),
+        "turns_since_meaningful": getattr(snapshot, "turns_since_meaningful", None),
         "total_beats_fired": getattr(snapshot, "total_beats_fired", None),
     }
 
@@ -144,9 +139,7 @@ def emit_mechanical_census(room, snapshot) -> None:
     from sidequest.telemetry.watcher_hub import publish_event
 
     try:
-        round_number = int(
-            getattr(getattr(snapshot, "turn_manager", None), "interaction", 0)
-        )
+        round_number = int(getattr(getattr(snapshot, "turn_manager", None), "interaction", 0))
     except (TypeError, ValueError):
         round_number = 0
     try:
@@ -159,9 +152,7 @@ def emit_mechanical_census(room, snapshot) -> None:
         locations = dict(getattr(snapshot, "character_locations", None) or {})
         seated = list(room.playing_player_ids()) if room is not None else []
     except Exception:  # noqa: BLE001 — telemetry must never crash a turn
-        logger.warning(
-            "mechanical_census.roster_resolution_failed", exc_info=True
-        )
+        logger.warning("mechanical_census.roster_resolution_failed", exc_info=True)
         return
 
     if not seated:
@@ -187,9 +178,7 @@ def emit_mechanical_census(room, snapshot) -> None:
             )
             publish_event("census", census, component="mechanical")
         except Exception:  # noqa: BLE001 — isolate one PC's failure
-            logger.warning(
-                "mechanical_census.build_failed pc=%s", pid, exc_info=True
-            )
+            logger.warning("mechanical_census.build_failed pc=%s", pid, exc_info=True)
             continue
 
     try:

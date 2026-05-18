@@ -446,9 +446,7 @@ def emit_event(
                 emitter_payload = payload_model.model_copy(update={"seq": seq})
             else:
                 payload_cls_emitter = type(payload_model)
-                emitter_payload = payload_cls_emitter.model_validate(
-                    {**swapped_dict, "seq": seq}
-                )
+                emitter_payload = payload_cls_emitter.model_validate({**swapped_dict, "seq": seq})
         elif swap_eligible and isinstance(payload_model, dict):
             # Dict payload (test fixtures + legacy raw-dict callers). The
             # swap operates on dicts directly, so just apply and return
