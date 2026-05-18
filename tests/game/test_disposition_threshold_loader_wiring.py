@@ -174,9 +174,7 @@ def test_inverted_thresholds_in_rules_yaml_fail_pack_load(
     It must NOT silently swap/clamp to a working band and load anyway —
     that would mask a pack authoring bug for the whole session."""
     pack = minimal_pack_factory(tmp_path)
-    _patch_rules_yaml(
-        pack.path, disposition_thresholds={"friendly_at": -5, "hostile_at": 5}
-    )
+    _patch_rules_yaml(pack.path, disposition_thresholds={"friendly_at": -5, "hostile_at": 5})
 
     with pytest.raises(GenreLoadError):
         load_genre_pack(pack.path)
@@ -190,9 +188,7 @@ def test_failed_threshold_load_does_not_mutate_global_state(
     load the bands are still the ±10 default — config is applied only on
     the success path, never before validation completes."""
     pack = minimal_pack_factory(tmp_path)
-    _patch_rules_yaml(
-        pack.path, disposition_thresholds={"friendly_at": 0, "hostile_at": 0}
-    )
+    _patch_rules_yaml(pack.path, disposition_thresholds={"friendly_at": 0, "hostile_at": 0})
 
     with pytest.raises(GenreLoadError):
         load_genre_pack(pack.path)
@@ -319,9 +315,7 @@ async def test_span_no_crossing_when_configured_band_not_reached(
     not actually produce (guards a regression that ignores config and
     flips at the hardcoded ±10)."""
     pack = minimal_pack_factory(tmp_path)
-    _patch_rules_yaml(
-        pack.path, disposition_thresholds={"friendly_at": 25, "hostile_at": -25}
-    )
+    _patch_rules_yaml(pack.path, disposition_thresholds={"friendly_at": 25, "hostile_at": -25})
     load_genre_pack(pack.path)
 
     captured = await _setup_watcher(monkeypatch, "test-50-13-wide-band-span")

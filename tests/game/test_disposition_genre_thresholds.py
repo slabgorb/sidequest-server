@@ -46,8 +46,8 @@ from pydantic import ValidationError
 
 from sidequest.game.disposition import (
     DEFAULT_ATTITUDE_THRESHOLDS,
-    AttitudeThresholds,
     Attitude,
+    AttitudeThresholds,
     Disposition,
     configure_attitude_thresholds,
     reset_attitude_thresholds,
@@ -85,7 +85,7 @@ def test_default_attitude_thresholds_constant_is_plus_minus_ten() -> None:
     without divergence between the two default sources."""
     assert DEFAULT_ATTITUDE_THRESHOLDS.friendly_at == 10
     assert DEFAULT_ATTITUDE_THRESHOLDS.hostile_at == -10
-    assert DEFAULT_ATTITUDE_THRESHOLDS == AttitudeThresholds()
+    assert AttitudeThresholds() == DEFAULT_ATTITUDE_THRESHOLDS
 
 
 def test_rules_config_disposition_thresholds_defaults_to_none() -> None:
@@ -291,8 +291,7 @@ def test_attitude_takes_no_required_arguments() -> None:
         for name, p in sig.parameters.items()
         if name != "self"
         and p.default is inspect.Parameter.empty
-        and p.kind
-        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.POSITIONAL_ONLY)
+        and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.POSITIONAL_ONLY)
     ]
     assert not required, (
         f"Disposition.attitude() grew required parameter(s) {required!r}; "
