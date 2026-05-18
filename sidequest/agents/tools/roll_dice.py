@@ -61,6 +61,10 @@ async def roll_dice(args: RollDiceArgs, ctx: ToolContext) -> ToolResult:
 
     ctx.otel_span.set_attribute("tool.dice.notation", args.notation)
     ctx.otel_span.set_attribute("tool.dice.value", total)
+    # Session/world attribution: a private roll must be bindable to its
+    # game in Jaeger without a temporal argument (story 50-24 AC-3).
+    ctx.otel_span.set_attribute("tool.dice.session_id", ctx.session_id)
+    ctx.otel_span.set_attribute("tool.dice.world_id", ctx.world_id)
     if args.seed is not None:
         ctx.otel_span.set_attribute("tool.dice.seed", args.seed)
 
