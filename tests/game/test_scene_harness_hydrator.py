@@ -1,16 +1,20 @@
-"""Tests for Stories 50-18 and 50-19 — scene-harness fixture hydrator.
+"""Tests for Stories 50-18, 50-19, 50-20, 50-21 — scene-harness fixture hydrator.
 
 Unit tests for ``sidequest.game.scene_harness.hydrate_fixture``: the YAML →
 ``GameSnapshot`` converter that backs ``POST /dev/scene/{name}`` per ADR-092.
 
-Layout:
-* Lines 80-329 — Story 50-18 RED tests (hydrator contract, error mapping,
-  yaml.safe_load discipline, path-traversal guard).
-* Lines 332+ — Story 50-19 tests (extend ``_hydrate_character()`` to
-  hydrate ``Character.known_facts`` from a ``known_facts:`` YAML block).
+Layout (sectioned by the comment banners below):
+* Story 50-18 — hydrator contract, error mapping, yaml.safe_load discipline,
+  path-traversal guard.
+* Story 50-19 — extend ``_hydrate_character()`` to hydrate
+  ``Character.known_facts`` from a ``known_facts:`` YAML block.
+* Story 50-23 — multi-PC ``characters:`` list hydration.
+* Story 50-20 — top-level ``scenario_state:`` block + DAG-order independence.
+* Story 50-21 — top-level ``encounter:`` block → ``GameSnapshot.encounter``
+  (StructuredEncounter, ADR-033).
 
-The 50-18 contract was the original spec for this file; the 50-19 cases
-extend it for the known_facts hydration path.
+The 50-18 contract was the original spec for this file; each later story's
+cases extend it for an additional hydration path.
 
 Hydrator contract (extracted from ADR-092 §Hydration rules and the four
 canonical fixtures in ``scenarios/fixtures/``):
@@ -1754,3 +1758,365 @@ def test_discovered_clue_skipping_middle_of_chain_still_raises(tmp_path: Path) -
     assert "clue_b" in msg, (
         f"DAG violation error must name the missing prerequisite (clue_b); got {msg!r}"
     )
+
+
+# ── Story 50-21 — hydrate StructuredEncounter (ADR-092 follow-on) ───────────
+#
+# `hydrate_fixture` must read a top-level `encounter:` block and project it
+# to `GameSnapshot.encounter` as a fully-initialized `StructuredEncounter`
+# (ADR-033 confrontation engine). The canonical combat_brawl_wasteland
+# fixture already carries:
+#
+#     encounter:
+#       type: combat
+#
+# which is currently SILENTLY DROPPED — snapshot.encounter stays None.
+# Wiring it through unblocks Wave 2 pre-armed combat fixtures for ADR-093
+# difficulty calibration.
+#
+# Spec interpretation (logged as a TEA test-design deviation):
+#   * Fixture YAML key is `type:` (short form). This is the AC-4 ground
+#     truth: the existing canonical fixture uses `type: combat` (lines
+#     66-68) and AC-8 forbids editing canonical fixtures, so the hydrator
+#     MUST map `type` → StructuredEncounter.encounter_type.
+#   * Per-metric override uses the model field names `player_metric:` /
+#     `opponent_metric:` with a nested `threshold:`, mirroring how 50-20's
+#     scenario_state hydrator keyed on model field names. Architect to
+#     confirm the override key shape during SPEC-CHECK.
+#   * AC-3 does not specify the EncounterMetric `name`. EncounterMetric
+#     requires a non-empty `name: str`; tests assert it is a non-empty
+#     string rather than a specific value, leaving the label to Dev.
+
+
+def _write_encounter_fixture(
+    tmp_path: Path,
+    name: str,
+    *,
+    encounter_yaml: str | None = None,
+) -> None:
+    """Helper: write a minimal combat fixture with an optional encounter block.
+
+    Mirrors ``_write_scenario_state_fixture`` — keeps test bodies focused on
+    the encounter assertion rather than YAML scaffolding. The genre/world/
+    character scaffold is the minimum the hydrator's required-field guards
+    accept.
+    """
+    body = (
+        "genre: mutant_wasteland\n"
+        "world: flickering_reach\n"
+        "character:\n"
+        "  name: Skar\n"
+        "  description: A scarred vault dweller with mismatched eyes\n"
+        "  personality: cautious but curious\n"
+        "  backstory: emerged from a sealed vault\n"
+        "  char_class: Beastkin\n"
+        "  race: Uplifted Animal\n"
+    )
+    if encounter_yaml is not None:
+        body += encounter_yaml
+    (tmp_path / f"{name}.yaml").write_text(body, encoding="utf-8")
+
+
+def test_encounter_block_missing_leaves_snapshot_none(tmp_path: Path) -> None:
+    """AC-1, AC-8: a fixture WITHOUT an encounter block hydrates normally and
+    ``snapshot.encounter`` stays at the GameSnapshot pydantic default (None).
+
+    Backward-compat guard: the three canonical fixtures that predate 50-21
+    (combat_dogfight_space, social_negotiation_tea, social_poker_wasteland)
+    carry no encounter block and must keep working unchanged.
+    """
+    _write_encounter_fixture(tmp_path, "no_encounter_block", encounter_yaml=None)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="no_encounter_block", fixtures_dir=tmp_path)
+
+    assert snapshot.encounter is None, (
+        f"omitting encounter: must leave snapshot.encounter at the GameSnapshot "
+        f"pydantic default (None); got {snapshot.encounter!r}"
+    )
+
+
+def test_combat_brawl_wasteland_fixture_encounter_hydrated() -> None:
+    """AC-4, AC-5 (wiring test): the REAL canonical combat_brawl_wasteland
+    fixture hydrates its ``encounter: type: combat`` block end-to-end.
+
+    CLAUDE.md "Every Test Suite Needs a Wiring Test" — this exercises the
+    production fixture path (CANONICAL_FIXTURES_DIR), not a tmp_path
+    synthetic, proving the encounter branch is reachable from the same
+    fixtures the dev-gated POST /dev/scene route loads.
+    """
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(
+        name="combat_brawl_wasteland", fixtures_dir=CANONICAL_FIXTURES_DIR
+    )
+
+    assert snapshot.encounter is not None, (
+        "combat_brawl_wasteland.yaml declares 'encounter: type: combat' — "
+        "snapshot.encounter must not be None"
+    )
+    assert isinstance(snapshot.encounter, StructuredEncounter), (
+        f"snapshot.encounter must be a StructuredEncounter, got "
+        f"{type(snapshot.encounter).__name__}"
+    )
+    assert snapshot.encounter.encounter_type == "combat", (
+        f"fixture 'type: combat' must map to encounter_type=='combat'; got "
+        f"{snapshot.encounter.encounter_type!r}"
+    )
+
+
+def test_encounter_default_metrics_initialized(tmp_path: Path) -> None:
+    """AC-3: an encounter block with only ``type:`` initializes both metrics
+    with defaults — current=0, starting=0, threshold=10, non-empty name.
+
+    EncounterMetric.threshold has NO pydantic default; the hydrator must
+    supply one or StructuredEncounter construction fails. The metric name
+    is left to Dev (AC-3 is silent) — assert only that it is non-empty so
+    the EncounterMetric non-blank constraint is satisfied.
+    """
+    _write_encounter_fixture(
+        tmp_path, "default_metrics", encounter_yaml="encounter:\n  type: combat\n"
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="default_metrics", fixtures_dir=tmp_path)
+
+    enc = snapshot.encounter
+    assert enc is not None, "encounter block was provided — must hydrate"
+    for label, metric in (
+        ("player_metric", enc.player_metric),
+        ("opponent_metric", enc.opponent_metric),
+    ):
+        assert metric.current == 0, f"{label}.current default must be 0; got {metric.current}"
+        assert metric.starting == 0, (
+            f"{label}.starting default must be 0; got {metric.starting}"
+        )
+        assert metric.threshold == 10, (
+            f"{label}.threshold default must be 10 (AC-3); got {metric.threshold}"
+        )
+        assert isinstance(metric.name, str) and metric.name.strip(), (
+            f"{label}.name must be a non-empty string; got {metric.name!r}"
+        )
+
+
+def test_encounter_missing_type_raises_FixtureValidationError(
+    tmp_path: Path,
+) -> None:
+    """AC-2: an encounter block present but WITHOUT ``type:`` raises
+    FixtureValidationError — no silent default to "combat".
+
+    Enforces CLAUDE.md "No Silent Fallbacks" and lang-review #11 (input
+    validation at the fixture-parser boundary). The error message must
+    name the offending field so a fixture author can fix it.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "encounter_no_type",
+        encounter_yaml="encounter:\n  player_metric:\n    threshold: 5\n",
+    )
+
+    from sidequest.game.scene_harness import (
+        FixtureValidationError,
+        hydrate_fixture,
+    )
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="encounter_no_type", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value).lower()
+    assert "type" in msg, (
+        f"missing-type error must name the encounter type field; got {msg!r}"
+    )
+
+
+def test_encounter_empty_type_raises_FixtureValidationError(tmp_path: Path) -> None:
+    """AC-2 (edge): ``type:`` present but empty/blank raises
+    FixtureValidationError — same discipline as the empty-genre guard
+    (test_empty_genre_string_raises_FixtureValidationError). An empty
+    string must not silently become a valid encounter_type.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "encounter_empty_type",
+        encounter_yaml='encounter:\n  type: ""\n',
+    )
+
+    from sidequest.game.scene_harness import (
+        FixtureValidationError,
+        hydrate_fixture,
+    )
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="encounter_empty_type", fixtures_dir=tmp_path)
+
+
+def test_encounter_custom_metric_threshold(tmp_path: Path) -> None:
+    """AC-3: a per-metric override sets that metric's threshold while the
+    un-overridden metric keeps the default (10).
+
+    Guards against an implementation that ignores overrides, or one that
+    applies a single override to both metrics.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "custom_threshold",
+        encounter_yaml=(
+            "encounter:\n"
+            "  type: combat\n"
+            "  player_metric:\n"
+            "    threshold: 25\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="custom_threshold", fixtures_dir=tmp_path)
+
+    enc = snapshot.encounter
+    assert enc is not None, "encounter block was provided — must hydrate"
+    assert enc.player_metric.threshold == 25, (
+        f"player_metric override must be honored; got "
+        f"{enc.player_metric.threshold} (expected 25)"
+    )
+    assert enc.opponent_metric.threshold == 10, (
+        f"un-overridden opponent_metric must keep the default 10; got "
+        f"{enc.opponent_metric.threshold}"
+    )
+
+
+def test_encounter_metric_override_any_yaml_key_order(tmp_path: Path) -> None:
+    """AC-7: metric overrides project correctly regardless of YAML key
+    order. ``opponent_metric`` declared before ``type`` must still produce
+    a valid encounter with both overrides applied.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "order_stable",
+        encounter_yaml=(
+            "encounter:\n"
+            "  opponent_metric:\n"
+            "    threshold: 7\n"
+            "  type: combat\n"
+            "  player_metric:\n"
+            "    threshold: 3\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="order_stable", fixtures_dir=tmp_path)
+
+    enc = snapshot.encounter
+    assert enc is not None, "encounter block was provided — must hydrate"
+    assert enc.encounter_type == "combat", (
+        f"type declared after opponent_metric must still bind; got "
+        f"{enc.encounter_type!r}"
+    )
+    assert enc.player_metric.threshold == 3, (
+        f"player_metric override lost under reordering; got "
+        f"{enc.player_metric.threshold}"
+    )
+    assert enc.opponent_metric.threshold == 7, (
+        f"opponent_metric override lost under reordering; got "
+        f"{enc.opponent_metric.threshold}"
+    )
+
+
+def test_encounter_block_not_a_mapping_raises(tmp_path: Path) -> None:
+    """AC-2 (paranoid): ``encounter:`` as a scalar string instead of a
+    mapping raises FixtureValidationError — mirrors
+    test_malformed_scenario_state_block_raises. Must NOT silently coerce
+    or skip.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "encounter_scalar",
+        encounter_yaml="encounter: combat\n",
+    )
+
+    from sidequest.game.scene_harness import (
+        FixtureValidationError,
+        hydrate_fixture,
+    )
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="encounter_scalar", fixtures_dir=tmp_path)
+
+
+def test_encounter_legacy_metric_key_raises_FixtureValidationError(
+    tmp_path: Path,
+) -> None:
+    """Paranoid (coverage beyond enumerated ACs — logged as TEA deviation):
+    StructuredEncounter has an explicit ``_reject_legacy_metric``
+    model_validator that raises on the single-dial ``metric`` key. A
+    fixture carrying ``metric:`` inside the encounter block must surface as
+    FixtureValidationError at the module boundary — never a raw
+    pydantic ValidationError / ValueError leak.
+
+    This enforces the SAME boundary contract every other block obeys
+    (character, npcs, scenario_state all re-wrap pydantic errors). Rationale
+    for adding it: the model already guards legacy metric; the hydrator
+    must not let that guard leak an un-wrapped exception type that the
+    HTTP 404/422 mapping can't classify.
+    """
+    _write_encounter_fixture(
+        tmp_path,
+        "encounter_legacy_metric",
+        encounter_yaml=(
+            "encounter:\n"
+            "  type: combat\n"
+            "  metric:\n"
+            "    name: legacy\n"
+            "    threshold: 10\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import (
+        FixtureValidationError,
+        hydrate_fixture,
+    )
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="encounter_legacy_metric", fixtures_dir=tmp_path)
+
+
+def test_canonical_fixtures_still_hydrate_with_encounter_implementation() -> None:
+    """AC-8 (backwards-compat wiring test): all four canonical fixtures
+    hydrate cleanly after the encounter branch is added.
+
+    Only combat_brawl_wasteland carries an encounter block — it must now
+    produce a non-None StructuredEncounter (encounter_type=='combat'). The
+    other three carry NO encounter block and must keep
+    snapshot.encounter==None. Guards against an implementation that
+    requires the new block or mis-detects it.
+    """
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    expectations = {
+        "combat_brawl_wasteland": "combat",
+        "combat_dogfight_space": None,
+        "social_negotiation_tea": None,
+        "social_poker_wasteland": None,
+    }
+    for fixture_name, expected_type in expectations.items():
+        snapshot = hydrate_fixture(
+            name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR
+        )
+        if expected_type is None:
+            assert snapshot.encounter is None, (
+                f"{fixture_name}: no encounter block — snapshot.encounter must "
+                f"stay None; got {snapshot.encounter!r}"
+            )
+        else:
+            assert isinstance(snapshot.encounter, StructuredEncounter), (
+                f"{fixture_name}: declares an encounter block — must hydrate a "
+                f"StructuredEncounter; got {type(snapshot.encounter).__name__}"
+            )
+            assert snapshot.encounter.encounter_type == expected_type, (
+                f"{fixture_name}: encounter_type mismatch; got "
+                f"{snapshot.encounter.encounter_type!r}, expected {expected_type!r}"
+            )

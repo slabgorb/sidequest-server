@@ -731,6 +731,76 @@ def test_dev_scene_route_persists_scenario_state_end_to_end(
     assert state.tension == pytest.approx(0.5)
 
 
+def test_dev_scene_route_persists_encounter_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC-6 (story 50-21): POST /dev/scene/{name} with an encounter fixture →
+    snapshot persists with encounter populated → SqliteStore round-trip
+    preserves encounter_type and the per-metric threshold override.
+
+    The integration probe that proves Wave 2 pre-armed combat fixtures
+    will work: without this, the in-memory hydrator tests could pass while
+    the wire drops StructuredEncounter on the floor (mirrors the 50-20
+    scenario_state end-to-end probe directly above).
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "combat_pretier_probe.yaml").write_text(
+        "genre: mutant_wasteland\n"
+        "world: flickering_reach\n"
+        "character:\n"
+        "  name: Skar\n  description: A scarred vault dweller\n"
+        "  personality: cautious\n  backstory: emerged from a vault\n"
+        "  char_class: Beastkin\n  race: Uplifted Animal\n"
+        "encounter:\n"
+        "  type: combat\n"
+        "  player_metric:\n"
+        "    threshold: 25\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/combat_pretier_probe")
+    assert r.status_code == 200, (
+        f"combat fixture with encounter must 200 at the wire; "
+        f"got {r.status_code} body={r.text}"
+    )
+    slug = r.json()["slug"]
+
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+
+    store = SqliteStore(db_path_for_slug(save_dir, slug))
+    store.initialize()
+    saved = store.load()
+    assert saved is not None, (
+        "save file exists but SqliteStore.load returned None — persistence failed after hydration"
+    )
+    snapshot = saved.snapshot
+
+    enc = snapshot.encounter
+    assert isinstance(enc, StructuredEncounter), (
+        "encounter must round-trip through SqliteStore for slug-connect to "
+        f"inherit the pre-armed combat state; got {type(enc).__name__}"
+    )
+    assert enc.encounter_type == "combat", (
+        f"encounter_type drifted across persistence; got {enc.encounter_type!r}"
+    )
+    assert enc.player_metric.threshold == 25, (
+        f"per-metric threshold override lost across persistence; got "
+        f"{enc.player_metric.threshold} (expected 25)"
+    )
+    assert enc.opponent_metric.threshold == 10, (
+        f"un-overridden opponent_metric default lost across persistence; got "
+        f"{enc.opponent_metric.threshold} (expected 10)"
+    )
+
+
 def test_dev_scene_route_rejects_scenario_state_dag_violation_with_422(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
