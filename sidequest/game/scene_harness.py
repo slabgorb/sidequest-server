@@ -40,7 +40,7 @@ from sidequest.game.session import GameSnapshot, Npc
 from sidequest.genre.models.scenario import ClueGraph
 from sidequest.magic.state import MagicState
 from sidequest.protocol.models import AbilityDefinition
-from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+from sidequest.telemetry import watcher_hub as _hub
 
 logger = logging.getLogger(__name__)
 
@@ -566,7 +566,11 @@ def _hydrate_magic_state(raw: Any, *, fixture_name: str) -> MagicState:
             f"fixture {fixture_name!r}: magic_state validation failed — {exc}"
         ) from exc
 
-    _watcher_publish(
+    # Module-qualified call (not a bound import) so the standard
+    # ``_capture_events`` test harness — which monkeypatches
+    # ``watcher_hub.publish_event`` — intercepts this event, matching the
+    # established ``scene_harness_router`` emitter convention.
+    _hub.publish_event(
         "magic.state_hydrated",
         {
             "fixture": fixture_name,

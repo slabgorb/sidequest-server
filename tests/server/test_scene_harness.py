@@ -912,3 +912,53 @@ def test_dev_scene_route_rejects_malformed_magic_config_with_422(
         f"malformed magic_state.config must 422 at the wire; "
         f"got {r.status_code} body={r.text}"
     )
+
+
+def test_scene_harness_emits_magic_state_hydrated_span(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """50-22 OTEL wiring (CLAUDE.md observability principle + "Every Test
+    Suite Needs a Wiring Test"): hydrating a ``magic_state:`` fixture must
+    emit a ``magic.state_hydrated`` watcher event so the GM panel can
+    confirm the fixture staged real magic state rather than the narrator
+    improvising one.
+
+    Found by simplify-quality during verify: the event was emitted but
+    unasserted, and the original bound-import (`publish_event as
+    _watcher_publish`) made it uncapturable by the standard
+    ``_capture_events`` harness. The emitter was realigned to the
+    ``scene_harness_router`` convention (`_hub.publish_event`) so this
+    test exercises the real production path.
+    """
+    captured = _capture_events(monkeypatch)
+
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "magic_otel.yaml").write_text(_MAGIC_FIXTURE_50_22, encoding="utf-8")
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/magic_otel")
+    assert r.status_code == 200, f"fixture must hydrate; got {r.status_code} body={r.text}"
+
+    magic_events = [e for e in captured if e[0] == "magic.state_hydrated"]
+    assert magic_events, (
+        f"hydrating magic_state: must emit a 'magic.state_hydrated' watcher event; "
+        f"captured event types: {sorted({e[0] for e in captured})!r}"
+    )
+    event_type, fields, meta = magic_events[0]
+    # Field-level identity — the lie-detector needs real values, not a bare
+    # truthy (a silently-empty-hydrated fixture would carry wrong slugs).
+    assert fields["world_slug"] == "coyote_star", (
+        f"event must report the hydrated world_slug; got {fields!r}"
+    )
+    assert fields["genre_slug"] == "space_opera"
+    assert fields["control_tier_actors"] == 1, (
+        f"event must report the 1 control_tier actor from the fixture; got {fields!r}"
+    )
+    assert meta["component"] == "magic", (
+        f"event must be tagged component=magic for the Subsystems tab; got {meta!r}"
+    )
