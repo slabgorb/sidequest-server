@@ -227,10 +227,13 @@ def test_message_type_complete_count() -> None:
     surfaced to the MP party (the narrator can't echo player speech per
     SOUL.md Agency, and ACTION_REVEAL is wiped on barrier-fire); bumped
     47 → 48.
+    ADR-107 (story 50-25) added ASIDE_ANSWER — the out-of-band OOC GM
+    reply to a player aside; never a turn record, broadcast table-wide.
+    Intentional addition, NOT a regression; bumped 48 → 49.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 48
+    assert len(MessageType) == 49
 
 
 # ===========================================================================
