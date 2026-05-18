@@ -24,10 +24,11 @@ Usage::
 Exit codes:
     0  success
     1  Claude backend error
-    2  Ollama backend error (generic)
     3  configuration error (bad args, missing/invalid JSONL, non-LlmClient)
     4  Ollama unreachable — graceful no-op; the live A/B is operator-evidence
-       only and must be captured on the M3 Ultra (report records the note)
+       only and must be captured on the M3 Ultra (report records the note).
+       Any OllamaClientError (down, transport, malformed) routes here: on the
+       operator path "Ollama raised" and "Ollama absent" are one signal.
 """
 
 from __future__ import annotations
@@ -55,7 +56,8 @@ from sidequest.corpus.schema import TrainingPair
 
 EXIT_PASS = 0
 EXIT_CLAUDE_ERROR = 1
-EXIT_OLLAMA_ERROR = 2
+# Exit code 2 is intentionally unused: all OllamaClientError routes to
+# EXIT_OLLAMA_UNREACHABLE (operator-evidence no-op, AC4). See module docstring.
 EXIT_CONFIG_ERROR = 3
 EXIT_OLLAMA_UNREACHABLE = 4
 
