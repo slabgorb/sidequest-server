@@ -222,21 +222,37 @@ async function selectTurn(round){
         : '<span class="ok">clean</span>')+'</span>'+
     '</div>';
 
-  // ---- RECORDED THIS ROUND (per-round, varies — scrapbook + narrative +
-  // events). The game_state snapshot is TERMINAL-only (one row, round 117);
-  // showing it per-round is a lie. The per-round recorded reality lives in
-  // scrapbook_entries.location/scene + narrative + events. ----
+  // ---- RECORDED THIS ROUND (per-round, varies). Split-party honest:
+  // scrapbook is ONE scene/round (the illustration's setting, NOT "where
+  // the party is" — a split party has no single location). The real
+  // per-round multi-location signal is the Place-category KnownFacts the
+  // narrator GROUNDED this round (provenance seq within the round's
+  // range) — that lists every place touched this round, 1 or many.
+  // Per-PC standing location is terminal-only → terminal-snapshot evidence. ----
   const sb = b.scrapbook || [];
-  const locs = [...new Set(sb.map(s => s.location).filter(x => x != null && x !== ''))];
   const scenes = sb.map(s => (s.scene_title||'?')+' ('+(s.scene_type||'?')+
-    ') ['+(s.render_status||'?')+']');
+    ') @ '+(s.location||'?')+' ['+(s.render_status||'?')+']');
+  const evSeqs = (b.events||[]).map(e => +e.seq).filter(Number.isFinite);
+  const loSeq = evSeqs.length ? Math.min(...evSeqs) : null;
+  const hiSeq = evSeqs.length ? Math.max(...evSeqs) : null;
+  const placesThisRound = [];
+  if(loSeq != null){
+    for(const [,v] of derEntries){
+      if(v.value && v.value.category === 'Place'){
+        const ss = (v.source_seqs||[]).map(Number);
+        if(ss.some(x => x >= loSeq && x <= hiSeq)) placesThisRound.push(v.value.summary);
+      }
+    }
+  }
   const authors = [...new Set((b.narrative||[]).map(n => n.author).filter(Boolean))];
   const evKinds = {};
   for(const e of (b.events||[])) evKinds[e.kind] = (evKinds[e.kind]||0)+1;
   const evLine = Object.entries(evKinds).map(([k,n]) => k+'×'+n).join(' ') || '—';
   const recRows = [
-    ['location', locs.length ? locs.join('  ·  ') : '— none recorded this round'],
-    ['scene', scenes.length ? scenes.join('  ·  ') : '—'],
+    ['places grounded (R'+round+')', placesThisRound.length
+      ? placesThisRound.join('  ·  ')
+      : '— no new place grounded this round'],
+    ['scene (one per round)', scenes.length ? scenes.join('  ·  ') : '— none'],
     ['narrators', authors.length ? authors.join(', ') : '—'],
     ['events', evLine],
   ];
