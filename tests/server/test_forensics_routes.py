@@ -78,9 +78,15 @@ def test_turn_bundle_unknown_slug_is_empty_not_500(tmp_path):
     client = _client(tmp_path)
     resp = client.get("/api/debug/save/nope/turn/1")
     assert resp.status_code == 200
-    assert resp.json() == {"round": 1, "narrative": [], "events": [],
-                           "derived": {}, "projection": [], "scrapbook": [],
-                           "unparseable_seqs": []}
+    assert resp.json() == {
+        "round": 1,
+        "narrative": [],
+        "events": [],
+        "derived": {},
+        "projection": [],
+        "scrapbook": [],
+        "unparseable_seqs": [],
+    }
 
 
 def test_turn_bundle_corrupt_save_is_empty_not_500(tmp_path):
@@ -92,9 +98,15 @@ def test_turn_bundle_corrupt_save_is_empty_not_500(tmp_path):
     client = _client(tmp_path)
     resp = client.get("/api/debug/save/corruptslug/turn/1")
     assert resp.status_code == 200
-    assert resp.json() == {"round": 1, "narrative": [], "events": [],
-                           "derived": {}, "projection": [], "scrapbook": [],
-                           "unparseable_seqs": []}
+    assert resp.json() == {
+        "round": 1,
+        "narrative": [],
+        "events": [],
+        "derived": {},
+        "projection": [],
+        "scrapbook": [],
+        "unparseable_seqs": [],
+    }
 
 
 def test_timeline_unknown_slug_is_empty_not_500(tmp_path):

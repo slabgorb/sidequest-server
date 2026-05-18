@@ -105,9 +105,7 @@ def _events_for_round(
         sql = f"SELECT seq, kind, created_at FROM events WHERE {_NORM_EV_TS} < ? ORDER BY seq"
         return conn.execute(sql, (hi_ts,)).fetchall()
     if first_round and hi_ts is None:
-        return conn.execute(
-            "SELECT seq, kind, created_at FROM events ORDER BY seq"
-        ).fetchall()
+        return conn.execute("SELECT seq, kind, created_at FROM events ORDER BY seq").fetchall()
     if hi_ts is None:
         sql = f"SELECT seq, kind, created_at FROM events WHERE {_NORM_EV_TS} >= ? ORDER BY seq"
         return conn.execute(sql, (lo_ts,)).fetchall()
@@ -136,8 +134,7 @@ def build_timeline(conn: sqlite3.Connection) -> list[dict]:
         authors = [
             r["author"]
             for r in conn.execute(
-                "SELECT DISTINCT author FROM narrative_log "
-                "WHERE round_number = ? ORDER BY author",
+                "SELECT DISTINCT author FROM narrative_log WHERE round_number = ? ORDER BY author",
                 (rnd,),
             ).fetchall()
         ]
@@ -199,9 +196,13 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
     entry = _timeline_entry(conn, round_number)
 
     narrative = [
-        {"round": r["round_number"], "author": r["author"],
-         "content": r["content"], "tags": _safe_json_list(r["tags"]),
-         "created_at": r["created_at"]}
+        {
+            "round": r["round_number"],
+            "author": r["author"],
+            "content": r["content"],
+            "tags": _safe_json_list(r["tags"]),
+            "created_at": r["created_at"],
+        }
         for r in conn.execute(
             "SELECT round_number, author, content, tags, created_at "
             "FROM narrative_log WHERE round_number = ? ORDER BY id",
@@ -210,9 +211,15 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
     ]
 
     if entry is None or entry["seq_start"] is None:
-        return {"round": round_number, "narrative": narrative, "events": [],
-                "derived": {}, "projection": [], "scrapbook": [],
-                "unparseable_seqs": []}
+        return {
+            "round": round_number,
+            "narrative": narrative,
+            "events": [],
+            "derived": {},
+            "projection": [],
+            "scrapbook": [],
+            "unparseable_seqs": [],
+        }
 
     seq_start, seq_end = entry["seq_start"], entry["seq_end"]
     raw_events = conn.execute(
@@ -221,29 +228,41 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
         (seq_start, seq_end),
     ).fetchall()
     events = [
-        {"seq": e["seq"], "kind": e["kind"],
-         "payload": _safe_json(e["payload_json"]), "created_at": e["created_at"]}
+        {
+            "seq": e["seq"],
+            "kind": e["kind"],
+            "payload": _safe_json(e["payload_json"]),
+            "created_at": e["created_at"],
+        }
         for e in raw_events
     ]
 
     fold_rows = conn.execute(
-        "SELECT seq, kind, payload_json, created_at FROM events "
-        "WHERE seq <= ? ORDER BY seq",
+        "SELECT seq, kind, payload_json, created_at FROM events WHERE seq <= ? ORDER BY seq",
         (seq_end,),
     ).fetchall()
     fold = fold_state_deltas(
-        [EventRow(seq=r["seq"], kind=r["kind"],
-                  payload_json=r["payload_json"], created_at=r["created_at"])
-         for r in fold_rows]
+        [
+            EventRow(
+                seq=r["seq"],
+                kind=r["kind"],
+                payload_json=r["payload_json"],
+                created_at=r["created_at"],
+            )
+            for r in fold_rows
+        ]
     )
     derived = {
-        k: {"value": v.value, "source_seqs": list(v.source_seqs)}
-        for k, v in fold.derived.items()
+        k: {"value": v.value, "source_seqs": list(v.source_seqs)} for k, v in fold.derived.items()
     }
 
     projection = [
-        {"event_seq": p["event_seq"], "player_id": p["player_id"],
-         "include": p["include"], "payload": _safe_json(p["payload_json"])}
+        {
+            "event_seq": p["event_seq"],
+            "player_id": p["player_id"],
+            "include": p["include"],
+            "payload": _safe_json(p["payload_json"]),
+        }
         for p in conn.execute(
             "SELECT event_seq, player_id, include, payload_json "
             "FROM projection_cache WHERE event_seq >= ? AND event_seq <= ? "
@@ -253,12 +272,16 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
     ]
 
     scrapbook = [
-        {"scene_title": s["scene_title"], "scene_type": s["scene_type"],
-         "location": s["location"], "image_url": s["image_url"],
-         "narrative_excerpt": s["narrative_excerpt"],
-         "world_facts": _safe_json_list(s["world_facts"]),
-         "npcs_present": _safe_json_list(s["npcs_present"]),
-         "render_status": s["render_status"]}
+        {
+            "scene_title": s["scene_title"],
+            "scene_type": s["scene_type"],
+            "location": s["location"],
+            "image_url": s["image_url"],
+            "narrative_excerpt": s["narrative_excerpt"],
+            "world_facts": _safe_json_list(s["world_facts"]),
+            "npcs_present": _safe_json_list(s["npcs_present"]),
+            "render_status": s["render_status"],
+        }
         for s in conn.execute(
             "SELECT scene_title, scene_type, location, image_url, "
             "narrative_excerpt, world_facts, npcs_present, render_status "
@@ -267,10 +290,15 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
         ).fetchall()
     ]
 
-    return {"round": round_number, "narrative": narrative, "events": events,
-            "derived": derived, "projection": projection,
-            "scrapbook": scrapbook,
-            "unparseable_seqs": list(fold.unparseable_seqs)}
+    return {
+        "round": round_number,
+        "narrative": narrative,
+        "events": events,
+        "derived": derived,
+        "projection": projection,
+        "scrapbook": scrapbook,
+        "unparseable_seqs": list(fold.unparseable_seqs),
+    }
 
 
 def open_save_readonly(save_dir: Path, slug: str) -> sqlite3.Connection | None:

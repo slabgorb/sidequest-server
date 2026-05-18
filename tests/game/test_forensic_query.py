@@ -80,9 +80,9 @@ def test_list_saves_does_not_mutate_the_save(tmp_path):
 
     result = list_saves(saves)
 
-    assert {r["slug"] for r in result} == {"ro_test"}     # save is readable
-    assert db.read_bytes() == bytes_before                # main db not rewritten
-    assert db.stat().st_mtime_ns == mtime_before          # main db not touched
+    assert {r["slug"] for r in result} == {"ro_test"}  # save is readable
+    assert db.read_bytes() == bytes_before  # main db not rewritten
+    assert db.stat().st_mtime_ns == mtime_before  # main db not touched
 
 
 def test_list_saves_skips_save_with_no_meta_loudly(tmp_path, caplog):
