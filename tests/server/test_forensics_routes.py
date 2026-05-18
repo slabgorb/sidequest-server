@@ -154,6 +154,9 @@ def test_forensics_route_is_wired_and_serves_html(tmp_path):
     assert "Save Forensics" in resp.text
     assert "/api/debug/saves" in resp.text  # the page actually calls the API
     assert "NOT this round" in resp.text  # honesty contract visible
+    assert "decision telemetry (this round)" in resp.text  # the new lane label
+    assert "save predates the substrate" in resp.text  # honest-empty contract visible
+    assert "signals</span>" in resp.text  # decision-telemetry lane meta count shape
 
 
 def test_snapshot_endpoint_returns_persisted_state(tmp_path):

@@ -50,6 +50,7 @@
   details[open] > summary::before { content:"▾ "; }
   details > summary .meta { color:var(--absent); margin-left:8px; }
   .ev-body { padding:4px 0 10px 14px; }
+  .tel-fields { margin:0; }
   table { width:100%; border-collapse:collapse; }
   td,th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
   th { color:var(--absent); font-weight:600; }
@@ -289,6 +290,27 @@ async function selectTurn(round){
 
   const evCount = (b.events||[]).length, scCount = (b.scrapbook||[]).length;
 
+  const tel = (b.telemetry) || {rows:[],by_component:{},total:0,unparseable_seqs:[]};
+  const telBody = tel.total
+    ? Object.keys(tel.by_component).sort().map(comp => {
+        const ets = tel.by_component[comp];
+        const head = '<div class="seqs">'+esc(comp)+' — '+
+          Object.keys(ets).sort().map(et => esc(et)+'×'+esc(ets[et])).join(', ')+
+          '</div>';
+        const lines = tel.rows.filter(r => r.component === comp).map(r =>
+          '<tr><td class="tier-derived">'+esc(r.component)+'</td><td>'+
+          esc(r.event_type)+'</td><td><pre class="tel-fields">'+j(r.fields)+
+          '</pre></td></tr>').join('');
+        return head+'<table><tr><th>component</th><th>event_type</th>'+
+          '<th>fields</th></tr>'+lines+'</table>';
+      }).join('') +
+      (tel.unparseable_seqs.length
+        ? '<div class="tier-absent">— '+esc(tel.unparseable_seqs.length)+
+          ' unparseable telemetry row(s) skipped (seq '+
+          tel.unparseable_seqs.map(esc).join(', ')+')</div>'
+        : '')
+    : '<span class="tier-absent">— no decision telemetry (save predates the substrate)</span>';
+
   drill.innerHTML =
     '<section><p class="lbl">comparison · round '+esc(round)+
       ' — what the narrator had established, vs what was recorded this round'+
@@ -309,6 +331,9 @@ async function selectTurn(round){
         proj+'</table></div></details>'+
       '<details><summary>scrapbook<span class="meta">'+esc(scCount)+
         ' entries</span></summary><div class="ev-body">'+scrap+'</div></details>'+
+      '<details><summary>decision telemetry (this round)<span class="meta">'+
+        esc(tel.total)+' signals</span></summary><div class="ev-body">'+
+        telBody+'</div></details>'+
       '<details><summary>terminal snapshot<span class="meta">round '+
         esc((snap && snap.turn_manager && snap.turn_manager.round) ?? '?')+
         ' · the ONLY stored snapshot — identical on every round, NOT this round’s state'+
