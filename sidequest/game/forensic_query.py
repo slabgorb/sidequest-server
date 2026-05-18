@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from sidequest.game.event_log import EventRow
-from sidequest.game.forensic_fold import fold_known_facts
+from sidequest.game.forensic_fold import fold_known_facts, fold_turn_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +167,64 @@ def _safe_json(raw: str | None):
         return {"__unparseable__": raw}
 
 
+def _empty_telemetry() -> dict:
+    """Return a fresh empty-telemetry dict.
+
+    A factory (not a module constant) so every caller gets its own dict —
+    no shared-reference risk if a caller accidentally mutates the return.
+    The inner containers are always-empty so no deep-copy is needed.
+    """
+    return {"rows": [], "by_component": {}, "total": 0, "unparseable_seqs": []}
+
+
+def _telemetry_for_round(
+    conn: sqlite3.Connection, seq_start: int, seq_end: int, round_number: int
+) -> dict:
+    """Read this round's turn_telemetry rows and fold them.
+
+    Bucketing: rows whose ``event_seq`` is within [seq_start, seq_end]
+    OR whose ``round`` column equals ``round_number`` (covers rows emitted
+    with a NULL event_seq, e.g. beat-selection telemetry).
+
+    A missing table (old saves predating the telemetry substrate) is treated
+    exactly like zero rows — the connection is ?mode=ro and must NEVER create
+    the table.  Logs loudly on unexpected query error (No-Silent-Fallbacks).
+    """
+    assert seq_start is not None and seq_end is not None, (
+        "_telemetry_for_round requires a real seq window; build_turn_bundle "
+        "must return the empty/unknown-round bundle before calling this"
+    )
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_telemetry'"
+    ).fetchone()
+    if has_table is None:
+        return _empty_telemetry()
+    rows = conn.execute(
+        "SELECT seq, event_seq, round, ts, component, event_type, payload_json "
+        "FROM turn_telemetry "
+        "WHERE (event_seq IS NOT NULL AND event_seq >= ? AND event_seq <= ?) "
+        "   OR (round = ?) "
+        "ORDER BY seq",
+        (seq_start, seq_end, round_number),
+    ).fetchall()
+    fold = fold_turn_telemetry([dict(r) for r in rows])
+    return {
+        "rows": [
+            {
+                "seq": tr.seq,
+                "component": tr.component,
+                "event_type": tr.event_type,
+                "ts": tr.ts,
+                "fields": tr.fields,
+            }
+            for tr in fold.rows
+        ],
+        "by_component": fold.by_component,
+        "total": fold.total,
+        "unparseable_seqs": list(fold.unparseable_seqs),
+    }
+
+
 def _safe_json_list(raw: str | None) -> list:
     """Read-only display decode for list-typed stored columns. Never raises
     (forensics inspects corrupt saves); on null/parse-failure/non-list it
@@ -220,9 +278,11 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
             "projection": [],
             "scrapbook": [],
             "unparseable_seqs": [],
+            "telemetry": _empty_telemetry(),
         }
 
     seq_start, seq_end = entry["seq_start"], entry["seq_end"]
+    telemetry = _telemetry_for_round(conn, seq_start, seq_end, round_number)
     raw_events = conn.execute(
         "SELECT seq, kind, payload_json, created_at FROM events "
         "WHERE seq >= ? AND seq <= ? ORDER BY seq",
@@ -299,6 +359,7 @@ def build_turn_bundle(conn: sqlite3.Connection, round_number: int) -> dict:
         "projection": projection,
         "scrapbook": scrapbook,
         "unparseable_seqs": list(fold.unparseable_seqs),
+        "telemetry": telemetry,
     }
 
 
