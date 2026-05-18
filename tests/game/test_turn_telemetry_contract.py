@@ -4,6 +4,7 @@
 If any of these fail, the sink's transaction-mode + event_seq derivation
 is unsound and the rest of the plan must not proceed.
 """
+
 from sidequest.game.persistence import SqliteStore
 from sidequest.telemetry import watcher_hub
 from sidequest.telemetry.watcher_hub import bind_event_store

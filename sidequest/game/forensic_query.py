@@ -66,7 +66,13 @@ def list_saves(save_dir: Path) -> list[dict]:
                     if has_tt
                     else 0
                 )
-            except sqlite3.Error:
+            except sqlite3.Error as exc:
+                logger.warning(
+                    "forensic_query.telemetry_count_failed save=%s err=%s",
+                    slug_dir.name,
+                    exc,
+                    exc_info=True,
+                )
                 telemetry_rows = 0
         except Exception as exc:  # noqa: BLE001 — best-effort enumeration
             logger.warning("forensic_query.open_failed slug=%s err=%s", slug_dir.name, exc)
@@ -202,7 +208,9 @@ def _telemetry_for_round(
 
     A missing table (old saves predating the telemetry substrate) is treated
     exactly like zero rows — the connection is ?mode=ro and must NEVER create
-    the table.  Logs loudly on unexpected query error (No-Silent-Fallbacks).
+    the table.  Unexpected query errors propagate to the caller (the forensics
+    route handler logs them loudly and returns the never-500 empty bundle);
+    this function does not catch them.
     """
     assert seq_start is not None and seq_end is not None, (
         "_telemetry_for_round requires a real seq window; build_turn_bundle "
