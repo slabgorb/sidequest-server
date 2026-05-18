@@ -110,8 +110,8 @@ async function selectTurn(round, el){
     '/turn/'+round); }
   catch(e){ drill.innerHTML = '<p class="warn">'+esc(e.message)+'</p>'; return; }
   let snap = null;
-  try { snap = await getJSON('/api/debug/state?session_key='+
-    encodeURIComponent(curSlug)); } catch(e){ snap = {error:e.message}; }
+  try { snap = await getJSON('/api/debug/save/'+
+    encodeURIComponent(curSlug)+'/snapshot'); } catch(e){ snap = {error:e.message}; }
 
   const narr = b.narrative.map(n =>
     '<pre class="tier-stored"><b>'+esc(n.author)+':</b> '+esc(n.content)+'</pre>')

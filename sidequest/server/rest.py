@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from sidequest.game.forensic_query import (
+    _safe_json,
     build_timeline,
     build_turn_bundle,
     list_saves,
@@ -442,9 +443,7 @@ def create_rest_router() -> APIRouter:
         return list_saves(request.app.state.save_dir)
 
     @router.get("/api/debug/save/{slug}/timeline")
-    async def debug_save_timeline(
-        request: Request, slug: str
-    ) -> list[dict[str, Any]]:
+    async def debug_save_timeline(request: Request, slug: str) -> list[dict[str, Any]]:
         """Round-keyed timeline for one save. [] if absent/broken — never 500."""
         conn = open_save_readonly(request.app.state.save_dir, slug)
         if conn is None:
@@ -458,13 +457,17 @@ def create_rest_router() -> APIRouter:
             conn.close()
 
     @router.get("/api/debug/save/{slug}/turn/{round_number}")
-    async def debug_save_turn(
-        request: Request, slug: str, round_number: int
-    ) -> dict[str, Any]:
+    async def debug_save_turn(request: Request, slug: str, round_number: int) -> dict[str, Any]:
         """Drill-down bundle for one round. Empty bundle if absent/broken."""
-        empty = {"round": round_number, "narrative": [], "events": [],
-                 "derived": {}, "projection": [], "scrapbook": [],
-                 "unparseable_seqs": []}
+        empty = {
+            "round": round_number,
+            "narrative": [],
+            "events": [],
+            "derived": {},
+            "projection": [],
+            "scrapbook": [],
+            "unparseable_seqs": [],
+        }
         conn = open_save_readonly(request.app.state.save_dir, slug)
         if conn is None:
             return empty
@@ -472,10 +475,31 @@ def create_rest_router() -> APIRouter:
             return build_turn_bundle(conn, round_number)
         except Exception:  # noqa: BLE001 — never 500 a forensics read
             logger.warning(
-                "forensic.turn_failed slug=%s round=%s", slug, round_number,
+                "forensic.turn_failed slug=%s round=%s",
+                slug,
+                round_number,
                 exc_info=True,
             )
             return empty
+        finally:
+            conn.close()
+
+    @router.get("/api/debug/save/{slug}/snapshot")
+    async def debug_save_snapshot(request: Request, slug: str) -> dict[str, Any]:
+        """Read-only persisted snapshot for the forensics 'final stored
+        snapshot' panel. {} if absent/broken — never 500, never writes."""
+        conn = open_save_readonly(request.app.state.save_dir, slug)
+        if conn is None:
+            return {}
+        try:
+            row = conn.execute("SELECT snapshot_json FROM game_state WHERE id = 1").fetchone()
+            if row is None or row[0] is None:
+                return {}
+            parsed = _safe_json(row[0])
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001 — never 500 a forensics read
+            logger.warning("forensic.snapshot_failed slug=%s", slug, exc_info=True)
+            return {}
         finally:
             conn.close()
 

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -135,3 +136,47 @@ def test_forensics_route_is_wired_and_serves_html(tmp_path):
     assert "Save Forensics" in resp.text
     assert "/api/debug/saves" in resp.text  # the page actually calls the API
     assert "NOT a stored snapshot" in resp.text  # honesty contract visible
+
+
+def test_snapshot_endpoint_returns_persisted_state(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "snap_ok" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.executescript(
+        "PRAGMA journal_mode=DELETE;"
+        "CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " genre_slug TEXT NOT NULL, world_slug TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, last_played TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL DEFAULT 1);"
+        "INSERT INTO session_meta VALUES (1,'g','w','t','t',1);"
+        "CREATE TABLE game_state (id INTEGER PRIMARY KEY CHECK (id=1),"
+        " snapshot_json TEXT NOT NULL, saved_at TEXT NOT NULL);"
+        "INSERT INTO game_state VALUES (1,'{\"location\": \"Cave\"}','t');"
+    )
+    con.commit()
+    con.close()
+    bytes_before = db.read_bytes()
+    mtime_before = db.stat().st_mtime_ns
+    client = _client(tmp_path)
+    resp = client.get("/api/debug/save/snap_ok/snapshot")
+    assert resp.status_code == 200
+    assert resp.json() == {"location": "Cave"}  # persisted snapshot returned
+    assert db.read_bytes() == bytes_before  # READ-ONLY: not rewritten
+    assert db.stat().st_mtime_ns == mtime_before
+
+
+def test_snapshot_endpoint_unknown_slug_is_empty_not_500(tmp_path):
+    resp = _client(tmp_path).get("/api/debug/save/nope/snapshot")
+    assert resp.status_code == 200
+    assert resp.json() == {}
+
+
+def test_snapshot_endpoint_corrupt_save_is_empty_not_500(tmp_path):
+    saves = tmp_path / "saves"
+    db = saves / "games" / "snap_bad" / "save.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_text("this is not a sqlite database")
+    resp = _client(tmp_path).get("/api/debug/save/snap_bad/snapshot")
+    assert resp.status_code == 200
+    assert resp.json() == {}
