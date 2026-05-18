@@ -47,30 +47,15 @@ def test_strip_empty_returns_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_aside_player_action_strips_brackets_before_narrator(
-    session_handler_factory,
-):
-    """PLAYER_ACTION with aside=True routes through strip_combat_brackets."""
-    sd, handler = session_handler_factory(genre="caverns_and_claudes")
-    sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=NarrationTurnResult(narration="ok"),
-    )
-    # Force handler into Playing state so _handle_player_action runs the
-    # narration path rather than rejecting.
-    handler._state = _State.Playing
-    msg = PlayerActionMessage(
-        payload=PlayerActionPayload(
-            action=NonBlankString.model_validate("[combat] I whisper to James"),
-            aside=True,
-        ),
-        player_id="player-1",
-    )
-    await handler._handle_player_action(msg)
-
-    seen_action = sd.orchestrator.run_narration_turn.call_args[0][0]
-    assert "[combat]" not in seen_action
-    assert "whisper to James" in seen_action
+# NOTE: test_aside_player_action_strips_brackets_before_narrator was DELETED
+# by story 50-25 (ADR-107). It asserted that an aside=True PLAYER_ACTION
+# still reached the narrator (run_narration_turn) after a bracket strip —
+# the exact half-wired behaviour ADR-107 removes. Asides are now resolved
+# out-of-band and NEVER reach the narrator. Combat-strip still applies on
+# the aside path; its current contract is covered by
+# tests/handlers/test_aside_channel_wiring.py (centerpiece + the
+# combat-bracket-only -> ERROR case). The non-aside strip behaviour below
+# is unchanged by ADR-107 and still valid.
 
 
 @pytest.mark.asyncio

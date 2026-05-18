@@ -177,16 +177,107 @@ class PlayerActionHandler:
         if not action:
             return [_error_msg("Player action is empty after sanitization")]
 
-        # Story 3.4 Task 12: strip [combat] markers from aside-flagged actions
-        # before they reach the orchestrator (port of dispatch/aside.rs).
+        # ADR-107 (story 50-25): out-of-band aside channel. An aside is OOC
+        # table-talk, NOT a turn. Branch here — the earliest point the
+        # server knows aside=true — *before* the pause gate, the
+        # TURN_STATUS{active} broadcast, and the ADR-036 barrier. The
+        # resolver is read-only (no write path), so "no turn consumed" is
+        # structural, not a thing we remember not to do. We RETURN before
+        # any of that machinery: pending_actions, dispatch_lock, turn
+        # counter, scrapbook and world are never touched.
         if getattr(payload, "aside", False):
             from sidequest.server.dispatch.combat_brackets import (
                 strip_combat_brackets,
             )
 
-            action = strip_combat_brackets(action)
-            if not action:
+            question = strip_combat_brackets(action).strip()
+            if not question:
                 return [_error_msg("Player aside is empty after combat-bracket strip")]
+
+            from sidequest.agents.aside_resolver import (
+                AsideReadView,
+                AsideResolver,
+            )
+            from sidequest.agents.llm_factory import build_aside_llm
+            from sidequest.protocol.messages import (
+                AsideAnswerMessage,
+                AsideAnswerPayload,
+            )
+            from sidequest.telemetry.setup import tracer
+            from sidequest.telemetry.spans import SPAN_ASIDE_RESOLVE
+
+            sd_aside = session._session_data
+            snap = sd_aside.snapshot
+            char_name = _resolve_acting_character_name(sd_aside, session._room)
+            core = next(
+                (c.core for c in snap.characters if c.core.name == char_name),
+                None,
+            )
+            character_summary = (
+                f"{core.name}: {core.description}"
+                if core is not None
+                else char_name
+            )
+            inventory: list[str] = []
+            if core is not None:
+                for item in core.inventory.items:
+                    name = item.get("name") if isinstance(item, dict) else None
+                    inventory.append(str(name) if name else str(item))
+            region = (
+                snap.party_location(perspective=char_name)
+                or snap.party_location()
+                or "(location unstated)"
+            )
+            confrontations = (
+                sd_aside.genre_pack.rules.confrontations
+                if sd_aside.genre_pack.rules
+                else []
+            )
+            rulebook = (
+                f"Genre {sd_aside.genre_slug}. Confrontations: "
+                + ", ".join(c.label for c in confrontations)
+                if confrontations
+                else f"Genre {sd_aside.genre_slug}."
+            )
+            recent = " ".join(
+                e.content for e in snap.narrative_log[-4:] if e.content
+            )
+            read_view = AsideReadView(
+                character_summary=character_summary,
+                region_summary=region,
+                inventory=inventory,
+                rulebook_summary=rulebook,
+                recent_narration=recent,
+            )
+            with tracer().start_as_current_span(SPAN_ASIDE_RESOLVE) as span:
+                t0 = time.monotonic()
+                res = await AsideResolver(llm=build_aside_llm()).resolve(
+                    question=question, read_view=read_view
+                )
+                span.set_attribute("asker_id", sd_aside.player_id or "")
+                span.set_attribute("outcome", res.outcome)
+                span.set_attribute("grounded_on", ",".join(res.grounded_on))
+                span.set_attribute("model", "haiku")
+                span.set_attribute(
+                    "latency_ms", int((time.monotonic() - t0) * 1000)
+                )
+            answer_msg = AsideAnswerMessage(
+                payload=AsideAnswerPayload(
+                    asker_id=sd_aside.player_id or "",
+                    question=question,
+                    answer=res.answer,
+                    grounded_on=list(res.grounded_on),
+                    round=snap.turn_manager.round,
+                ),
+                player_id=sd_aside.player_id or "",
+            )
+            # Table-visible (spec §5): mirror _broadcast_player_speech_to_party
+            # — exclude_socket_id=None so the asker's own transcript shows the
+            # Q&A too. Out-of-band: NEVER enqueue/advance/scrapbook/patch.
+            if session._room is not None:
+                session._room.broadcast(answer_msg, exclude_socket_id=None)
+                return []
+            return [answer_msg]
 
         logger.info(
             "session.player_action genre=%s world=%s player=%s action_len=%d",

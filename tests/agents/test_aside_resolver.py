@@ -13,8 +13,8 @@ import pytest
 
 from sidequest.agents.aside_resolver import (
     AsideReadView,
-    AsideResolver,
     AsideResolution,
+    AsideResolver,
 )
 
 

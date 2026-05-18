@@ -500,6 +500,32 @@ class ActionRevealPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# AsideAnswerPayload
+# ---------------------------------------------------------------------------
+
+
+class AsideAnswerPayload(ProtocolBase):
+    """OOC GM answer to a player aside (ADR-107).
+
+    Never a turn record: emitting this does not advance the world, the
+    turn/round counter, the narrative log, or the scrapbook. ``round`` is
+    carried for client ordering only.
+    """
+
+    asker_id: str = ""
+    """Player/character id that asked."""
+    question: str = ""
+    """Verbatim aside text the player submitted."""
+    answer: str = ""
+    """The GM's out-of-character reply (1-3 sentences)."""
+    grounded_on: list[str] = Field(default_factory=list)
+    """State keys the answer was derived from — the audit trail. Empty on
+    a refusal/decline outcome."""
+    round: int = 0
+    """Current round at ask time. Ordering only — NOT a turn record."""
+
+
+# ---------------------------------------------------------------------------
 # PartyStatusPayload
 # ---------------------------------------------------------------------------
 
@@ -897,6 +923,18 @@ class ActionRevealMessage(ProtocolBase):
     player_id: str = ""
 
 
+class AsideAnswerMessage(ProtocolBase):
+    """GameMessage::AsideAnswer wire representation (ADR-107).
+
+    OOC GM reply to a player aside, broadcast table-wide. NOT a turn
+    record — see :class:`AsideAnswerPayload`.
+    """
+
+    type: Literal[MessageType.ASIDE_ANSWER] = MessageType.ASIDE_ANSWER
+    payload: AsideAnswerPayload
+    player_id: str = ""
+
+
 class PartyStatusMessage(ProtocolBase):
     """GameMessage::PartyStatus wire representation."""
 
@@ -1201,6 +1239,7 @@ _Phase1Variant = Annotated[
     | ChapterMarkerMessage
     | ActionQueueMessage
     | ActionRevealMessage
+    | AsideAnswerMessage
     | ErrorMessage
     | PlayerPresenceMessage
     | PlayerSeatMessage

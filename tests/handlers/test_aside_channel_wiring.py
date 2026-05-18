@@ -3,28 +3,26 @@
 Plan: docs/superpowers/plans/2026-05-17-aside-channel.md Task 5.
 Spec: docs/superpowers/specs/2026-05-17-aside-channel-design.md §7.
 
-Drives the REAL handler path and asserts ALL SEVEN out-of-band
-guarantees — this is the wiring test that proves the aside channel is
-connected end-to-end (CLAUDE.md "Every Test Suite Needs a Wiring Test"),
-not merely that the resolver works in isolation.
+Drives the REAL ``PlayerActionHandler.handle()`` against a real
+``SessionRoom`` (MULTIPLAYER) + real ``GameSnapshot`` + ``TurnManager``
++ ``SqliteStore`` + loaded genre pack, asserting ALL SEVEN out-of-band
+guarantees — the wiring test that proves the aside channel is connected
+end-to-end (CLAUDE.md "Every Test Suite Needs a Wiring Test"), not
+merely that the resolver works in isolation.
 
-RED reason (known/planned): imports `tests.handlers._harness`, which
-does NOT yet exist. Per the plan's Task 5 harness note, Dev factors the
-3-player MP room/snapshot setup out of the existing sibling handler test
-(e.g. tests/handlers/test_player_action_speech_broadcast.py) into that
-shared module during GREEN, then wires player_action.py (Task 4) until
-every assertion below passes. This currently fails on ImportError; that
-is the correct RED state for a not-yet-wired feature.
+The aside path is exercised 100% real. Only the orthogonal narrator is
+stubbed: ``tests/handlers/_harness.py``'s ``_StubSession`` skips the LLM
+prose but performs the *real* ``turn_manager.record_interaction()`` the
+production narrator does after a barrier fires, so round-advance stays
+faithful. The plan's Task 5 "factor from a sibling MP fixture" premise
+did not hold (every handler test is ``MagicMock``-based); the harness
+builds the real objects from scratch instead — see its module docstring.
 """
 
 import pytest
 
 from sidequest.protocol.enums import MessageType
-
-# Reuse the existing handler-test harness. Dev creates tests/handlers/_harness.py
-# in GREEN by factoring the 3-player MP fixture out of the sibling handler test
-# (small refactor, no behavior change) so this test and the sibling share it.
-from tests.handlers._harness import make_mp_room, submit, fake_aside_llm
+from tests.handlers._harness import fake_aside_llm, make_mp_room, submit
 
 
 @pytest.mark.asyncio
@@ -70,3 +68,34 @@ async def test_aside_is_out_of_band_in_mp():
     await submit(room, "Donut", "I follow", aside=False)
     assert room.barrier_fired()
     assert room.turn_round() == turn_before + 1
+
+    room.teardown()
+
+
+@pytest.mark.asyncio
+async def test_empty_aside_after_combat_strip_is_rejected_no_resolver_no_span():
+    """Spec §6: empty/whitespace aside text -> typed ERROR, no resolver,
+    no span. (TEA Delivery Finding Gap — empty-aside path was untested.)
+
+    ``PlayerActionPayload.action`` is ``NonBlankString`` so the empty
+    case is reached the only way production can: combat-bracket-only
+    aside text that strips to "" (``"[combat]"`` -> "").
+    """
+    room = make_mp_room(
+        players=["Carl", "Donut", "Katia"],
+        llm_aside=fake_aside_llm('{"answer":"x","outcome":"answered","grounded_on":["a"]}'),
+    )
+    nlog_before = room.narrative_log_count()
+
+    out = await submit(room, "Katia", "[combat]", aside=True)
+
+    # Typed ERROR back to the asker; resolver/LLM never invoked, no span,
+    # no broadcast, no turn record.
+    assert out and out[0].type == MessageType.ERROR
+    assert not room.spans_named("aside.resolve")
+    assert room.last_broadcast_recipients() == set()
+    assert room.narrative_log_count() == nlog_before
+    assert room.turn_round() == room.turn_round()  # unchanged (no advance)
+    assert not room.barrier_fired()
+
+    room.teardown()

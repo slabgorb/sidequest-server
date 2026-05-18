@@ -45,3 +45,45 @@ def build_llm_client() -> LlmClient | ToolingLlmClient:
         return AnthropicSdkClient()
     # Unreachable — the set check above covers all known backends.
     raise UnknownBackend(f"backend {key!r} recognised but not wired")
+
+
+# ADR-101 per-call routing: an aside is the lowest-drama input in the
+# system (SOUL.md "Cost Scales with Drama"), so it routes to the cheapest
+# Haiku tier as a single-shot completion — NOT the narrator's tool-use
+# loop. Distinct call site, not a reinvention of the narrator client.
+_ASIDE_MODEL = "claude-haiku-4-5-20251001"
+
+
+class _AsideLlm:
+    """Single-shot Haiku adapter satisfying ``AsideResolver``'s ``AsideLLM``.
+
+    Lazily constructs an ``AsyncAnthropic`` (same SDK the narrator uses).
+    Fails loudly if ``ANTHROPIC_API_KEY`` is unset — No Silent Fallbacks.
+    """
+
+    def __init__(self) -> None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise LlmClientError(
+                "ANTHROPIC_API_KEY not set — required to resolve player "
+                "asides (ADR-107). No silent fallback."
+            )
+        from anthropic import AsyncAnthropic
+
+        self._sdk = AsyncAnthropic(api_key=api_key)
+
+    async def complete(self, *, system: str, user: str) -> str:
+        resp = await self._sdk.messages.create(
+            model=_ASIDE_MODEL,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            max_tokens=512,
+        )
+        return "".join(
+            block.text for block in resp.content if block.type == "text"
+        )
+
+
+def build_aside_llm() -> _AsideLlm:
+    """Build the Haiku-tier LLM for out-of-band aside resolution (ADR-107)."""
+    return _AsideLlm()
