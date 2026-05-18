@@ -537,17 +537,54 @@ def _is_combat_category(pack: GenrePack, encounter_type: str) -> bool:
 
 
 def award_turn_xp(snapshot: GameSnapshot, *, in_combat: bool) -> None:
-    """Award per-turn XP to the party lead.
+    """Award the per-turn XP tick to every seated PC (party-wide).
 
-    25 XP when ``in_combat`` is True, 10 otherwise. Port of
-    sidequest-api/crates/sidequest-server/src/dispatch/state_mutations.rs:39.
-    No-op when the snapshot has no characters.
+    25 XP when ``in_combat`` is True, 10 otherwise. No-op when the
+    snapshot has no characters.
+
+    SideQuest MP is sealed-rounds (ADR-036): every seated PC submits an
+    action each round and they resolve together — there is no single
+    "acting player", so the per-turn tick is **party-wide**. The original
+    Rust port (``state_mutations.rs:39``) awarded only ``characters[0]``
+    ("party lead"); in MP that silently starved every non-host seat
+    (playtest 2026-05-17 coyote_star-mp: Ritali 1180 XP / Catalina 0
+    across 117 rounds). ADR-037 makes the character sheet per-player, so
+    each seat accumulates its own XP.
+
+    Seat resolution mirrors the established ``player_seats`` idiom
+    (``GameSnapshot.party_location`` / ``character_locations``): award to
+    each PC named in the seat manifest. With no manifest (single-player
+    or a pre-chargen snapshot) the whole ``characters`` list is the
+    party. A manifest that matches no character is a name-skew defect —
+    award the full party and surface it loudly rather than silently
+    starve XP (No Silent Fallbacks).
     """
     if not snapshot.characters:
         return
     delta = 25 if in_combat else 10
-    char = snapshot.characters[0]
-    char.core.xp = char.core.xp + delta
+    seated = {name for name in snapshot.player_seats.values() if name}
+    if seated:
+        targets = [c for c in snapshot.characters if c.core.name in seated]
+    else:
+        targets = list(snapshot.characters)
+    seat_mismatch = bool(seated) and not targets
+    if seat_mismatch:
+        targets = list(snapshot.characters)
+    for c in targets:
+        c.core.xp = c.core.xp + delta
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "xp",
+            "op": "award_turn_xp",
+            "delta": delta,
+            "in_combat": in_combat,
+            "recipients": [c.core.name for c in targets],
+            "seated": sorted(seated),
+            "seat_mismatch": seat_mismatch,
+        },
+        component="progression",
+    )
 
 
 def apply_resource_patches(
