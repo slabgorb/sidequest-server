@@ -157,3 +157,55 @@ async def test_out_of_range_dice_spec_rejected() -> None:
     # 0 count or 0/1 sides should be rejected by the range guard
     r = await _call({"notation": "1d1"})
     assert r.status is ToolResultStatus.ERROR_RECOVERABLE
+
+
+# ---------------------------------------------------------------------------
+# Story 50-24 AC-3 — roll_dice span session/world attribution.
+#
+# Source: /Users/slabgorb/Projects/sq-playtest-pingpong.md, "OQ-2 ARCHITECT
+# RESOLUTION" bullet under the "Narrator fabricates dice" headline.
+#
+# The Architect could not bind any tool.gen.roll_dice span to the
+# coyote_star session because the span carries ONLY tool.dice.notation/
+# value/seed — no session/world attribute (roll_dice.py:62-65). The
+# absence had to be argued temporally instead of by session filter. AC-3
+# closes that attribution gap so a future audit can bind a private roll
+# to its game directly. ``_make_ctx`` already supplies
+# world_id="w"/session_id="s"; the handler simply never writes them.
+# ---------------------------------------------------------------------------
+
+
+async def test_otel_span_carries_session_and_world_attribution(otel_capture) -> None:
+    """The tool.gen.roll_dice span MUST carry the ctx session_id and
+    world_id so a roll is bindable to its game in Jaeger.
+
+    Target keys are the established ``tool.dice.*`` handler namespace
+    (parity with tool.dice.notation/value/seed). If Dev prefers a
+    different key this is a spec deviation to log — not a silent change.
+    """
+    out = await default_registry.dispatch(
+        ToolUseBlock(
+            id="t-sess",
+            name="roll_dice",
+            arguments={"notation": "d20", "seed": 7},
+        ),
+        _make_ctx(),  # world_id="w", session_id="s"
+    )
+    assert out.is_error is False
+
+    spans = otel_capture.get_finished_spans()
+    dice_spans = [s for s in spans if s.name == "tool.gen.roll_dice"]
+    assert dice_spans, f"no tool.gen.roll_dice span; got: {[s.name for s in spans]}"
+    attrs = dict(dice_spans[-1].attributes or {})
+
+    assert attrs.get("tool.dice.session_id") == "s", (
+        "tool.gen.roll_dice span has no session attribution "
+        f"(tool.dice.session_id). Span attrs: {sorted(attrs)}. AC-3: the "
+        "Architect had to argue Jaeger absence temporally because a "
+        "roll_dice span cannot be bound to its session — close that gap."
+    )
+    assert attrs.get("tool.dice.world_id") == "w", (
+        "tool.gen.roll_dice span has no world attribution "
+        f"(tool.dice.world_id). Span attrs: {sorted(attrs)}. AC-3 names "
+        "session/world; both must land for a per-game audit."
+    )
