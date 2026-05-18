@@ -1754,3 +1754,633 @@ def test_discovered_clue_skipping_middle_of_chain_still_raises(tmp_path: Path) -
     assert "clue_b" in msg, (
         f"DAG violation error must name the missing prerequisite (clue_b); got {msg!r}"
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Story 50-22 (RED): hydrate ``character.abilities`` + top-level ``magic_state``
+# ════════════════════════════════════════════════════════════════════════════
+#
+# ADR-092 follow-on to 50-21. Two new hydration paths:
+#   1. ``abilities:`` under a ``character:`` block → ``Character.abilities``
+#      (``list[AbilityDefinition]`` — sidequest/protocol/models.py:42).
+#   2. top-level ``magic_state:`` → ``GameSnapshot.magic_state``
+#      (``MagicState`` — sidequest/magic/state.py:123).
+#
+# Discipline mirrors the scenario_state branch (50-20):
+#   * Absent block → snapshot field stays at the pydantic default
+#     (``abilities=[]``, ``magic_state=None``) so the four canonical
+#     pre-50-22 fixtures keep working unchanged.
+#   * Malformed block → ``FixtureValidationError`` (HTTP 422). NEVER a
+#     silent skip and NEVER a silent empty default (ADR-014 "magic state
+#     is Diamond"; ADR-092 "Failure is loud"; CLAUDE.md "No Silent
+#     Fallbacks"; lang-review #1 / #11).
+#
+# IMPORTANT (TEA deviation — see session ## Design Deviations): the session
+# Technical Approach's example ``config: {world_slug, ledger_bars: [],
+# confrontations_by_name: {}}`` is INVALID. ``WorldMagicConfig``
+# (sidequest/magic/models.py:287 — NOT genre/models/magic.py as the session
+# Schema References claim) is ``extra="forbid"`` with 11 required fields and
+# no ``confrontations_by_name`` field. These tests carry the corrected
+# minimal-valid config shape; Dev must follow the tests, not the session
+# example.
+
+# A minimal but fully-valid ``WorldMagicConfig`` rendered as the ``config:``
+# sub-block of a ``magic_state:`` fixture block. Every required field of
+# WorldMagicConfig (sidequest/magic/models.py:287) is present; values mirror
+# the canonical ``tests/magic/conftest.py::world_config`` so they are
+# known-good against the pydantic validators (WorldKnowledge awareness
+# ordering, intensity bounds, LedgerBarSpec threshold/scope rules).
+_MINIMAL_WORLD_MAGIC_CONFIG_YAML = (
+    "  config:\n"
+    "    world_slug: coyote_star\n"
+    "    genre_slug: space_opera\n"
+    "    allowed_sources: [innate]\n"
+    "    active_plugins: [innate_v1]\n"
+    "    intensity: 0.25\n"
+    "    world_knowledge:\n"
+    "      primary: classified\n"
+    "      local_register: folkloric\n"
+    "    visibility:\n"
+    "      primary: feared\n"
+    "      local_register: dismissed\n"
+    "    hard_limits:\n"
+    "      - id: psionics_never_decisive\n"
+    "        description: psionics can never be the decisive factor\n"
+    "    cost_types: [sanity]\n"
+    "    ledger_bars: []\n"
+    "    narrator_register: clinical\n"
+)
+
+# The full minimal ``magic_state:`` block (config only — every other
+# MagicState field defaults: ledger={}, working_log=[], confrontations=[],
+# control_tier={}, known/prepared/spent_spells={}, reliquary=[]).
+_MAGIC_STATE_MINIMAL_YAML = "magic_state:\n" + _MINIMAL_WORLD_MAGIC_CONFIG_YAML
+
+# A two-ability block, written at the indentation a ``character:`` mapping
+# expects (key at 2 spaces, list dashes at 4, entry keys at 6). Covers an
+# explicit ``involuntary: true`` and a defaulted (omitted) one.
+_ABILITIES_TWO_YAML = (
+    "  abilities:\n"
+    "    - name: Voidstep\n"
+    "      genre_description: Slip a half-second sideways out of causality\n"
+    "      mechanical_effect: Once per scene, negate one incoming consequence\n"
+    "      source: Class\n"
+    "      involuntary: false\n"
+    "    - name: The Bleeding-Through\n"
+    "      genre_description: The other side notices you noticing it\n"
+    "      mechanical_effect: On sanity threshold cross, narrator may act\n"
+    "      source: Race\n"
+)
+
+
+def _write_magic_fixture(
+    tmp_path: Path,
+    name: str,
+    *,
+    abilities_yaml: str | None = None,
+    magic_state_yaml: str | None = None,
+    extra_character_yaml: str = "",
+) -> None:
+    """Write a minimal magic-flavored fixture.
+
+    ``abilities_yaml`` is appended INSIDE the ``character:`` block (it must
+    be indented as a character-level key). ``magic_state_yaml`` is appended
+    at the top level. Either may be ``None`` to omit that block entirely
+    (the backward-compat / regression-lock path).
+    """
+    body = (
+        "genre: space_opera\n"
+        "world: coyote_star\n"
+        "character:\n"
+        "  name: Practitioner\n"
+        "  description: A focused adept of the deep arts\n"
+        "  personality: Focused and wary\n"
+        "  backstory: Apprenticed in the classified registers\n"
+        "  char_class: Mage\n"
+        "  race: Human\n"
+    )
+    if extra_character_yaml:
+        body += extra_character_yaml
+    if abilities_yaml is not None:
+        body += abilities_yaml
+    if magic_state_yaml is not None:
+        body += magic_state_yaml
+    (tmp_path / f"{name}.yaml").write_text(body, encoding="utf-8")
+
+
+# ── AC-1: Character.abilities hydration (happy paths) ───────────────────────
+
+
+def test_character_abilities_block_hydrates_all_fields(tmp_path: Path) -> None:
+    """AC-1: a ``abilities:`` list under ``character:`` projects to
+    ``Character.abilities`` with every AbilityDefinition field preserved.
+
+    RED driver: today ``_hydrate_character`` never reads ``abilities`` and
+    never passes it to the ``Character`` constructor, so the field stays at
+    its pydantic default ``[]`` — this assertion fails until 50-22 lands.
+    """
+    _write_magic_fixture(tmp_path, "abil_full", abilities_yaml=_ABILITIES_TWO_YAML)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="abil_full", fixtures_dir=tmp_path)
+    abilities = snapshot.characters[0].abilities
+
+    assert len(abilities) == 2, (
+        f"both declared abilities must hydrate; got {len(abilities)}: "
+        f"{[a.name for a in abilities]!r}"
+    )
+    first, second = abilities
+    assert first.name == "Voidstep"
+    assert first.genre_description == "Slip a half-second sideways out of causality"
+    assert first.mechanical_effect == "Once per scene, negate one incoming consequence"
+    assert str(first.source) == "Class", f"source enum must round-trip; got {first.source!r}"
+    assert first.involuntary is False
+    assert second.name == "The Bleeding-Through"
+    assert str(second.source) == "Race"
+
+
+def test_ability_involuntary_defaults_false_when_omitted(tmp_path: Path) -> None:
+    """AC-1: an ability entry omitting ``involuntary`` defaults to ``False``
+    (AbilityDefinition.involuntary default), NOT raised, NOT True.
+
+    The second entry of ``_ABILITIES_TWO_YAML`` omits ``involuntary``.
+    """
+    _write_magic_fixture(tmp_path, "abil_default", abilities_yaml=_ABILITIES_TWO_YAML)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="abil_default", fixtures_dir=tmp_path)
+    bleeding = snapshot.characters[0].abilities[1]
+    assert bleeding.involuntary is False, (
+        f"omitted involuntary must default to False; got {bleeding.involuntary!r}"
+    )
+
+
+def test_missing_abilities_block_defaults_to_empty_list(tmp_path: Path) -> None:
+    """AC-1 (backward compat / regression lock): a character with NO
+    ``abilities:`` key hydrates ``Character.abilities == []``.
+
+    This passes both before and after 50-22 — it guards against an
+    implementation that *requires* the block or crashes on its absence.
+    """
+    _write_magic_fixture(tmp_path, "abil_absent", abilities_yaml=None)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="abil_absent", fixtures_dir=tmp_path)
+    assert snapshot.characters[0].abilities == [], (
+        f"omitting abilities: must yield []; got {snapshot.characters[0].abilities!r}"
+    )
+
+
+def test_empty_abilities_list_hydrates_to_empty(tmp_path: Path) -> None:
+    """AC-1: an explicit empty ``abilities: []`` hydrates to ``[]`` —
+    distinct from a malformed shape, this is a valid no-op declaration.
+    """
+    _write_magic_fixture(tmp_path, "abil_empty", abilities_yaml="  abilities: []\n")
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="abil_empty", fixtures_dir=tmp_path)
+    assert snapshot.characters[0].abilities == []
+
+
+@pytest.mark.parametrize("source", ["Race", "Class", "Item", "Play"])
+def test_ability_all_four_sources_hydrate(tmp_path: Path, source: str) -> None:
+    """AC-1: every ``AbilitySource`` enum member round-trips through the
+    fixture. A regression that hardcodes one source or drops the enum
+    coercion would fail at least one parametrization.
+    """
+    abilities_yaml = (
+        "  abilities:\n"
+        "    - name: Test Power\n"
+        "      genre_description: does a thing\n"
+        "      mechanical_effect: mechanically does the thing\n"
+        f"      source: {source}\n"
+    )
+    _write_magic_fixture(tmp_path, f"abil_src_{source.lower()}", abilities_yaml=abilities_yaml)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name=f"abil_src_{source.lower()}", fixtures_dir=tmp_path)
+    ability = snapshot.characters[0].abilities[0]
+    assert str(ability.source) == source, (
+        f"source {source!r} must survive hydration; got {ability.source!r}"
+    )
+
+
+def test_abilities_hydrate_under_multi_pc_characters_list(tmp_path: Path) -> None:
+    """AC-1 + AC-4: ``abilities:`` works under a ``characters:`` LIST entry,
+    not only the legacy singular ``character:`` block.
+
+    Both shapes funnel through ``_hydrate_character``; this proves the new
+    abilities branch is reached from the multi-PC path too (the path James's
+    "Rux" save and every MP fixture take).
+    """
+    body = (
+        "genre: space_opera\n"
+        "world: coyote_star\n"
+        "characters:\n"
+        "  - name: Adept One\n"
+        "    description: first practitioner\n"
+        "    personality: calm\n"
+        "    backstory: trained early\n"
+        "    char_class: Mage\n"
+        "    race: Human\n"
+        "    abilities:\n"
+        "      - name: Spark\n"
+        "        genre_description: a small ignition\n"
+        "        mechanical_effect: lights tinder\n"
+        "        source: Class\n"
+        "  - name: Adept Two\n"
+        "    description: second practitioner\n"
+        "    personality: brash\n"
+        "    backstory: self-taught\n"
+        "    char_class: Mage\n"
+        "    race: Human\n"
+    )
+    (tmp_path / "multi_abil.yaml").write_text(body, encoding="utf-8")
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="multi_abil", fixtures_dir=tmp_path)
+    assert len(snapshot.characters) == 2
+    assert [a.name for a in snapshot.characters[0].abilities] == ["Spark"], (
+        f"characters[0] abilities must hydrate from the list path; "
+        f"got {snapshot.characters[0].abilities!r}"
+    )
+    assert snapshot.characters[1].abilities == [], (
+        "characters[1] declared no abilities — must stay [] (no cross-PC bleed)"
+    )
+
+
+# ── AC-1 / AC-3: malformed abilities fail LOUDLY ────────────────────────────
+
+
+def test_ability_missing_required_field_raises(tmp_path: Path) -> None:
+    """AC-1, AC-3, lang-review #1/#11: an ability entry missing the required
+    ``source`` field must raise FixtureValidationError (pydantic
+    ValidationError wrapped), NOT silently drop the ability.
+    """
+    abilities_yaml = (
+        "  abilities:\n"
+        "    - name: Halfbaked\n"
+        "      genre_description: incomplete\n"
+        "      mechanical_effect: missing source below\n"
+    )
+    _write_magic_fixture(tmp_path, "abil_nosrc", abilities_yaml=abilities_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="abil_nosrc", fixtures_dir=tmp_path)
+    assert "source" in str(exc_info.value).lower(), (
+        f"error must name the missing field 'source'; got {exc_info.value!r}"
+    )
+
+
+def test_ability_invalid_source_value_raises(tmp_path: Path) -> None:
+    """AC-1, AC-3: a ``source`` outside the AbilitySource enum
+    (Race/Class/Item/Play) must raise FixtureValidationError.
+
+    Without this, a typo like ``source: Clas`` would either crash later or
+    (worse) be silently coerced — Sebastien's lie-detector wants the loud
+    422 at the fixture boundary.
+    """
+    abilities_yaml = (
+        "  abilities:\n"
+        "    - name: Bogus\n"
+        "      genre_description: x\n"
+        "      mechanical_effect: y\n"
+        "      source: Sorcery\n"  # not a valid AbilitySource
+    )
+    _write_magic_fixture(tmp_path, "abil_badsrc", abilities_yaml=abilities_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="abil_badsrc", fixtures_dir=tmp_path)
+
+
+def test_ability_extra_field_rejected_by_pydantic(tmp_path: Path) -> None:
+    """AC-1, AC-3: ``AbilityDefinition`` is ``extra="forbid"``. An unknown
+    key in an ability entry must raise FixtureValidationError, not be
+    silently ignored.
+
+    Mirrors ``test_known_facts_extra_field_rejected_by_pydantic`` — fixture
+    authors get told about typos rather than having them swallowed.
+    """
+    abilities_yaml = (
+        "  abilities:\n"
+        "    - name: Typo'd\n"
+        "      genre_description: x\n"
+        "      mechanical_effect: y\n"
+        "      source: Class\n"
+        "      involutary: true\n"  # misspelled 'involuntary' — extra=forbid rejects
+    )
+    _write_magic_fixture(tmp_path, "abil_extra", abilities_yaml=abilities_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="abil_extra", fixtures_dir=tmp_path)
+
+
+def test_abilities_not_a_list_raises(tmp_path: Path) -> None:
+    """AC-1, AC-3, lang-review #1: ``abilities:`` declared as a mapping
+    (not a list) must raise FixtureValidationError — the same shape-guard
+    discipline ``known_facts`` enforces (``_hydrate_character`` raises a
+    FixtureValidationError for the non-list shape BEFORE pydantic).
+
+    Guards against a future ``data.get("abilities", [])`` that would
+    silently coerce a wrong shape into an empty list.
+    """
+    abilities_yaml = "  abilities:\n    not_a_list: true\n"
+    _write_magic_fixture(tmp_path, "abil_notlist", abilities_yaml=abilities_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="abil_notlist", fixtures_dir=tmp_path)
+
+
+# ── AC-2: MagicState hydration (happy paths) ────────────────────────────────
+
+
+def test_magic_state_minimal_config_hydrates(tmp_path: Path) -> None:
+    """AC-2: a top-level ``magic_state:`` block with a valid minimal
+    ``config:`` projects to ``GameSnapshot.magic_state`` as a real
+    ``MagicState`` whose config round-trips.
+
+    RED driver: today ``magic_state:`` is an unknown top-level key (see
+    ``test_unknown_top_level_fields_are_ignored``) so it is silently
+    dropped and ``snapshot.magic_state is None`` — fails until 50-22.
+    """
+    _write_magic_fixture(tmp_path, "magic_min", magic_state_yaml=_MAGIC_STATE_MINIMAL_YAML)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="magic_min", fixtures_dir=tmp_path)
+    ms = snapshot.magic_state
+    assert ms is not None, "declared magic_state: must hydrate, not stay None"
+    # Field-level identity check — not a bare truthy (lang-review #6).
+    assert ms.config.world_slug == "coyote_star"
+    assert ms.config.genre_slug == "space_opera"
+    assert ms.config.narrator_register == "clinical"
+    # Unspecified collections default empty.
+    assert ms.ledger == {}
+    assert ms.confrontations == []
+    assert ms.control_tier == {}
+
+
+def test_magic_state_optional_collections_hydrate(tmp_path: Path) -> None:
+    """AC-2: optional ``ledger:`` / ``control_tier:`` / ``known_spells:``
+    sub-blocks hydrate onto MagicState with the declared values.
+
+    The ledger key is the ``scope|owner_id|bar_id`` serialized form
+    (sidequest/magic/state.py::_serialize_bar_key); LedgerBar carries a
+    full LedgerBarSpec + value.
+    """
+    magic_yaml = (
+        "magic_state:\n"
+        + _MINIMAL_WORLD_MAGIC_CONFIG_YAML
+        + "  ledger:\n"
+        + '    "character|practitioner|sanity":\n'
+        + "      spec:\n"
+        + "        id: sanity\n"
+        + "        scope: character\n"
+        + "        direction: down\n"
+        + "        range: [0.0, 1.0]\n"
+        + "        threshold_low: 0.4\n"
+        + "        starts_at_chargen: 1.0\n"
+        + "      value: 0.55\n"
+        + "  control_tier:\n"
+        + "    practitioner: 2\n"
+        + "  known_spells:\n"
+        + "    practitioner: [void_lance]\n"
+    )
+    _write_magic_fixture(tmp_path, "magic_full", magic_state_yaml=magic_yaml)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="magic_full", fixtures_dir=tmp_path)
+    ms = snapshot.magic_state
+    assert ms is not None
+    bar = ms.ledger["character|practitioner|sanity"]
+    assert bar.value == pytest.approx(0.55), f"ledger bar value must hydrate; got {bar.value!r}"
+    assert bar.spec.id == "sanity"
+    assert bar.spec.direction == "down"
+    assert ms.control_tier == {"practitioner": 2}
+    assert ms.known_spells == {"practitioner": ["void_lance"]}
+
+
+def test_missing_magic_state_block_leaves_field_none(tmp_path: Path) -> None:
+    """AC-2 (backward compat / regression lock): omitting ``magic_state:``
+    leaves ``snapshot.magic_state`` at the GameSnapshot pydantic default
+    (``None``). Passes before and after 50-22.
+    """
+    _write_magic_fixture(tmp_path, "magic_absent", magic_state_yaml=None)
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="magic_absent", fixtures_dir=tmp_path)
+    assert snapshot.magic_state is None, (
+        f"omitting magic_state: must leave it None; got {snapshot.magic_state!r}"
+    )
+
+
+# ── AC-2 / AC-3: malformed magic_state fails LOUDLY (no silent default) ──────
+
+
+def test_magic_state_missing_config_raises(tmp_path: Path) -> None:
+    """AC-2, AC-3: ``magic_state:`` present but with NO ``config:`` must
+    raise FixtureValidationError — ``MagicState.config`` is required and
+    there is no synthetic-config fallback (ADR-014 Diamond, AC-3 explicit).
+    """
+    magic_yaml = "magic_state:\n  control_tier:\n    practitioner: 1\n"
+    _write_magic_fixture(tmp_path, "magic_nocfg", magic_state_yaml=magic_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="magic_nocfg", fixtures_dir=tmp_path)
+    assert "config" in str(exc_info.value).lower(), (
+        f"error must name the missing required 'config'; got {exc_info.value!r}"
+    )
+
+
+def test_magic_state_malformed_config_raises(tmp_path: Path) -> None:
+    """AC-2, AC-3, lang-review #11: a ``config:`` missing a required
+    WorldMagicConfig field (here ``narrator_register``) must raise
+    FixtureValidationError (pydantic wrapped) — never a partial/empty
+    MagicState.
+    """
+    broken_config = _MINIMAL_WORLD_MAGIC_CONFIG_YAML.replace(
+        "    narrator_register: clinical\n", ""
+    )
+    magic_yaml = "magic_state:\n" + broken_config
+    _write_magic_fixture(tmp_path, "magic_badcfg", magic_state_yaml=magic_yaml)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="magic_badcfg", fixtures_dir=tmp_path)
+
+
+def test_magic_state_config_extra_field_rejected(tmp_path: Path) -> None:
+    """AC-2, AC-3: ``WorldMagicConfig`` is ``extra="forbid"``. The exact
+    invalid shape from the session's Technical Approach example
+    (``confrontations_by_name: {}``) must raise — proving the corrected
+    test shape is enforced and the stale example cannot sneak back in.
+    """
+    magic_yaml = (
+        "magic_state:\n"
+        + _MINIMAL_WORLD_MAGIC_CONFIG_YAML
+        + "  config_typo_marker: ignored\n"  # top-level magic_state extra (forbid)
+    )
+    # Also exercise the in-config extra field that the session example used.
+    magic_yaml_inconfig = "magic_state:\n" + _MINIMAL_WORLD_MAGIC_CONFIG_YAML.replace(
+        "    ledger_bars: []\n",
+        "    ledger_bars: []\n    confrontations_by_name: {}\n",
+    )
+    _write_magic_fixture(tmp_path, "magic_extra_top", magic_state_yaml=magic_yaml)
+    _write_magic_fixture(tmp_path, "magic_extra_cfg", magic_state_yaml=magic_yaml_inconfig)
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="magic_extra_top", fixtures_dir=tmp_path)
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="magic_extra_cfg", fixtures_dir=tmp_path)
+
+
+def test_magic_state_block_not_a_mapping_raises(tmp_path: Path) -> None:
+    """AC-2, AC-3, lang-review #1: ``magic_state:`` declared as a list (or
+    scalar) instead of a mapping must raise FixtureValidationError.
+
+    Direct analog of ``test_malformed_scenario_state_block_raises`` — a
+    future refactor must NOT replace the shape check with
+    ``data.get("magic_state", {})`` and silently coerce the wrong shape.
+    """
+    body = (
+        "genre: space_opera\n"
+        "world: coyote_star\n"
+        "character:\n"
+        "  name: Practitioner\n"
+        "  description: a focused adept\n"
+        "  personality: focused\n"
+        "  backstory: studied the arts\n"
+        "  char_class: Mage\n"
+        "  race: Human\n"
+        "magic_state:\n"
+        "  - just_a_list_item\n"
+    )
+    (tmp_path / "magic_notmap.yaml").write_text(body, encoding="utf-8")
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="magic_notmap", fixtures_dir=tmp_path)
+
+
+def test_present_but_empty_magic_state_does_not_silently_default(tmp_path: Path) -> None:
+    """AC-3 (the headline guarantee): ``magic_state: {}`` (present but
+    empty — no ``config:``) must RAISE, never silently produce an empty
+    ``MagicState`` or leave the field None.
+
+    This is the ADR-014 "magic state is Diamond" / "No Silent Fallbacks"
+    lie-detector test. An implementation that does
+    ``MagicState(**(data.get("magic_state") or {}))`` and swallows the
+    resulting ValidationError, or that treats empty-dict as "absent",
+    would pass every other test but fail this one.
+    """
+    body = (
+        "genre: space_opera\n"
+        "world: coyote_star\n"
+        "character:\n"
+        "  name: Practitioner\n"
+        "  description: a focused adept\n"
+        "  personality: focused\n"
+        "  backstory: studied the arts\n"
+        "  char_class: Mage\n"
+        "  race: Human\n"
+        "magic_state: {}\n"
+    )
+    (tmp_path / "magic_emptymap.yaml").write_text(body, encoding="utf-8")
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="magic_emptymap", fixtures_dir=tmp_path)
+
+
+# ── AC-4: integration / backward-compat (wiring + regression lock) ──────────
+
+
+def test_canonical_fixtures_still_hydrate_with_magic_state_implementation() -> None:
+    """AC-4 (backwards-compat WIRING test, CLAUDE.md "Every Test Suite
+    Needs a Wiring Test"): the four canonical pre-50-22 fixtures must keep
+    hydrating cleanly, with ``magic_state is None`` and every character's
+    ``abilities == []`` — proving the 50-22 branch does not require either
+    new block.
+    """
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    real_fixtures = (
+        "combat_brawl_wasteland",
+        "combat_dogfight_space",
+        "social_negotiation_tea",
+        "social_poker_wasteland",
+    )
+    for fixture_name in real_fixtures:
+        snapshot = hydrate_fixture(name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR)
+        assert snapshot.magic_state is None, (
+            f"{fixture_name}: pre-50-22 fixture must keep magic_state=None; "
+            f"got {snapshot.magic_state!r}"
+        )
+        for idx, ch in enumerate(snapshot.characters):
+            assert ch.abilities == [], (
+                f"{fixture_name}: characters[{idx}] declared no abilities — "
+                f"must stay []; got {ch.abilities!r}"
+            )
+
+
+def test_abilities_magic_state_and_scenario_state_coexist(tmp_path: Path) -> None:
+    """AC-4: all three optional blocks (character.abilities, top-level
+    magic_state, top-level scenario_state) in ONE fixture hydrate without
+    interfering with each other — the integration path Wave 2 fixtures take.
+    """
+    body = (
+        "genre: space_opera\n"
+        "world: coyote_star\n"
+        "character:\n"
+        "  name: Practitioner\n"
+        "  description: a focused adept\n"
+        "  personality: focused\n"
+        "  backstory: studied the arts\n"
+        "  char_class: Mage\n"
+        "  race: Human\n"
+        + _ABILITIES_TWO_YAML
+        + _MAGIC_STATE_MINIMAL_YAML
+        + "scenario_state:\n"
+        "  clue_graph:\n"
+        "    nodes:\n"
+        "      - id: clue_a\n"
+        "        type: physical_evidence\n"
+        "        description: a residue\n"
+        "        discovery_method: observation\n"
+        "        visibility: public\n"
+        "        requires: []\n"
+    )
+    (tmp_path / "all_three.yaml").write_text(body, encoding="utf-8")
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="all_three", fixtures_dir=tmp_path)
+    assert len(snapshot.characters[0].abilities) == 2, "abilities must survive coexistence"
+    assert snapshot.magic_state is not None, "magic_state must survive coexistence"
+    assert snapshot.scenario_state is not None, "scenario_state must survive coexistence"
+    assert [n.id for n in snapshot.scenario_state.clue_graph.nodes] == ["clue_a"], (
+        "scenario_state must not be clobbered by the magic_state branch"
+    )
