@@ -30,6 +30,7 @@ from ._core import (  # noqa: F401
 # Domain submodules. Star-import order is registry-insertion order — keep
 # this list in sync with `tests/telemetry/test_routing_completeness.py`.
 from .agent import *  # noqa: F401, F403
+from .aside import *  # noqa: F401, F403
 from .asset_url import *  # noqa: F401, F403
 from .audio import *  # noqa: F401, F403
 from .barrier import *  # noqa: F401, F403

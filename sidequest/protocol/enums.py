@@ -51,6 +51,10 @@ class MessageType(StrEnum):
     CHAPTER_MARKER = "CHAPTER_MARKER"
     ERROR = "ERROR"
     ACTION_REVEAL = "ACTION_REVEAL"
+    # ADR-107 (story 50-25): out-of-band OOC GM reply to a player aside.
+    # NEVER a turn record — does not advance the world, turn/round, the
+    # narrative log, or the scrapbook; broadcast table-wide (spec §5).
+    ASIDE_ANSWER = "ASIDE_ANSWER"
     # Playtest 2026-05-17: verbatim PC-spoken dialogue, attributed to the
     # speaking PC, surfaced into the shared MP transcript. The narrator
     # cannot echo it (SOUL.md Agency) and ACTION_REVEAL is wiped on
