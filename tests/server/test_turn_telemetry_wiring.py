@@ -316,3 +316,30 @@ def test_a_real_turn_persists_mechanical_census_rows(tmp_path: Path) -> None:
         )
     finally:
         conn.close()
+
+
+def test_mechanical_census_row_count_per_turn_is_bounded(tmp_path: Path) -> None:
+    """One real turn must write exactly (seated_PCs census rows + 1 session
+    trope_census), NOT once-per-segment. If this explodes, the NARRATION
+    gate (R1 #3) regressed — fix the gate, do not bump the bound."""
+    # INTENTIONAL execution model: sync def wrapping asyncio.run — see the
+    # comment in test_a_real_turn_persists_turn_telemetry_rows for rationale.
+    # Do NOT convert to async def / @pytest.mark.asyncio.
+    save_db = asyncio.run(_drive_one_real_turn(tmp_path))
+    conn = sqlite3.connect(f"file:{save_db}?mode=ro", uri=True)
+    try:
+        census = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='census'"
+        ).fetchone()[0]
+        tropes = conn.execute(
+            "SELECT COUNT(*) FROM turn_telemetry "
+            "WHERE component='mechanical' AND event_type='trope_census'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    # The Phase-1 harness seats a small MP party. Generous ceiling: this
+    # is a regression tripwire, not a tight bound. Once-per-turn gate means
+    # tropes == (number of NARRATION turns played by the harness == 1).
+    assert 0 < census <= 12, f"{census} census rows — NARRATION gate regressed?"
+    assert tropes == 1, f"{tropes} trope rows — expected exactly one per turn"
