@@ -279,6 +279,109 @@ async def test_resumed_save_self_heals_blank_current_region(
         await session_integration.detach_dungeon_from_session(handle)
 
 
+async def test_phantom_current_region_self_heals_every_sequential_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OQ-1 2026-05-17 live regression (closes the keystone-test gap).
+
+    beneath_sunden's static ``cartography.starting_region`` is ``ropefoot``
+    (cartography.yaml:16). chargen ``init_region_location`` persists that
+    into ``current_region`` — NOT blank, and NOT a node in the materialized
+    procedural graph (``entrance``/``exp001.r*``). The per-turn projection
+    heal is in-memory only (SQLite is the dungeon SSOT — never mirrored
+    onto the persisted snapshot), so EVERY turn reloads the same phantom.
+
+    The blank-only heal skipped non-blank phantoms, so the live session
+    logged ``dungeon.region_projection FAILED region='ropefoot'`` ×12 and
+    the narrator improvised the entire 80-minute crawl. The seam must
+    self-heal the phantom on EVERY sequential turn, not just turn 1 — a
+    single-turn keystone test passes while the live game fails on turn 2+.
+    """
+    import sidequest.telemetry.spans as _spans_module
+    from sidequest.agents.orchestrator import Orchestrator, TurnContext
+    from sidequest.dungeon import session_integration
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.game.session import GameSnapshot
+    from sidequest.server.session_helpers import _project_current_region
+    from sidequest.telemetry.spans.dungeon_region_projection import (
+        SPAN_DUNGEON_REGION_PROJECTION,
+    )
+
+    # beneath_sunden cartography.starting_region — non-blank, not a graph node.
+    phantom = "ropefoot"
+
+    store = SqliteStore.open_in_memory()
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes", world_slug="beneath_sunden"
+    )
+    exporter, _provider, real_tracer = _otel_in_memory()
+    original = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    handle = None
+    try:
+        handle = await _attach(store, snap, monkeypatch)
+        sd = _FakeSessionData(
+            store, genre="caverns_and_claudes", world="beneath_sunden"
+        )
+        orch = Orchestrator(client=_CannedClient())
+
+        # Three sequential turns. Each turn re-stamps the persisted static
+        # phantom (the in-memory heal is never persisted) — exactly the
+        # live "FAILED ×12" condition. Turn 2+ is the regression a
+        # single-turn test cannot see.
+        for turn in (1, 2, 3):
+            snap.current_region = phantom
+            snap.discovered_regions = [phantom]
+
+            proj = _project_current_region(sd, snap)
+
+            assert proj is not None, (
+                f"turn {turn}: phantom {phantom!r} self-heal failed — "
+                "narrator would improvise geography this turn"
+            )
+            assert proj.region_id == "entrance", (
+                f"turn {turn}: expected heal to graph entrance, "
+                f"got {proj.region_id!r}"
+            )
+            assert snap.current_region == "entrance", (
+                f"turn {turn}: heal did not rebind the live snapshot — the "
+                "frontier hook + UI emit later in the turn see the phantom"
+            )
+
+            ctx = TurnContext(
+                character_name="Carl",
+                genre="caverns_and_claudes",
+                turn_number=turn,
+                region_projection=proj,
+            )
+            prompt_text, _registry = await orch.build_narrator_prompt(
+                "look around", ctx
+            )
+            assert "YOU ARE HERE" in prompt_text and "entrance" in prompt_text, (
+                f"turn {turn}: real geography did not reach the narrator "
+                "prompt — improvisation would resume this turn"
+            )
+
+        # The GM panel (lie detector) must see the heal fire EVERY turn,
+        # each recording the phantom it healed from.
+        healed = [
+            s
+            for s in exporter.get_finished_spans()
+            if s.name == SPAN_DUNGEON_REGION_PROJECTION
+            and (s.attributes or {}).get("bound_entrance") is True
+        ]
+        assert len(healed) >= 3, (
+            "expected a bound_entrance span on every sequential turn; "
+            f"got {len(healed)} (turn 2+ heal is invisible / not firing)"
+        )
+        assert all(
+            (s.attributes or {}).get("healed_from") == phantom for s in healed
+        ), "span must record the phantom healed-from for GM-panel forensics"
+    finally:
+        _spans_module.tracer = original  # type: ignore[method-assign]
+        await session_integration.detach_dungeon_from_session(handle)
+
+
 async def test_dungeon_map_frame_is_emitted_to_ui(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
