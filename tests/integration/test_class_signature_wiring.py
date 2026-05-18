@@ -21,6 +21,7 @@ missing, or classes.yaml lacks the Cleric abilities block — this test fails.
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -227,3 +228,56 @@ def test_mage_chargen_has_empty_class_signature_but_class_moves(cc_pack):
     assert "attack" not in sheet.class_moves, "attack should be filtered out for Mage"
     assert "defend" not in sheet.class_moves, "defend should be filtered out for Mage"
     assert "flee" not in sheet.class_moves, "flee should be filtered out for Mage"
+
+
+# ---------------------------------------------------------------------------
+# Class-signature pronoun agnosticism (sq-playtest 2026-05-17 / [BS-BUG-LOW])
+# ---------------------------------------------------------------------------
+#
+# Beneath Sünden 3-player MP: Katia (they/them, Cleric) saw "He lifts the
+# holy symbol…" — the class-signature prose hardcodes a gendered subject
+# pronoun and there is NO pronoun-substitution layer on this path, so it
+# mismatches any PC whose pronouns differ from the authored gender. The
+# shipped signature prose must be pronoun-agnostic (the Fighter "Taunt"
+# signature already is — it is the in-pack precedent and the passing
+# control here, proving this assertion discriminates rather than passing
+# vacuously). Drives the real classes.yaml → loader → builder → views
+# chain (the chargen helper builds with pronouns="they/them").
+
+# Whole-word gendered 3rd-person pronouns. "they/them/their/theirs/
+# themself" are intentionally NOT here — singular-they is pronoun-safe,
+# and in the Cleric prose "they/them/theirs" refer to the unliving, not
+# the PC. ``\b`` boundaries keep "the"/"there"/"where" from matching.
+_GENDERED_PRONOUN_RE = re.compile(
+    r"\b(?:he|she|his|him|her|hers|himself|herself)\b", re.IGNORECASE
+)
+
+
+@pytest.mark.parametrize(
+    ("target_class", "ability_name"),
+    [
+        ("Cleric", "Turn Undead"),
+        ("Thief", "Backstab"),
+        ("Fighter", "Taunt"),  # already pronoun-neutral — passing control
+    ],
+)
+def test_class_signature_prose_is_pronoun_agnostic(cc_pack, target_class, ability_name):
+    """Shipped class-signature prose must contain no gendered 3rd-person
+    pronoun, so it agrees with any pronoun the player selects at chargen
+    (he/him, she/her, they/them). A hardcoded "He"/"She" subject silently
+    mismatches the playgroup's they/them and opposite-gender PCs.
+    """
+    sheet = _build_sheet(cc_pack, target_class=target_class)
+    entries = [a for a in sheet.abilities if a.name == ability_name]
+    assert len(entries) == 1, (
+        f"Expected exactly one {ability_name} entry for {target_class}; "
+        f"got {[a.name for a in sheet.abilities]}"
+    )
+    prose = entries[0].genre_description
+    found = _GENDERED_PRONOUN_RE.findall(prose)
+    assert not found, (
+        f"{target_class} {ability_name!r} class signature hardcodes gendered "
+        f"pronoun(s) {found} — mismatches a they/them or opposite-gender PC. "
+        f"Rewrite pronoun-agnostic (2nd person, like Fighter 'Taunt'). "
+        f"Prose: {prose!r}"
+    )

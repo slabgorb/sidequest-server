@@ -17,6 +17,7 @@ from sidequest.protocol.messages import (
     ActionRevealPayload,
     ActionRevealStatus,
 )
+from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -104,10 +105,15 @@ class ActionRevealHandler:
             round_no,
         )
 
+        # model_copy(update=) bypasses validation by design, so wrap the
+        # raw str at the boundary — restoring the NonBlankString contract
+        # the constructor would have enforced (a blank id raises here,
+        # fail-loud per No Silent Fallbacks, rather than shipping a bad
+        # identity key and warning on every serialize).
         stamped = payload.model_copy(
             update={
                 "round": round_no,
-                "player_id": sd.player_id,
+                "player_id": NonBlankString(sd.player_id),
             }
         )
         outbound = ActionRevealMessage(payload=stamped, player_id=sd.player_id)

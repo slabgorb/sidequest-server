@@ -1,5 +1,6 @@
 """Tests for ActionRevealHandler."""
 
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ from sidequest.protocol.messages import (
     ActionRevealPayload,
     ActionRevealStatus,
 )
+from sidequest.protocol.types import NonBlankString
 
 
 def _make_session(player_id: str = "p1", socket_id: str = "s1", round: int = 7):
@@ -107,7 +109,63 @@ async def test_server_stamps_player_id_authoritative() -> None:
     await handler.handle(session, msg)
 
     sent_msg = session._room.broadcast.call_args.args[0]
-    assert sent_msg.payload.player_id == "real-player"
+    # The stamped player_id is the validated NonBlankString newtype (the
+    # handler wraps at the model_copy boundary, consistent with the
+    # constructor paths). Comparing to NonBlankString asserts both the
+    # authoritative-overwrite value AND that the type contract holds —
+    # a raw-str regression here would now also fail this assertion.
+    assert sent_msg.payload.player_id == NonBlankString("real-player")
+
+
+# ---------------------------------------------------------------------------
+# player_id type-contract on the stamped broadcast
+# (sq-playtest 2026-05-17 / [BS-BUG-LOW])
+# ---------------------------------------------------------------------------
+#
+# Beneath Sünden 3-player MP logged, once per player every turn:
+#   PydanticSerializationUnexpectedValue(Expected `NonBlankString` ...
+#     [field_name='player_id', input_value='Carl', input_type=str])
+# Root cause: the handler stamps the authoritative player_id via
+# ``payload.model_copy(update={"player_id": sd.player_id})``. Pydantic-v2
+# ``model_copy(update=)`` bypasses validation by design, so the raw ``str``
+# is never coerced into the field's ``NonBlankString`` newtype; the type
+# contract is violated and ``model_dump_json()`` (the exact call at
+# websocket.py:160) warns on every broadcast.
+
+
+@pytest.mark.asyncio
+async def test_stamped_player_id_serializes_without_pydantic_warning() -> None:
+    """The stamped, broadcast ActionRevealMessage must honor the
+    NonBlankString contract on payload.player_id so the real wire
+    serialization (model_dump_json) emits no type-mismatch warning.
+    """
+    handler = ActionRevealHandler()
+    session = _make_session(player_id="Carl")  # _SessionData.player_id is a raw str
+    msg = _make_msg(status=ActionRevealStatus.SUBMITTED, player_id="seed", seq=1)
+
+    await handler.handle(session, msg)
+
+    sent = session._room.broadcast.call_args.args[0]
+    # Direct contract: the stamped value must be the validated newtype,
+    # not a raw str that merely happens to be non-blank.
+    assert isinstance(sent.payload.player_id, NonBlankString), (
+        f"stamped payload.player_id is {type(sent.payload.player_id).__name__}, "
+        f"expected NonBlankString — model_copy(update=) bypassed validation"
+    )
+    # Observable effect: the real wire path (websocket.py:160) must not
+    # warn. pytest.warns can't express 'no warning'; capture explicitly.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sent.model_dump_json()
+    offending = [
+        str(w.message)
+        for w in caught
+        if "PydanticSerializationUnexpectedValue" in str(w.message)
+        and "player_id" in str(w.message)
+    ]
+    assert not offending, (
+        f"player_id serialized with a Pydantic type-contract warning: {offending}"
+    )
 
 
 @pytest.mark.asyncio

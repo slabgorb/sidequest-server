@@ -65,6 +65,22 @@ async def ws_endpoint(websocket: WebSocket, handler: WebSocketSessionHandler) ->
 
     writer_task = asyncio.create_task(_writer())
 
+    async def _surface_unexpected(exc: BaseException) -> None:
+        # Safety net for unhandled exceptions in handler.handle_message
+        # (e.g. a programmer bug, a subsystem raising before the per-handler
+        # try/except wraps it). Surface a typed error frame BEFORE the
+        # finally-block close so the UI sees a reason instead of silently
+        # reconnecting into the same crash. Per playtest 2026-04-25 bug
+        # ticket: "WebSocket exception path leaves UI stuck on Reconnecting…
+        # with no surfaced reason."
+        logger.exception("ws.unexpected_error error=%s", exc)
+        await _send_error(
+            websocket,
+            f"Server error while processing message: {exc}",
+            reconnect_required=False,
+            code="server_error",
+        )
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -87,21 +103,28 @@ async def ws_endpoint(websocket: WebSocket, handler: WebSocketSessionHandler) ->
 
     except WebSocketDisconnect as exc:
         logger.info("ws.disconnected code=%s", exc.code)
+    except RuntimeError as exc:
+        # Starlette's receive_text() raises a bare RuntimeError from its
+        # top-of-function not-connected guard ("WebSocket is not
+        # connected. Need to call 'accept' first.") when the peer dropped
+        # ungracefully and a concurrent writer send already advanced
+        # application_state past CONNECTED. That is an *expected* client
+        # teardown, not a server fault — log INFO and fall through to the
+        # same cleanup as WebSocketDisconnect (playtest 2026-05-17
+        # [BS-BUG-LOW]: this fired ~1712× as ws.unexpected_error,
+        # burying genuine errors). Discriminate on the same socket state
+        # Starlette itself checks — never on the message string — so a
+        # RuntimeError raised while still CONNECTED (a genuine handler
+        # bug) still surfaces loudly (No Silent Fallbacks).
+        if (
+            websocket.application_state != WebSocketState.CONNECTED
+            or websocket.client_state == WebSocketState.DISCONNECTED
+        ):
+            logger.info("ws.disconnected_ungraceful detail=%s", exc)
+        else:
+            await _surface_unexpected(exc)
     except Exception as exc:
-        # Safety net for unhandled exceptions in handler.handle_message
-        # (e.g. a programmer bug, a subsystem raising before the per-handler
-        # try/except wraps it). Surface a typed error frame BEFORE the
-        # finally-block close so the UI sees a reason instead of silently
-        # reconnecting into the same crash. Per playtest 2026-04-25 bug
-        # ticket: "WebSocket exception path leaves UI stuck on Reconnecting…
-        # with no surfaced reason."
-        logger.exception("ws.unexpected_error error=%s", exc)
-        await _send_error(
-            websocket,
-            f"Server error while processing message: {exc}",
-            reconnect_required=False,
-            code="server_error",
-        )
+        await _surface_unexpected(exc)
     finally:
         writer_task.cancel()
         room = handler.current_room()
