@@ -1,16 +1,20 @@
-"""Tests for Stories 50-18 and 50-19 — scene-harness fixture hydrator.
+"""Tests for Stories 50-18, 50-19, 50-20, 50-21 — scene-harness fixture hydrator.
 
 Unit tests for ``sidequest.game.scene_harness.hydrate_fixture``: the YAML →
 ``GameSnapshot`` converter that backs ``POST /dev/scene/{name}`` per ADR-092.
 
-Layout:
-* Lines 80-329 — Story 50-18 RED tests (hydrator contract, error mapping,
-  yaml.safe_load discipline, path-traversal guard).
-* Lines 332+ — Story 50-19 tests (extend ``_hydrate_character()`` to
-  hydrate ``Character.known_facts`` from a ``known_facts:`` YAML block).
+Layout (sectioned by the comment banners below):
+* Story 50-18 — hydrator contract, error mapping, yaml.safe_load discipline,
+  path-traversal guard.
+* Story 50-19 — extend ``_hydrate_character()`` to hydrate
+  ``Character.known_facts`` from a ``known_facts:`` YAML block.
+* Story 50-23 — multi-PC ``characters:`` list hydration.
+* Story 50-20 — top-level ``scenario_state:`` block + DAG-order independence.
+* Story 50-21 — top-level ``encounter:`` block → ``GameSnapshot.encounter``
+  (StructuredEncounter, ADR-033).
 
-The 50-18 contract was the original spec for this file; the 50-19 cases
-extend it for the known_facts hydration path.
+The 50-18 contract was the original spec for this file; each later story's
+cases extend it for an additional hydration path.
 
 Hydrator contract (extracted from ADR-092 §Hydration rules and the four
 canonical fixtures in ``scenarios/fixtures/``):
