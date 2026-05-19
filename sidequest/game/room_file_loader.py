@@ -17,6 +17,7 @@ import base64
 import binascii
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 from PIL import Image, ImageDraw
@@ -154,7 +155,7 @@ def load_room_payload(
 
 def emit_runtime_cavern_png(
     *,
-    mask_dict: dict,
+    mask_dict: dict[str, Any],
     output_path: Path,
     region_id: str,
 ) -> None:
@@ -248,7 +249,7 @@ def emit_runtime_cavern_png(
     )
 
 
-def _decode_runtime_mask_grid(mask_dict: dict) -> list[list[int]]:
+def _decode_runtime_mask_grid(mask_dict: dict[str, Any]) -> list[list[int]]:
     """Decode the persisted mask BLOB into a 2D grid of WALL/FLOOR ints.
 
     Raises ``KeyError`` if required keys are absent (No Silent Fallbacks

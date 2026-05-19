@@ -369,21 +369,20 @@ class TestRuntimeCavernPngAssetUrl:
     ) -> None:
         """Given the relative path the emitter would write to (under
         ``artifacts/dungeon/<save>/regions/<region>.cavern.png`` — the
-        ADR-096 layout extended to the runtime save dir), the URL has
-        the ``.cavern.png`` suffix and the CDN prefix."""
+        ADR-096 layout extended to the runtime save dir), the URL is
+        the full CDN-prefixed concatenation. Asserts the EXACT value
+        (not just prefix/suffix) so a partial drop of the relative
+        path segment cannot pass undetected."""
         from sidequest.server.asset_urls import resolve_asset_url
 
         monkeypatch.setenv("SIDEQUEST_ASSET_BASE_URL", "https://cdn.example/")
         relative = "artifacts/dungeon/save01/regions/exp001r0.cavern.png"
         url = resolve_asset_url(relative)
 
-        assert url.endswith(".cavern.png"), (
-            f"resolved url {url!r} does not end in '.cavern.png'; "
-            "the UI consumer relies on the ADR-096 suffix to identify the asset"
-        )
-        assert url.startswith("https://cdn.example/"), (
-            f"resolved url {url!r} should use the configured CDN base; "
-            "missing prefix means resolve_asset_url is not on the runtime path"
+        assert url == "https://cdn.example/artifacts/dungeon/save01/regions/exp001r0.cavern.png", (
+            f"resolved CDN url {url!r} does not match the expected full URL; "
+            "a partial-prefix/suffix check would miss a dropped path segment "
+            "(symmetric with the local-mode test below)"
         )
 
     def test_runtime_cavern_png_relative_path_local_mode(
@@ -422,9 +421,10 @@ class TestEmitRuntimeCavernPngOtel:
 
     def test_span_is_emitted_with_lie_detector_attributes(self, tmp_path: Path) -> None:
         """One span per call; attributes carry ``region_id``,
-        ``mask_sha256``, ``grid_width``, ``grid_height``, ``cell_width``.
-        These come from the mask dict (not the narrator) so they ARE
-        ground truth on the GM panel."""
+        ``mask_sha256``, ``grid_width``, ``grid_height``, ``cell_width``,
+        and ``output_path``. These come from the mask dict + caller-
+        supplied path (not the narrator) so they ARE ground truth on
+        the GM panel."""
         from sidequest.game.room_file_loader import emit_runtime_cavern_png
 
         rows = ["####", "#..#", "####"]
@@ -467,6 +467,14 @@ class TestEmitRuntimeCavernPngOtel:
         )
         assert attrs.get("cell_width") == 28, (
             f"span cell_width {attrs.get('cell_width')} != 28 (ADR-096 contract)"
+        )
+        # AC3 lie-detector attribute: output_path lets the GM panel
+        # correlate the span with the on-disk artifact a refactor that
+        # silently drops this attr would deny operators the ability to
+        # verify the PNG actually landed where the URL points.
+        assert attrs.get("output_path") == str(out), (
+            f"span output_path {attrs.get('output_path')!r} != {str(out)!r}; "
+            "the GM panel needs the exact filesystem path the renderer wrote to"
         )
 
     def test_span_name_constant_is_exported(self) -> None:

@@ -488,9 +488,13 @@ def _maybe_build_runtime_cavern_payload(
       * no mask is persisted for ``room_id`` (the room_id is not a
         materialised region — could be a settlement_id or a typo);
       * the local-renders output directory is not configured
-        (``SIDEQUEST_OUTPUT_DIR`` unset and the daemon handshake file
-        absent — the server.app startup logs this as a loud warning
-        already; we don't double-log per turn).
+        (``SIDEQUEST_OUTPUT_DIR`` env var unset at turn time —
+        ``server.app`` startup also logs ``render_assets.no_output_dir``
+        loudly when it cannot resolve a daemon-output handshake; this
+        per-turn check is the safety net and also emits its own
+        ``tactical_grid.runtime_render_skipped`` watcher event so the
+        GM panel sees the per-turn skip without depending on
+        startup-time correlation).
 
     No silent fallbacks: a corrupt mask BLOB or PIL failure propagates
     as a ``ValueError`` / ``OSError`` from ``emit_runtime_cavern_png``
@@ -528,9 +532,27 @@ def _maybe_build_runtime_cavern_payload(
 
         output_dir_env = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
         if not output_dir_env:
-            logger.debug(
-                "tactical_grid.runtime_render_skipped reason=no_output_dir room_id=%s",
+            # No silent fallback: a missing output dir is an
+            # operator-visible config gap. ``server.app`` also logs
+            # this loudly at startup; the per-turn warning + watcher
+            # event is the safety net per CLAUDE.md No-Silent-Fallbacks.
+            logger.warning(
+                "tactical_grid.runtime_render_skipped reason=no_output_dir "
+                "genre=%s world=%s room_id=%s",
+                sd.genre_slug,
+                sd.world_slug,
                 room_id,
+            )
+            _watcher_publish(
+                "tactical_grid.runtime_render_skipped",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "room_id": room_id,
+                    "reason": "no_output_dir",
+                },
+                component="cavern_renderer",
+                severity="warning",
             )
             return None
         output_root = Path(output_dir_env)
