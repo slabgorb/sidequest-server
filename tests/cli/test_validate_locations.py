@@ -32,15 +32,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from sidequest.cli.validate.locations import (
     Issue,
     ValidationResult,
     validate_locations_in_world,
     validate_packs,
 )
-
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "validate_locations"
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -94,11 +91,7 @@ def test_flavor_only_with_binding_errors() -> None:
     flavor_only→no-binding is the symmetric AC-2 clause.
     """
     res = _pack_result("wf_flavor_only_with_binding")
-    bad = [
-        i
-        for i in res.errors
-        if i.code in {"FLAVOR_ONLY_FORBIDS_BINDING", "MALFORMED_ENTITY"}
-    ]
+    bad = [i for i in res.errors if i.code in {"FLAVOR_ONLY_FORBIDS_BINDING", "MALFORMED_ENTITY"}]
     assert bad, f"expected a flavor-only-binding error, got {[i.code for i in res.errors]}"
 
 
@@ -110,8 +103,7 @@ def test_malformed_entities_report_each_independently() -> None:
     # Three independently-bad entities in one region; validator must report
     # all three, not stop at the first.
     assert len(malformed) == 3, (
-        f"expected 3 malformed issues, got {len(malformed)}: "
-        f"{[i.message for i in malformed]}"
+        f"expected 3 malformed issues, got {len(malformed)}: {[i.message for i in malformed]}"
     )
 
 
@@ -171,17 +163,16 @@ def test_unallowlisted_definite_noun_phrase_warns() -> None:
     res = _pack_result("coherence_drift")
     drift = [i for i in res.warnings if i.code == "PROSE_DRIFT"]
     assert any("dragon" in i.message.lower() for i in drift), (
-        f"expected a 'dragon' drift warning; got: "
-        f"{[i.message for i in drift]}"
+        f"expected a 'dragon' drift warning; got: {[i.message for i in drift]}"
     )
 
 
 def test_prose_drift_never_promoted_to_error() -> None:
     """AC-4: warnings NEVER appear in .errors — exit code stays 0."""
     res = _pack_result("coherence_drift")
-    assert all(
-        i.code != "PROSE_DRIFT" for i in res.errors
-    ), "PROSE_DRIFT must be warning-only, never an error"
+    assert all(i.code != "PROSE_DRIFT" for i in res.errors), (
+        "PROSE_DRIFT must be warning-only, never an error"
+    )
 
 
 def test_allowlist_silences_generic_phrases() -> None:
@@ -281,7 +272,8 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
 def test_cli_exits_zero_on_clean_pack() -> None:
     """AC-1: clean pack → exit 0."""
     result = _run_cli(
-        "--genre-packs-root", str(FIXTURES / "wf_ok"),
+        "--genre-packs-root",
+        str(FIXTURES / "wf_ok"),
     )
     assert result.returncode == 0, (
         f"expected exit 0, got {result.returncode}\n"
@@ -292,18 +284,19 @@ def test_cli_exits_zero_on_clean_pack() -> None:
 def test_cli_exits_nonzero_on_hard_error() -> None:
     """AC-1: pack with hard error → exit 1."""
     result = _run_cli(
-        "--genre-packs-root", str(FIXTURES / "wf_duplicate_id"),
+        "--genre-packs-root",
+        str(FIXTURES / "wf_duplicate_id"),
     )
     assert result.returncode != 0, (
-        f"expected nonzero exit, got 0\n"
-        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+        f"expected nonzero exit, got 0\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
 
 
 def test_cli_exits_zero_on_warning_only_pack() -> None:
     """AC-4: warnings NEVER block the exit code."""
     result = _run_cli(
-        "--genre-packs-root", str(FIXTURES / "coherence_drift"),
+        "--genre-packs-root",
+        str(FIXTURES / "coherence_drift"),
     )
     assert result.returncode == 0, (
         f"warnings-only pack must exit 0; got {result.returncode}\n"
@@ -315,7 +308,8 @@ def test_cli_json_output_is_machine_readable() -> None:
     """AC-1: --json emits a parseable structured report with the documented shape."""
     result = _run_cli(
         "--json",
-        "--genre-packs-root", str(FIXTURES / "wf_duplicate_id"),
+        "--genre-packs-root",
+        str(FIXTURES / "wf_duplicate_id"),
     )
     assert result.returncode != 0
     payload = json.loads(result.stdout)
@@ -342,9 +336,7 @@ def test_cli_subcommand_help_runs() -> None:
         text=True,
         cwd=str(SERVER_ROOT),
     )
-    assert result.returncode == 0, (
-        f"locations subcommand not registered; stderr={result.stderr!r}"
-    )
+    assert result.returncode == 0, f"locations subcommand not registered; stderr={result.stderr!r}"
     assert "locations" in result.stdout.lower() or "json" in result.stdout.lower()
 
 

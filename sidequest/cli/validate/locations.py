@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -36,7 +35,6 @@ import click
 import yaml
 
 from sidequest.protocol.models import LocationEntity
-
 
 Severity = Literal["error", "warning"]
 
@@ -103,9 +101,7 @@ def _packs_in(root: Path) -> list[Path]:
         return []
     if (root / "pack.yaml").is_file():
         return [root]
-    return sorted(
-        p for p in root.iterdir() if p.is_dir() and (p / "pack.yaml").is_file()
-    )
+    return sorted(p for p in root.iterdir() if p.is_dir() and (p / "pack.yaml").is_file())
 
 
 def _worlds_in(pack: Path) -> list[Path]:
@@ -381,12 +377,7 @@ def _check_prose(
             # starts are ambiguous (proper noun vs ordinary noun).
             continue
         seen.add(norm)
-        if (
-            norm in npc_tokens
-            or norm in entity_labels
-            or norm in entity_heads
-            or norm in allowlist
-        ):
+        if norm in npc_tokens or norm in entity_labels or norm in entity_heads or norm in allowlist:
             continue
         result.record(
             Issue(
@@ -421,9 +412,7 @@ def _validate_one_world(
     npc_tokens = _load_npc_tokens(world_dir)
     clue_ids = _load_clue_ids(world_dir)
 
-    def _check_region(
-        region_id: str, raw_entities: Any, prose: str, source_file: str
-    ) -> None:
+    def _check_region(region_id: str, raw_entities: Any, prose: str, source_file: str) -> None:
         entities = _check_well_formed_region(
             result,
             pack=pack_slug,
@@ -573,16 +562,11 @@ def main(ctx: click.Context, roots: tuple[Path, ...], as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2))
     else:
         for issue in result.errors:
-            click.echo(
-                f"[ERROR] {issue.code} {issue.file}: {issue.message}", err=True
-            )
+            click.echo(f"[ERROR] {issue.code} {issue.file}: {issue.message}", err=True)
         for issue in result.warnings:
-            click.echo(
-                f"[WARN] {issue.code} {issue.file}: {issue.message}", err=True
-            )
+            click.echo(f"[WARN] {issue.code} {issue.file}: {issue.message}", err=True)
         click.echo(
-            f"locations: {len(result.errors)} errors, "
-            f"{len(result.warnings)} warnings",
+            f"locations: {len(result.errors)} errors, {len(result.warnings)} warnings",
             err=True,
         )
 
