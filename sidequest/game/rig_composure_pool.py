@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
 from sidequest.telemetry.spans import (
     SPAN_RIG_POOL_CREATED,
@@ -68,18 +68,11 @@ class RigComposurePool(BaseModel):
     character_id: str
     chassis_id: str
 
-    @field_validator("character_id")
+    @field_validator("character_id", "chassis_id")
     @classmethod
-    def _character_id_non_blank(cls, v: str) -> str:
+    def _binding_id_non_blank(cls, v: str, info: ValidationInfo) -> str:
         if not v.strip():
-            raise ValueError("character_id cannot be blank")
-        return v
-
-    @field_validator("chassis_id")
-    @classmethod
-    def _chassis_id_non_blank(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("chassis_id cannot be blank")
+            raise ValueError(f"{info.field_name} cannot be blank")
         return v
 
     @model_validator(mode="after")
