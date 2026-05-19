@@ -110,6 +110,7 @@ from sidequest.protocol.messages import (
     SecretNotePayload,
     SessionEventPayload,
     TacticalGridMessage,
+    TacticalGridPayload,
     TurnStatusMessage,
     TurnStatusPayload,
 )
@@ -452,6 +453,151 @@ def _should_fire_opening_narration(session_data: object, room: object) -> bool:
     return len(chars) >= seat_count
 
 
+def _maybe_build_runtime_cavern_payload(
+    *,
+    sd: _SessionData,
+    room_id: str,
+) -> TacticalGridPayload | None:
+    """Build a TacticalGridPayload from a persisted runtime cavern mask.
+
+    Story 52-4 (ADR-096 + ADR-106). When ``_maybe_emit_tactical_grid``
+    finds no static room YAML and the world has a procedural dungeon
+    (``sd.dungeon_store`` is wired by the Beneath Sünden path), look up
+    the persisted mask BLOB for ``room_id`` and:
+
+    1. Emit a ``.cavern.png`` sidecar at the local-renders mount via
+       ``emit_runtime_cavern_png`` (fires the
+       ``dungeon.render.cavern_mask_to_png`` OTEL span).
+    2. Synthesise a minimal ``TacticalGridPayload`` carrying the
+       decoded ASCII mask + resolved cavern image URL + cell size.
+       Cellular params are unknown at this point (the mask is the
+       truth; the originating generation params live in
+       ``GenerationReport``, not in the persisted mask BLOB).
+       ``DerivedRoomData`` is computed from the mask: floor_count is
+       the ASCII '.' count; exits and pois are empty here — the
+       procedural region's exits live at the region-graph level, not
+       the cavern-mask level (52-5 / future work owns surfacing them).
+    3. Return the payload so the caller emits a normal
+       ``TACTICAL_GRID`` message. The UI's existing TacticalGridRenderer
+       consumes it identically to the static path (AC5 contract: "the
+       PNG sidecar integrates with the existing TacticalGridRenderer").
+
+    Returns ``None`` when:
+      * ``sd.dungeon_store`` is absent (no procedural dungeon wired —
+        applies to every non-Beneath-Sünden world right now);
+      * no mask is persisted for ``room_id`` (the room_id is not a
+        materialised region — could be a settlement_id or a typo);
+      * the local-renders output directory is not configured
+        (``SIDEQUEST_OUTPUT_DIR`` env var unset at turn time —
+        ``server.app`` startup also logs ``render_assets.no_output_dir``
+        loudly when it cannot resolve a daemon-output handshake; this
+        per-turn check is the safety net and also emits its own
+        ``tactical_grid.runtime_render_skipped`` watcher event so the
+        GM panel sees the per-turn skip without depending on
+        startup-time correlation).
+
+    No silent fallbacks: a corrupt mask BLOB or PIL failure propagates
+    as a ``ValueError`` / ``OSError`` from ``emit_runtime_cavern_png``
+    and is caught by the outer ``_maybe_emit_tactical_grid``'s generic
+    ``except Exception`` handler (logged at warning level).
+    """
+    import base64 as _base64
+    import os as _os
+
+    from sidequest.game.room_file_loader import emit_runtime_cavern_png
+    from sidequest.protocol.models import DerivedRoomData
+    from sidequest.server.asset_urls import resolve_asset_url
+
+    # The Decision-N gate shape (``<var> = getattr(sd, "dungeon_store", None)``
+    # followed by ``if <var> is not None:``) is grep-asserted by
+    # tests/dungeon/test_setpiece_attach_wiring.py — keep the positive guard
+    # so the structural lint binding both this helper and the existing
+    # resolve_complications_for_resolved_tropes site continues to pass.
+    dungeon_store = getattr(sd, "dungeon_store", None)
+    if dungeon_store is not None:
+        try:
+            masks = dungeon_store.load_masks()
+        except Exception as exc:  # noqa: BLE001 — must not crash a turn
+            logger.warning(
+                "tactical_grid.runtime_mask_load_failed genre=%s world=%s room_id=%s error=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                room_id,
+                exc,
+            )
+            return None
+        mask_dict = masks.get(room_id)
+        if mask_dict is None:
+            return None  # room_id is not a materialised region — defer to static-not-found path
+
+        output_dir_env = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+        if not output_dir_env:
+            # No silent fallback: a missing output dir is an
+            # operator-visible config gap. ``server.app`` also logs
+            # this loudly at startup; the per-turn warning + watcher
+            # event is the safety net per CLAUDE.md No-Silent-Fallbacks.
+            logger.warning(
+                "tactical_grid.runtime_render_skipped reason=no_output_dir "
+                "genre=%s world=%s room_id=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                room_id,
+            )
+            _watcher_publish(
+                "tactical_grid.runtime_render_skipped",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "room_id": room_id,
+                    "reason": "no_output_dir",
+                },
+                component="cavern_renderer",
+                severity="warning",
+            )
+            return None
+        output_root = Path(output_dir_env)
+
+        save_path = getattr(sd.store, "_path", None)
+        save_id = save_path.stem if isinstance(save_path, Path) else "in_memory"
+
+        relative = f"artifacts/dungeon/{save_id}/regions/{room_id}.cavern.png"
+        output_path = output_root / relative
+        emit_runtime_cavern_png(
+            mask_dict=mask_dict,
+            output_path=output_path,
+            region_id=room_id,
+        )
+
+        cavern_image_url = resolve_asset_url(relative)
+
+        # Decode the mask ASCII for the UI overlay (independent of the PNG
+        # — the UI uses the mask string for cell-stepped math, not pixel-
+        # peeping).
+        mask_text = _base64.b64decode(mask_dict["mask_bytes_b64"]).decode("ascii")
+        floor_count = mask_text.count(".")
+        block = mask_dict["block"]
+
+        return TacticalGridPayload(
+            room_id=room_id,
+            room_name=room_id,  # procedural rooms have no authored name — region_id IS the name
+            room_type="cavern",
+            mask=mask_text,
+            cavern_image_url=cavern_image_url,
+            cell_size=block["cell_width"],
+            cellular=None,  # originating generation params not persisted in the mask BLOB
+            derived=DerivedRoomData(
+                floor_count=floor_count,
+                exits={},  # procedural exits live at the region-graph level, not the mask
+                pois=[],
+            ),
+            tokens=[],
+            initiative=None,
+            entities=[],
+        )
+
+    return None
+
+
 def _maybe_emit_tactical_grid(
     handler: object,
     *,
@@ -507,26 +653,36 @@ def _maybe_emit_tactical_grid(
     try:
         payload = load_room_payload(world_dir, room_id, genre_slug=sd.genre_slug)
     except RoomNotFoundError:
-        # Room YAML missing — world uses room_graph without per-room files.
-        # Non-fatal: log and skip. Per CLAUDE.md no-silent-fallback: log at
-        # debug so the absence IS visible to Keith/Sebastien at low verbosity,
-        # but not loud enough to alarm on every non-YAML room.
-        logger.debug(
-            "tactical_grid.room_not_found genre=%s world=%s room_id=%s",
-            sd.genre_slug,
-            sd.world_slug,
-            room_id,
-        )
-        _watcher_publish(
-            "tactical_grid.room_not_found",
-            {
-                "genre": sd.genre_slug,
-                "world": sd.world_slug,
-                "room_id": room_id,
-            },
-            component="cavern_renderer",
-        )
-        return
+        # Story 52-4: no static YAML — try the runtime path. If the
+        # world has a procedural dungeon (Beneath Sünden via ADR-106)
+        # and the room_id is a region_id with a persisted mask, emit
+        # the runtime cavern PNG sidecar and synthesise a
+        # TacticalGridPayload from the mask. Falls through (return)
+        # if the world has no procedural dungeon or no mask exists for
+        # this room_id — the existing static-path absence is non-fatal.
+        runtime_payload = _maybe_build_runtime_cavern_payload(sd=sd, room_id=room_id)
+        if runtime_payload is not None:
+            payload = runtime_payload
+        else:
+            # Per CLAUDE.md no-silent-fallback: log at debug so the
+            # absence IS visible to Keith/Sebastien at low verbosity,
+            # but not loud enough to alarm on every non-YAML room.
+            logger.debug(
+                "tactical_grid.room_not_found genre=%s world=%s room_id=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                room_id,
+            )
+            _watcher_publish(
+                "tactical_grid.room_not_found",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "room_id": room_id,
+                },
+                component="cavern_renderer",
+            )
+            return
     except FileNotFoundError as exc:
         # Mask .txt or .cavern.png missing — authoring error, log loud.
         logger.warning(
