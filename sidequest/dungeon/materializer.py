@@ -53,12 +53,13 @@ same transaction via the real Plan-5 append-only primitive
 ``record_mutation(kind="setpiece_state", ...)``.  It is NEVER recomputed — the save is
 truth.  It is persisted EXACTLY as the attach stage produced it (spec §7 freeze target).
 
-**Mask persistence is a documented Plan-5-API gap.**  ``commit_expansion`` persists only
-``RegionNode.to_dict()`` (id / expansion_id / theme / depth_score).  There is NO mask BLOB
-write path on ``commit_expansion``; fill grids are not threaded to the commit stage; and no
-Plan 1–6 code consumes a persisted mask on reload.  The mask is inert until a future plan
-adds a mask-BLOB column and a loader.  This is NOT papered over — it is flagged here and
-in the Post-Implementation Corrections ledger (item 10).
+**Mask persistence — closed by Story 52-3.**  ``commit_expansion`` now accepts a
+``masks: Mapping[region_id, dict] | None`` parameter; fill_result masks are threaded
+through the commit stage at the call below (per-region ``RegionMask.to_dict()`` →
+JSON BLOB in the pre-existing ``dungeon_map.mask`` column).  ``DungeonStore.load_masks()``
+is the symmetric loader.  The original Plan 1–6 gap (commit_expansion writing only
+``RegionNode.to_dict()``, no mask write or reload path) is fully closed; the
+Post-Implementation Corrections ledger item 10 is resolved.
 
 -----
 Plan 6 binding — attach_set_piece coalescence entry point
