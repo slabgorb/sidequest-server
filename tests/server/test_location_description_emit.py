@@ -323,7 +323,9 @@ def test_emit_fires_no_source_when_neither_path_resolves(tmp_path, monkeypatch):
     assert "location_description.no_source" in event_names, (
         f"expected location_description.no_source watcher event; got {event_names}"
     )
-    no_source_fields = next(fields for name, fields in watcher_calls if name == "location_description.no_source")
+    no_source_fields = next(
+        fields for name, fields in watcher_calls if name == "location_description.no_source"
+    )
     assert no_source_fields["room_id"] == "missing_room"
     assert no_source_fields["genre"] == "tea_and_murder"
     assert no_source_fields["world"] == "glenross"
