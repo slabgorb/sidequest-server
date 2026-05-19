@@ -192,6 +192,21 @@ CREATE TABLE IF NOT EXISTS turn_telemetry (
 );
 CREATE INDEX IF NOT EXISTS idx_turn_telemetry_round ON turn_telemetry (round);
 CREATE INDEX IF NOT EXISTS idx_turn_telemetry_event_seq ON turn_telemetry (event_seq);
+CREATE TABLE IF NOT EXISTS location_promotions (
+    save_id TEXT NOT NULL,
+    region_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    label TEXT NOT NULL,
+    promoted_at_turn INTEGER NOT NULL,
+    promoted_canon TEXT NOT NULL,
+    new_tier TEXT NOT NULL DEFAULT 'yes_and',
+    new_binding_kind TEXT,
+    new_binding_ref TEXT,
+    PRIMARY KEY (save_id, region_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_location_promotions_region
+    ON location_promotions (save_id, region_id);
 """
 
 
@@ -217,6 +232,33 @@ class SavedSession:
     meta: SessionMeta
     snapshot: GameSnapshot
     recap: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LocationPromotionRow:
+    """One mutation to a location's manifest. ADR-109 §4.3 (Story 54-6).
+
+    Two provenances:
+
+    * ``yes_and_promoted`` — authored ``flavor_only`` entity engaged
+      mechanically. The row layers a new tier on top of the authored row.
+    * ``yes_and_minted`` — player input named an entity not in the
+      authored manifest. The row IS the entity.
+
+    Durable per Keith's no-GC retention policy — promotions are never
+    reaped on a timer.
+    """
+
+    save_id: str
+    region_id: str
+    entity_id: str
+    provenance: str  # 'yes_and_promoted' | 'yes_and_minted'
+    label: str
+    promoted_at_turn: int
+    promoted_canon: str
+    new_tier: str  # 'yes_and' in v1
+    new_binding_kind: str | None
+    new_binding_ref: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +674,73 @@ class SqliteStore:
                 content = content[:200] + "..."
             recap += f"- {content}\n"
         return recap
+
+    def list_location_promotions(
+        self, *, save_id: str, region_id: str
+    ) -> list[LocationPromotionRow]:
+        """Return all location_promotions rows for ``(save_id, region_id)``,
+        ordered by ``promoted_at_turn`` then ``entity_id``. ADR-109 §4.3."""
+        rows = self._conn.execute(
+            """SELECT save_id, region_id, entity_id, provenance, label,
+                      promoted_at_turn, promoted_canon, new_tier,
+                      new_binding_kind, new_binding_ref
+                 FROM location_promotions
+                WHERE save_id = ? AND region_id = ?
+                ORDER BY promoted_at_turn ASC, entity_id ASC""",
+            (save_id, region_id),
+        ).fetchall()
+        return [
+            LocationPromotionRow(
+                save_id=row[0],
+                region_id=row[1],
+                entity_id=row[2],
+                provenance=row[3],
+                label=row[4],
+                promoted_at_turn=row[5],
+                promoted_canon=row[6],
+                new_tier=row[7],
+                new_binding_kind=row[8],
+                new_binding_ref=row[9],
+            )
+            for row in rows
+        ]
+
+    def upsert_location_promotion(self, row: LocationPromotionRow) -> None:
+        """Insert or update one ``location_promotions`` row.
+
+        Primary key ``(save_id, region_id, entity_id)``. Re-engagement of
+        the same entity updates ``promoted_at_turn`` / ``promoted_canon``
+        / ``new_tier`` / binding fields in place rather than minting a
+        duplicate row (ADR-109 §4.3, AC-3 in story 54-6).
+        """
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO location_promotions (
+                       save_id, region_id, entity_id, provenance, label,
+                       promoted_at_turn, promoted_canon, new_tier,
+                       new_binding_kind, new_binding_ref
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(save_id, region_id, entity_id) DO UPDATE SET
+                       provenance = excluded.provenance,
+                       label = excluded.label,
+                       promoted_at_turn = excluded.promoted_at_turn,
+                       promoted_canon = excluded.promoted_canon,
+                       new_tier = excluded.new_tier,
+                       new_binding_kind = excluded.new_binding_kind,
+                       new_binding_ref = excluded.new_binding_ref""",
+                (
+                    row.save_id,
+                    row.region_id,
+                    row.entity_id,
+                    row.provenance,
+                    row.label,
+                    row.promoted_at_turn,
+                    row.promoted_canon,
+                    row.new_tier,
+                    row.new_binding_kind,
+                    row.new_binding_ref,
+                ),
+            )
 
     def _load_meta(self) -> SessionMeta | None:
         row = self._conn.execute(

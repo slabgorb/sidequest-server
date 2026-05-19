@@ -4,7 +4,7 @@ When the orchestrator's LlmClient is a ToolingLlmClient (an
 AnthropicSdkClient in production), ``run_narration_turn`` must:
 
 * Go through ``AnthropicSdkClient.complete_with_tools``.
-* Pass the full 26-tool array from ``default_registry``.
+* Pass the full 27-tool array from ``default_registry``.
 * Open a ``narration.turn`` cost-rollup span and seed the rollup
   attributes (model, token totals, tool-call count).
 * Return a ``NarrationTurnResult`` whose ``narration`` field matches the
@@ -185,9 +185,10 @@ async def test_orchestrator_routes_narration_through_sdk(
     # 1. The SDK was hit — two iterations (tool_use → end_turn).
     assert len(sdk.messages.calls) == 2
 
-    # 2. The full 26-tool catalog was sent on every iteration.
+    # 2. The full 27-tool catalog was sent on every iteration.
     sent_tools = sdk.messages.calls[0]["tools"]
-    assert len(sent_tools) == len(default_registry.list_names()) == 26
+    # Story 54-6 added resolve_location_entity (27th tool); ADR-109 §5.3.
+    assert len(sent_tools) == len(default_registry.list_names()) == 27
 
     # 3. The result carries the SDK's text.
     assert result.narration == fake_response_text
