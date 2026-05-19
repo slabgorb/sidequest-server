@@ -23,6 +23,13 @@ SPAN_RIG_CONFRONTATION_OUTCOME = "rig.confrontation_outcome"
 SPAN_ROOM_ENTRY_SKIPPED = "room.entry_skipped"
 SPAN_ROOM_ENTRY_EVALUATED = "room.entry_evaluated"
 
+# Story 53-1: RigComposurePool emits these three on construct / delta /
+# zero-crossing. The crash handler (story 53-3) subscribes to
+# rig_pool.zero_crossing to fire injury tags + Edge loss + dismount.
+SPAN_RIG_POOL_CREATED = "rig_pool.created"
+SPAN_RIG_POOL_DELTA = "rig_pool.delta"
+SPAN_RIG_POOL_ZERO_CROSSING = "rig_pool.zero_crossing"
+
 FLAT_ONLY_SPANS.update(
     {
         SPAN_RIG_BOND_EVENT,
@@ -30,6 +37,9 @@ FLAT_ONLY_SPANS.update(
         SPAN_RIG_CONFRONTATION_OUTCOME,
         SPAN_ROOM_ENTRY_SKIPPED,
         SPAN_ROOM_ENTRY_EVALUATED,
+        SPAN_RIG_POOL_CREATED,
+        SPAN_RIG_POOL_DELTA,
+        SPAN_RIG_POOL_ZERO_CROSSING,
     }
 )
 
