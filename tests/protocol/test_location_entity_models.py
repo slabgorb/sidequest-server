@@ -49,7 +49,7 @@ def test_flavor_only_entity_without_binding_validates():
 def test_real_object_without_binding_is_allowed_at_model_level():
     """Model-level allows it; cross-field invariant is enforced by 54-3 validator.
 
-    Per ADR-109 §4.1 + plan rationale: authored YAML loads leniently so a
+    Per ADR-109 §1 (three-tier manifest) + plan rationale: authored YAML loads leniently so a
     failed binding ref doesn't crash room load; pf validate locations
     (Story 54-3) catches the drift at author time.
     """
@@ -116,7 +116,7 @@ def test_unknown_provenance_rejected():
 
 
 def test_extra_field_on_entity_rejected():
-    """model_config = {'extra': 'forbid'} per ADR-109 §4.1."""
+    """model_config = {'extra': 'forbid'} per ADR-109 §1 (three-tier manifest)."""
     with pytest.raises(ValidationError):
         LocationEntity(id="x", label="x", tier="flavor_only", surprise="!")  # type: ignore[call-arg]
 
@@ -297,9 +297,10 @@ def test_location_description_message_roundtrip():
         player_id="",
     )
     assert msg.type == MessageType.LOCATION_DESCRIPTION
-    dumped = msg.model_dump()
-    # The dispatch wire format uses the string value, not the enum.
-    assert dumped["type"] in ("LOCATION_DESCRIPTION", MessageType.LOCATION_DESCRIPTION)
+    dumped = msg.model_dump(mode="json")
+    # Pin the wire format to the literal string — TypeScript clients
+    # consume the JSON shape, never the python enum repr.
+    assert dumped["type"] == "LOCATION_DESCRIPTION"
     assert dumped["payload"]["region_id"] == "glenross_pub"
     assert dumped["payload"]["overlays"] == []
 

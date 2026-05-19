@@ -26,6 +26,7 @@ from opentelemetry import trace
 
 if TYPE_CHECKING:
     from sidequest.handlers.base import MessageHandler
+    from sidequest.protocol.models import LocationEntity
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
@@ -622,10 +623,10 @@ def _maybe_emit_location_description(
     - Per-room YAML via ``load_room_payload`` (room_graph worlds).
     - Cartography region (region-mode worlds) — fallback when no room YAML.
 
-    Graceful absence: missing room id → silent return; neither source
-    available → ``location_description.no_source`` watcher event so the
-    absence is observable on the GM panel (per CLAUDE.md OTEL
-    Observability Principle), then return.
+    Missing room id is silent because no-room is not an error state.
+    Missing manifest source fires the ``location_description.no_source``
+    watcher event so the absence is observable on the GM panel — per
+    CLAUDE.md OTEL Observability Principle.
 
     The ``overlays`` payload field is always emitted as ``[]`` in this
     story — overlay population is owned by Story 54-7
@@ -649,7 +650,7 @@ def _maybe_emit_location_description(
 
     prose: str = ""
     terrain: str | None = None
-    entities: list = []
+    entities: list[LocationEntity] = []
     sourced = False
 
     # Path 1: per-room YAML via load_room_payload.

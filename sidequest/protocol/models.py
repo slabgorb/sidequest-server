@@ -492,8 +492,10 @@ class LocationEntityBinding(BaseModel):
 class LocationEntity(BaseModel):
     """A named, typed entry in a location's manifest.
 
-    See ADR-109 / spec §4.1. The ``tier`` determines mechanical weight;
-    ``provenance`` records how the entity entered the manifest.
+    See ADR-109 §1 (three-tier manifest) and design spec §4.1
+    (``docs/superpowers/specs/2026-05-19-persistent-location-descriptions-design.md``).
+    The ``tier`` determines mechanical weight; ``provenance`` records how
+    the entity entered the manifest.
 
     Authored YAML never mutates at runtime — promotions and
     player-initiated mints accumulate in the ``location_promotions``
@@ -519,7 +521,7 @@ class LocationEntity(BaseModel):
 
 class EncounterLocationOverlay(BaseModel):
     """Per-encounter contribution merged at read time. Base manifest and
-    base description never mutate from overlays — see ADR-109 §5.5.
+    base description never mutate from overlays — see ADR-109 §5.
 
     Story 54-2 ships the type only. The read-time merge logic in
     ``get_location_manifest`` / ``get_location_prose`` is owned by

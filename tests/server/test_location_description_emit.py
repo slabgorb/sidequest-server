@@ -22,8 +22,10 @@ def test_emit_helper_is_importable():
     missing the import fails fast with a clear message.
     """
     from sidequest.server.websocket_session_handler import (
-        _maybe_emit_location_description,  # noqa: F401
+        _maybe_emit_location_description,
     )
+
+    assert callable(_maybe_emit_location_description)
 
 
 def test_emit_skips_when_no_room_id():
@@ -180,6 +182,153 @@ def test_emit_room_id_override_takes_precedence(tmp_path, monkeypatch):
     emit_fn.assert_called_once()
 
 
+def test_emit_uses_cartography_fallback_when_no_room_yaml(tmp_path, monkeypatch):
+    """AC-5 cartography-fallback path: per-room YAML missing → cartography region wins.
+
+    POI worlds (e.g. ``tea_and_murder/glenross`` post-54-4) carry their
+    manifest on ``world.cartography.regions[room_id]``. The helper's
+    second source path must consume that when ``load_room_payload``
+    raises ``RoomNotFoundError``. If this branch silently breaks, 54-4
+    content will emit nothing.
+    """
+    from sidequest.genre.models.world import Region
+    from sidequest.protocol.messages import LocationDescriptionMessage
+    from sidequest.protocol.models import LocationEntity
+    from sidequest.server.websocket_session_handler import (
+        _maybe_emit_location_description,
+    )
+
+    # Make sure the world dir lookup succeeds (returns tmp_path) so the
+    # helper proceeds to load_room_payload (which will raise) rather
+    # than bailing on world_dir_lookup_failed.
+    _patch_genre_loader_find(monkeypatch, tmp_path)
+
+    # Force load_room_payload to raise RoomNotFoundError — the explicit
+    # signal that no per-room YAML exists for this room. The cartography
+    # fallback must take over.
+    from sidequest.game import room_file_loader as rfl_mod
+
+    def _raise_not_found(*_args, **_kwargs):
+        raise rfl_mod.RoomNotFoundError("no room yaml in test")
+
+    monkeypatch.setattr(rfl_mod, "load_room_payload", _raise_not_found)
+
+    region = Region(
+        name="The Glenross Pub",
+        summary="A quiet country pub.",
+        description="A low-beamed taproom with a fire in the grate.",
+        terrain="building",
+        entities=[
+            LocationEntity(
+                id="hearth",
+                label="the hearth",
+                tier="real_object",
+                binding={"kind": "location_feature", "ref": "pub_hearth"},
+            ),
+            LocationEntity(
+                id="ticking_clock",
+                label="a ticking long-case clock",
+                tier="flavor_only",
+            ),
+        ],
+    )
+
+    world = MagicMock()
+    world.cartography = MagicMock()
+    world.cartography.regions = {"glenross_pub": region}
+
+    emit_fn = MagicMock()
+    sd = MagicMock()
+    sd.genre_slug = "tea_and_murder"
+    sd.world_slug = "glenross"
+    sd.player_id = ""
+    sd.genre_pack = MagicMock()
+    sd.genre_pack.worlds = {"glenross": world}
+    snapshot = MagicMock()
+    snapshot.character_locations = {"alice": "glenross_pub"}
+
+    _maybe_emit_location_description(
+        MagicMock(),
+        sd=sd,
+        snapshot=snapshot,
+        actor="alice",
+        emit_fn=emit_fn,
+    )
+
+    emit_fn.assert_called_once()
+    call_args = emit_fn.call_args
+    sent_msg = call_args.args[0] if call_args.args else call_args.kwargs.get("msg")
+    assert isinstance(sent_msg, LocationDescriptionMessage)
+    assert sent_msg.payload.region_id == "glenross_pub"
+    assert sent_msg.payload.prose == "A low-beamed taproom with a fire in the grate."
+    assert sent_msg.payload.terrain == "building"
+    by_id = {e.id: e for e in sent_msg.payload.entities}
+    assert set(by_id.keys()) == {"hearth", "ticking_clock"}
+    assert by_id["hearth"].tier == "real_object"
+    assert by_id["ticking_clock"].tier == "flavor_only"
+
+
+def test_emit_fires_no_source_when_neither_path_resolves(tmp_path, monkeypatch):
+    """AC-5 no_source watcher: both paths empty → emit_fn NOT called, watcher event fires.
+
+    Per the OTEL Observability Principle: the GM panel needs to see
+    when the lie detector is firing — silent skip would mask a real
+    content gap. Mirrors the watcher contract documented on the helper.
+    """
+    from sidequest.server import websocket_session_handler as wsh
+    from sidequest.server.websocket_session_handler import (
+        _maybe_emit_location_description,
+    )
+
+    _patch_genre_loader_find(monkeypatch, tmp_path)
+
+    from sidequest.game import room_file_loader as rfl_mod
+
+    def _raise_not_found(*_args, **_kwargs):
+        raise rfl_mod.RoomNotFoundError("no room yaml in test")
+
+    monkeypatch.setattr(rfl_mod, "load_room_payload", _raise_not_found)
+
+    watcher_calls: list[tuple[str, dict]] = []
+
+    def _capture_watcher(event_name, fields, **_kwargs):
+        watcher_calls.append((event_name, fields))
+
+    monkeypatch.setattr(wsh, "_watcher_publish", _capture_watcher)
+
+    # World present but no cartography → second source path also empty.
+    world = MagicMock()
+    world.cartography = None
+
+    emit_fn = MagicMock()
+    sd = MagicMock()
+    sd.genre_slug = "tea_and_murder"
+    sd.world_slug = "glenross"
+    sd.player_id = ""
+    sd.genre_pack = MagicMock()
+    sd.genre_pack.worlds = {"glenross": world}
+    snapshot = MagicMock()
+    snapshot.character_locations = {"alice": "missing_room"}
+
+    _maybe_emit_location_description(
+        MagicMock(),
+        sd=sd,
+        snapshot=snapshot,
+        actor="alice",
+        emit_fn=emit_fn,
+    )
+
+    emit_fn.assert_not_called()
+    event_names = [name for name, _ in watcher_calls]
+    assert "location_description.no_source" in event_names, (
+        f"expected location_description.no_source watcher event; got {event_names}"
+    )
+    no_source_fields = next(fields for name, fields in watcher_calls if name == "location_description.no_source")
+    assert no_source_fields["room_id"] == "missing_room"
+    assert no_source_fields["genre"] == "tea_and_murder"
+    assert no_source_fields["world"] == "glenross"
+
+
 def test_emit_called_from_room_change_dispatch():
     """AC-6 wiring test — proves _maybe_emit_location_description has a non-test caller.
 
@@ -210,17 +359,26 @@ def test_emit_called_at_session_resume_path():
 
     Distinguishes the resume call from the room-change call — they pass
     different actor/override args, but both must be present per AC-5.
+    The regex pins ``room_id_override=`` to a
+    ``_maybe_emit_location_description(...)`` call site so the test
+    fails if the 54-2 resume call is removed even though the
+    tactical-grid resume call (which also uses ``room_id_override=``)
+    is unchanged.
     """
+    import re
+
     here = Path(__file__).resolve()
     repo = here.parents[3]
     handler_path = (
         repo / "sidequest-server" / "sidequest" / "server" / "websocket_session_handler.py"
     )
     handler_src = handler_path.read_text()
-    # The resume site uses room_id_override (per plan Task 5 Step 6); the
-    # room-change sites do not. Both must exist; this asserts the resume
-    # site specifically.
     assert "_maybe_emit_location_description(" in handler_src
-    assert "room_id_override=" in handler_src, (
-        "session-resume call site must pass room_id_override; see plan Task 5 Step 6"
+    pattern = re.compile(
+        r"_maybe_emit_location_description\([^)]*room_id_override=",
+        re.DOTALL,
+    )
+    assert pattern.search(handler_src), (
+        "session-resume call site for _maybe_emit_location_description must "
+        "pass room_id_override=; see plan Task 5 Step 6"
     )
