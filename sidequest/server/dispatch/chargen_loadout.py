@@ -21,6 +21,7 @@ import logging
 from opentelemetry import trace as otel_trace
 
 from sidequest.game.character import Character
+from sidequest.game.vessel_tags import bind_rig_pool_from_inventory
 from sidequest.genre.models.inventory import CatalogItem, InventoryConfig
 from sidequest.telemetry.spans import (
     SPAN_CHARGEN_STARTING_KIT_DEDUP_EVALUATED,
@@ -226,6 +227,16 @@ def apply_starting_loadout(
 
         if gold:
             character.core.inventory.gold += gold
+
+    # Story 53-2 (Epic 53 Road Warrior): bind a RigComposurePool to the
+    # character iff the just-populated inventory contains a vessel-tagged
+    # item. Runs after the loadout loop so genre-pack vessels (e.g.
+    # ``rig_tier_1_prospect`` in road_warrior) reach
+    # ``character.core.rig_pool``. Idempotent — if a reloaded save
+    # already supplied a pool, this no-ops. Propagates
+    # ``InvalidVesselTagsError`` loudly when content tags are malformed
+    # (CLAUDE.md "No Silent Fallbacks").
+    bind_rig_pool_from_inventory(character.core, character_id=character.core.name)
 
     final_count = len(character.core.inventory.items)
     skipped_count = len(skipped_ids)

@@ -109,6 +109,14 @@ from sidequest.game.session import (
 )
 from sidequest.game.thresholds import detect_crossings
 from sidequest.game.turn import PreprocessedAction, TurnManager, TurnPhase
+from sidequest.game.vessel_tags import (
+    InvalidVesselTagsError,
+    VesselTags,
+    bind_rig_pool_from_inventory,
+    bind_rig_pools,
+    find_vessel_item,
+    parse_vessel_tags,
+)
 
 __all__ = [
     # character
@@ -197,4 +205,11 @@ __all__ = [
     "PreprocessedAction",
     "TurnManager",
     "TurnPhase",
+    # vessel_tags (Epic 53, story 53-2 — rig materializer binding)
+    "InvalidVesselTagsError",
+    "VesselTags",
+    "bind_rig_pool_from_inventory",
+    "bind_rig_pools",
+    "find_vessel_item",
+    "parse_vessel_tags",
 ]

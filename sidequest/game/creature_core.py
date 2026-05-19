@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from sidequest.game.rig_composure_pool import RigComposurePool
 from sidequest.game.status import Status, migrate_legacy_statuses
 
 # Default placeholder base_max for EdgePool when per-class YAML isn't wired (story 39-3).
@@ -215,6 +216,11 @@ class CreatureCore(BaseModel):
     inventory: Inventory = Field(default_factory=Inventory)
     statuses: list[Status] = Field(default_factory=list)
     edge: EdgePool = Field(default_factory=placeholder_edge_pool)
+    # Vessel-attached composure pool (Epic 53, story 53-2). None for any
+    # character without a rig in inventory; populated by
+    # ``sidequest.game.vessel_tags.bind_rig_pool_from_inventory`` at
+    # chargen-loadout completion and round-tripped through the save file.
+    rig_pool: RigComposurePool | None = None
     # P2-deferred: advancement tracking (epic 39-8, mechanical progression)
     acquired_advancements: list[str] = Field(default_factory=list)
 
