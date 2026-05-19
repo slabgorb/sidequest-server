@@ -230,10 +230,14 @@ def test_message_type_complete_count() -> None:
     ADR-107 (story 50-25) added ASIDE_ANSWER — the out-of-band OOC GM
     reply to a player aside; never a turn record, broadcast table-wide.
     Intentional addition, NOT a regression; bumped 48 → 49.
+    ADR-109 (story 54-2) added LOCATION_DESCRIPTION — the persistent
+    location description + typed manifest snapshot. Emitted on
+    current_room change and session resume. Intentional addition;
+    bumped 49 → 50.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 49
+    assert len(MessageType) == 50
 
 
 # ===========================================================================

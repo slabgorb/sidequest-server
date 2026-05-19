@@ -469,6 +469,102 @@ class DerivedRoomData(ProtocolBase):
     pois: list[tuple[int, int]]
 
 
+# ---------------------------------------------------------------------------
+# Location manifest (Story 54-2 / ADR-109)
+# ---------------------------------------------------------------------------
+
+
+class LocationEntityBinding(BaseModel):
+    """Pointer to the real subsystem object backing a ``real_object`` entity.
+
+    The cross-field invariant (``real_object`` SHOULD have a binding) is
+    enforced by the ``pf validate locations`` validator (Story 54-3),
+    not by pydantic. Authored content is loaded leniently; the validator
+    catches mistakes at author time.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    kind: Literal["location_feature", "npc", "item", "clue", "scenario_clue"]
+    ref: str = Field(min_length=1)
+
+
+class LocationEntity(BaseModel):
+    """A named, typed entry in a location's manifest.
+
+    See ADR-109 §1 (three-tier manifest) and design spec §4.1
+    (``docs/superpowers/specs/2026-05-19-persistent-location-descriptions-design.md``).
+    The ``tier`` determines mechanical weight; ``provenance`` records how
+    the entity entered the manifest.
+
+    Authored YAML never mutates at runtime — promotions and
+    player-initiated mints accumulate in the ``location_promotions``
+    SQLite table (Story 54-6) and are merged on top at read time.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    tier: Literal["real_object", "yes_and", "flavor_only"]
+    binding: LocationEntityBinding | None = None
+    affordances: list[str] = Field(default_factory=list)
+    provenance: Literal[
+        "authored",
+        "cookbook",
+        "yes_and_promoted",
+        "yes_and_minted",
+    ] = "authored"
+    promoted_at_turn: int | None = None
+    promoted_canon: str | None = None
+
+
+class EncounterLocationOverlay(BaseModel):
+    """Per-encounter contribution merged at read time. Base manifest and
+    base description never mutate from overlays — see ADR-109 §5.
+
+    Story 54-2 ships the type only. The read-time merge logic in
+    ``get_location_manifest`` / ``get_location_prose`` is owned by
+    Story 54-7.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    bound_room_id: str = Field(min_length=1)
+    entity_delta: list[LocationEntity] = Field(default_factory=list)
+    prose_suffix: str = ""
+
+
+class LocationDescriptionOverlaySummary(BaseModel):
+    """UI-facing summary of an active encounter overlay.
+
+    Story 54-7 fills this with real data; 54-2 emits an empty list on
+    every ``LOCATION_DESCRIPTION`` message.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    encounter_id: str
+    prose_suffix: str = ""
+    entity_delta_count: int = 0
+
+
+class LocationDescriptionPayload(BaseModel):
+    """Snapshot of one location's description + manifest for the UI.
+
+    Emitted by ``LOCATION_DESCRIPTION``. The overlay delta channel is
+    ``LOCATION_OVERLAY_CHANGED`` (Story 54-7).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    region_id: str = Field(min_length=1)
+    prose: str
+    terrain: str | None = None
+    entities: list[LocationEntity] = Field(default_factory=list)
+    overlays: list[LocationDescriptionOverlaySummary] = Field(default_factory=list)
+
+
 class TokenPayload(ProtocolBase):
     """A token placed on the tactical grid (placeholder — populated at dispatch)."""
 
@@ -515,3 +611,8 @@ class TacticalGridPayload(ProtocolBase):
     settlement_exits: list[dict] | None = None
     """Exit list from the room YAML, e.g. [{to: "room_id", label: "..."}].
     Settlement rooms only; the Automapper's SettlementRoomView consumes this."""
+
+    entities: list[LocationEntity] = Field(default_factory=list)
+    """Typed location-entity manifest per ADR-109. Loaded from the room
+    YAML's top-level ``entities`` block. Empty when the room has no
+    manifest authored yet — graceful absence, not a lookup failure."""

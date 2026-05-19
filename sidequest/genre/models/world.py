@@ -10,6 +10,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from sidequest.protocol.models import LocationEntity
+
 
 class NavigationMode(StrEnum):
     """Navigation mode for a world's cartography."""
@@ -205,6 +207,12 @@ class Region(BaseModel):
     description: str
     adjacent: list[str] = Field(default_factory=list)
     landmarks: list[Any] = Field(default_factory=list)
+    # Story 54-2 / ADR-109: typed location-entity manifest. Coexists
+    # with the legacy untyped ``landmarks`` for backward compat —
+    # content backfill in 54-4 and 54-5 ports authored worlds to the
+    # typed shape. New code reads ``entities``; ``landmarks`` is
+    # read-only legacy and slated for removal once all packs backfill.
+    entities: list[LocationEntity] = Field(default_factory=list)
     origin: str | None = None
     rivers: list[Any] = Field(default_factory=list)
     settlements: list[Any] = Field(default_factory=list)

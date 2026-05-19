@@ -14,6 +14,7 @@ import yaml
 from sidequest.protocol.models import (
     CellularParams,
     DerivedRoomData,
+    LocationEntity,
     TacticalGridPayload,
 )
 from sidequest.server.asset_urls import resolve_asset_url
@@ -42,6 +43,14 @@ def load_room_payload(
     if room_type not in ("cavern", "settlement"):
         raise ValueError(f"{yaml_path}: invalid room_type {room_type!r}")
 
+    # Story 54-2 / ADR-109: typed location-entity manifest. Loaded
+    # leniently — a malformed entry surfaces a ValidationError noisily
+    # rather than silently dropping the row (no silent fallbacks per
+    # CLAUDE.md). The pf validate locations validator (Story 54-3)
+    # catches drift at author time.
+    entities_raw = data.get("entities") or []
+    entities = [LocationEntity.model_validate(e) for e in entities_raw]
+
     if room_type == "settlement":
         return TacticalGridPayload(
             room_id=room_id,
@@ -56,6 +65,7 @@ def load_room_payload(
             initiative=None,
             settlement_description=data.get("description"),
             settlement_exits=data.get("exits"),
+            entities=entities,
         )
 
     # Cavern path
@@ -108,4 +118,5 @@ def load_room_payload(
         ),
         tokens=[],
         initiative=None,
+        entities=entities,
     )

@@ -37,6 +37,7 @@ from sidequest.protocol.models import (
     Footnote,
     InitialState,
     JournalEntry,
+    LocationDescriptionPayload,
     PartyMember,
     RolledStat,
     StateDelta,
@@ -1110,6 +1111,20 @@ class TacticalGridMessage(ProtocolBase):
     player_id: str = ""
 
 
+class LocationDescriptionMessage(ProtocolBase):
+    """GameMessage::LocationDescription — persistent location snapshot.
+
+    Story 54-2 / ADR-109. Emitted on ``current_room`` change (so the UI
+    Location tab updates as the party moves) and on session resume (so a
+    returning client gets the manifest without polling). The delta channel
+    for encounter overlays is ``LOCATION_OVERLAY_CHANGED`` (Story 54-7).
+    """
+
+    type: Literal[MessageType.LOCATION_DESCRIPTION] = MessageType.LOCATION_DESCRIPTION
+    payload: LocationDescriptionPayload
+    player_id: str = ""
+
+
 # ---------------------------------------------------------------------------
 # DUNGEON_MAP — Beneath Sünden BETTER fix (seam 3). ADR-019 MAP_UPDATE was
 # deleted in the Rust→Python port; this is the NEW ADR-055 map frame (do
@@ -1163,9 +1178,7 @@ class DungeonMapPayload(ProtocolBase):
     current_location: str
     region: str
     explored: list[DungeonMapLocation] = Field(default_factory=list)
-    fog_bounds: dict[str, int] = Field(
-        default_factory=lambda: {"width": 0, "height": 0}
-    )
+    fog_bounds: dict[str, int] = Field(default_factory=lambda: {"width": 0, "height": 0})
 
 
 class DungeonMapMessage(ProtocolBase):
@@ -1255,6 +1268,7 @@ _Phase1Variant = Annotated[
     | OrbitalIntentMessage
     | OrbitalChartMessage
     | TacticalGridMessage
+    | LocationDescriptionMessage
     | DungeonMapMessage
     | JournalRequestMessage
     | JournalResponseMessage
