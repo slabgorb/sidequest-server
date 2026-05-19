@@ -1,0 +1,11 @@
+world_name: Sample World
+starting_region: village_square
+regions:
+  village_square:
+    name: Village Square
+    summary: A square.
+    description: A square with an unbound real object.
+    entities:
+      - id: orphan_chest
+        label: the iron-bound chest
+        tier: real_object

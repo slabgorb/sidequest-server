@@ -1,0 +1,3 @@
+name: wf_malformed
+description: "Fixture: blank id, blank label, unknown extra field."
+version: "0.1.0"

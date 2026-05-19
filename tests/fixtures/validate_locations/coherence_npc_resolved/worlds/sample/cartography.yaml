@@ -1,0 +1,14 @@
+world_name: Sample World
+starting_region: bar
+regions:
+  bar:
+    name: The Bar
+    summary: A small bar.
+    description: At the bar stands Cassia.
+    entities:
+      - id: bar_counter
+        label: the bar
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: bar_counter

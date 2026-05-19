@@ -1,0 +1,14 @@
+world_name: Sample World
+starting_region: study
+regions:
+  study:
+    name: The Study
+    summary: A locked study.
+    description: A study with a torn letter.
+    entities:
+      - id: torn_letter
+        label: the torn letter
+        tier: real_object
+        binding:
+          kind: scenario_clue
+          ref: nonexistent_clue_id

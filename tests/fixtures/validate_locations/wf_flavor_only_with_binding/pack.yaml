@@ -1,0 +1,3 @@
+name: wf_flavor_only_with_binding
+description: "Fixture: flavor_only entity with a binding (AC-2 disallows this)."
+version: "0.1.0"

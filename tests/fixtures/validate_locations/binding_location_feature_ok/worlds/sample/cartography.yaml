@@ -1,0 +1,14 @@
+world_name: Sample World
+starting_region: clearing
+regions:
+  clearing:
+    name: The Clearing
+    summary: A clearing.
+    description: A clearing.
+    entities:
+      - id: standing_stone
+        label: the standing stone
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: any_arbitrary_string_we_invent_at_authoring_time

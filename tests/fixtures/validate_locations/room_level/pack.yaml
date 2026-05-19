@@ -1,0 +1,3 @@
+name: room_level
+description: "Fixture: entities live in per-room rooms/<id>.yaml, not cartography regions."
+version: "0.1.0"

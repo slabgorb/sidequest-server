@@ -1,0 +1,29 @@
+world_name: Sample World
+starting_region: village_square
+map_style: abstract
+navigation_mode: region
+regions:
+  village_square:
+    name: Village Square
+    summary: A cobbled square.
+    description: >-
+      The well at the centre is mossed over. An old notice board lists rules.
+    terrain: outdoor
+    adjacent: []
+    entities:
+      - id: well
+        label: the well
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: village_square_well
+      - id: notice_board
+        label: the notice board
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: village_square_notice_board
+        affordances: [read]
+      - id: moss
+        label: the moss
+        tier: flavor_only

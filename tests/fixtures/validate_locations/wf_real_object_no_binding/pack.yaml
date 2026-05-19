@@ -1,0 +1,3 @@
+name: wf_real_object_no_binding
+description: "Fixture: real_object entity with no binding."
+version: "0.1.0"
