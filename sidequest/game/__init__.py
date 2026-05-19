@@ -89,6 +89,10 @@ from sidequest.game.resource_pool import (
     UnknownResource,
     mint_threshold_lore,
 )
+from sidequest.game.rig_composure_pool import (
+    RigComposureDeltaResult,
+    RigComposurePool,
+)
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
@@ -172,6 +176,9 @@ __all__ = [
     "UnknownResource",
     "detect_crossings",
     "mint_threshold_lore",
+    # rig_composure_pool (ADR-078, Epic 53)
+    "RigComposureDeltaResult",
+    "RigComposurePool",
     # session
     "AchievementTracker",
     "AxisValue",
