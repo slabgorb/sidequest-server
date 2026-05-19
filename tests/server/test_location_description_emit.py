@@ -14,8 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 
 def test_emit_helper_is_importable():
     """AC-5: the helper must exist on websocket_session_handler.
@@ -53,12 +51,53 @@ def test_emit_skips_when_no_room_id():
     emit_fn.assert_not_called()
 
 
-def test_emit_sends_message_when_room_has_manifest():
+def _seed_synthetic_world(tmp_path: Path) -> Path:
+    """Build a minimal genre-pack/world dir with one settlement room
+    carrying a real entities: block. Returns the genre-pack root so the
+    GenreLoader.find monkeypatch can return it.
+    """
+    genre_root = tmp_path / "test_pack"
+    world_dir = genre_root / "worlds" / "test_world"
+    rooms = world_dir / "rooms"
+    rooms.mkdir(parents=True)
+    (rooms / "test_room.yaml").write_text(
+        "name: Test Square\n"
+        "room_type: settlement\n"
+        "description: A well at the centre, lit by a cobwebbed lantern.\n"
+        "entities:\n"
+        "  - id: square_well\n"
+        "    label: the well at the centre\n"
+        "    tier: real_object\n"
+        "    binding:\n"
+        "      kind: location_feature\n"
+        "      ref: test_square_well\n"
+        "    affordances:\n"
+        "      - draw_water\n"
+        "  - id: cobwebbed_lantern\n"
+        "    label: a cobwebbed lantern\n"
+        "    tier: flavor_only\n"
+    )
+    return genre_root
+
+
+def _patch_genre_loader_find(monkeypatch, genre_root: Path):
+    """Patch GenreLoader.find so the helper resolves world_dir to our tmp tree."""
+    from sidequest.genre import loader as loader_mod
+
+    def _fake_find(self, slug):  # noqa: ARG001
+        return genre_root
+
+    monkeypatch.setattr(loader_mod.GenreLoader, "find", _fake_find)
+
+
+def test_emit_sends_message_when_room_has_manifest(tmp_path, monkeypatch):
     """AC-5 + AC-6 production path: room with entities → LocationDescriptionMessage.
 
-    Uses the real load_room_payload + the sunden_square fixture seeded by
-    plan Task 3. Validates the full transit: loader → typed manifest →
-    LocationDescriptionPayload → LocationDescriptionMessage → emit_fn.
+    Validates the full transit: GenreLoader.find → load_room_payload →
+    typed manifest → LocationDescriptionPayload → LocationDescriptionMessage
+    → emit_fn. Uses tmp_path-built content because the live worlds either
+    don't use room_graph navigation (beneath_sunden is procedural per
+    ADR-106) or don't carry static room YAMLs yet.
     """
     from sidequest.protocol.enums import MessageType
     from sidequest.protocol.messages import LocationDescriptionMessage
@@ -66,35 +105,18 @@ def test_emit_sends_message_when_room_has_manifest():
         _maybe_emit_location_description,
     )
 
-    here = Path(__file__).resolve()
-    repo = here.parents[3]
-    world_dir = (
-        repo
-        / "sidequest-content"
-        / "genre_packs"
-        / "caverns_and_claudes"
-        / "worlds"
-        / "caverns_sunden"
-    )
-    if not (world_dir / "rooms" / "sunden_square.yaml").exists():
-        pytest.skip(
-            "sunden_square.yaml fixture not present — Dev should seed per plan Task 3"
-        )
+    genre_root = _seed_synthetic_world(tmp_path)
+    _patch_genre_loader_find(monkeypatch, genre_root)
 
-    # Build a minimal SessionData stand-in. The helper only needs:
-    # - sd.genre_slug, sd.world_slug
-    # - sd.player_id
-    # - sd.genre_pack.worlds[world_slug] (truthy)
-    # - snapshot.character_locations[actor]
     emit_fn = MagicMock()
     sd = MagicMock()
-    sd.genre_slug = "caverns_and_claudes"
-    sd.world_slug = "caverns_sunden"
+    sd.genre_slug = "test_pack"
+    sd.world_slug = "test_world"
     sd.player_id = ""
     sd.genre_pack = MagicMock()
-    sd.genre_pack.worlds = {"caverns_sunden": MagicMock()}
+    sd.genre_pack.worlds = {"test_world": MagicMock()}
     snapshot = MagicMock()
-    snapshot.character_locations = {"alice": "sunden_square"}
+    snapshot.character_locations = {"alice": "test_room"}
 
     _maybe_emit_location_description(
         MagicMock(),
@@ -106,55 +128,44 @@ def test_emit_sends_message_when_room_has_manifest():
 
     emit_fn.assert_called_once()
     call_args = emit_fn.call_args
-    # emit_fn is invoked as emit_fn(msg, "LOCATION_DESCRIPTION") per plan;
-    # accept either positional or keyword call shapes.
     sent_msg = call_args.args[0] if call_args.args else call_args.kwargs.get("msg")
     sent_type = (
         call_args.args[1]
         if len(call_args.args) > 1
         else call_args.kwargs.get("type") or call_args.kwargs.get("msg_type")
     )
-    assert sent_type == "LOCATION_DESCRIPTION", (
-        f"emit_fn must be called with type tag 'LOCATION_DESCRIPTION'; got {sent_type!r}"
-    )
+    assert sent_type == "LOCATION_DESCRIPTION"
     assert isinstance(sent_msg, LocationDescriptionMessage)
     assert sent_msg.type == MessageType.LOCATION_DESCRIPTION
-    assert sent_msg.payload.region_id == "sunden_square"
-    assert len(sent_msg.payload.entities) >= 1, (
-        "sunden_square fixture must seed at least one entity"
-    )
+    assert sent_msg.payload.region_id == "test_room"
+    assert len(sent_msg.payload.entities) == 2
+    by_id = {e.id: e for e in sent_msg.payload.entities}
+    assert by_id["square_well"].tier == "real_object"
+    assert by_id["square_well"].binding is not None
+    assert by_id["square_well"].binding.kind == "location_feature"
+    assert by_id["cobwebbed_lantern"].tier == "flavor_only"
     # AC-8: overlays empty until Story 54-7.
     assert sent_msg.payload.overlays == []
 
 
-def test_emit_room_id_override_takes_precedence():
+def test_emit_room_id_override_takes_precedence(tmp_path, monkeypatch):
     """AC-5: room_id_override path used by session-resume bypasses actor lookup."""
     from sidequest.server.websocket_session_handler import (
         _maybe_emit_location_description,
     )
 
-    here = Path(__file__).resolve()
-    repo = here.parents[3]
-    world_dir = (
-        repo
-        / "sidequest-content"
-        / "genre_packs"
-        / "caverns_and_claudes"
-        / "worlds"
-        / "caverns_sunden"
-    )
-    if not (world_dir / "rooms" / "sunden_square.yaml").exists():
-        pytest.skip("sunden_square.yaml fixture not present")
+    genre_root = _seed_synthetic_world(tmp_path)
+    _patch_genre_loader_find(monkeypatch, genre_root)
 
     emit_fn = MagicMock()
     sd = MagicMock()
-    sd.genre_slug = "caverns_and_claudes"
-    sd.world_slug = "caverns_sunden"
+    sd.genre_slug = "test_pack"
+    sd.world_slug = "test_world"
     sd.player_id = ""
     sd.genre_pack = MagicMock()
-    sd.genre_pack.worlds = {"caverns_sunden": MagicMock()}
+    sd.genre_pack.worlds = {"test_world": MagicMock()}
     snapshot = MagicMock()
-    # No character_locations — override should be what wins.
+    # No character_locations — override is what wins.
     snapshot.character_locations = {}
 
     _maybe_emit_location_description(
@@ -163,7 +174,7 @@ def test_emit_room_id_override_takes_precedence():
         snapshot=snapshot,
         actor=None,
         emit_fn=emit_fn,
-        room_id_override="sunden_square",
+        room_id_override="test_room",
     )
 
     emit_fn.assert_called_once()
@@ -178,11 +189,7 @@ def test_emit_called_from_room_change_dispatch():
     here = Path(__file__).resolve()
     repo = here.parents[3]
     handler_path = (
-        repo
-        / "sidequest-server"
-        / "sidequest"
-        / "server"
-        / "websocket_session_handler.py"
+        repo / "sidequest-server" / "sidequest" / "server" / "websocket_session_handler.py"
     )
     handler_src = handler_path.read_text()
     assert "def _maybe_emit_location_description(" in handler_src, (
@@ -207,11 +214,7 @@ def test_emit_called_at_session_resume_path():
     here = Path(__file__).resolve()
     repo = here.parents[3]
     handler_path = (
-        repo
-        / "sidequest-server"
-        / "sidequest"
-        / "server"
-        / "websocket_session_handler.py"
+        repo / "sidequest-server" / "sidequest" / "server" / "websocket_session_handler.py"
     )
     handler_src = handler_path.read_text()
     # The resume site uses room_id_override (per plan Task 5 Step 6); the
@@ -219,6 +222,5 @@ def test_emit_called_at_session_resume_path():
     # site specifically.
     assert "_maybe_emit_location_description(" in handler_src
     assert "room_id_override=" in handler_src, (
-        "session-resume call site must pass room_id_override; "
-        "see plan Task 5 Step 6"
+        "session-resume call site must pass room_id_override; see plan Task 5 Step 6"
     )

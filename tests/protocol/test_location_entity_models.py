@@ -18,7 +18,6 @@ from sidequest.protocol.models import (
     LocationEntityBinding,
 )
 
-
 # ---------------------------------------------------------------------------
 # Task 1: LocationEntity + LocationEntityBinding + EncounterLocationOverlay
 # ---------------------------------------------------------------------------
@@ -248,9 +247,7 @@ def test_location_description_payload_carries_typed_entities():
                 id="well",
                 label="the well at the centre",
                 tier="real_object",
-                binding=LocationEntityBinding(
-                    kind="location_feature", ref="sunden_square_well"
-                ),
+                binding=LocationEntityBinding(kind="location_feature", ref="sunden_square_well"),
             ),
         ],
     )
@@ -308,39 +305,37 @@ def test_location_description_message_roundtrip():
 
 
 def test_location_description_message_registered_in_dispatch():
-    """AC-2: registry resolves LOCATION_DESCRIPTION → LocationDescriptionMessage.
+    """AC-2: GameMessage discriminated union resolves LOCATION_DESCRIPTION
+    → LocationDescriptionMessage.
 
-    Tries the canonical dispatch lookup first; falls back to symbol-level
-    presence if the project structures dispatch differently. The wire is
-    what matters: a peer dispatching a LOCATION_DESCRIPTION message must
-    land on LocationDescriptionMessage.
+    The actual dispatch pattern in this codebase is pydantic's tagged
+    union (see messages.py `_Phase1Variant` and `GameMessage(RootModel)`),
+    not a dict-style registry. Verify via wire round-trip:
+    `GameMessage.model_validate({"type": "LOCATION_DESCRIPTION", ...})`
+    must yield a LocationDescriptionMessage at `.root`.
     """
-    from sidequest.protocol import messages as messages_mod
-    from sidequest.protocol.messages import LocationDescriptionMessage
+    from sidequest.protocol.messages import (
+        GameMessage,
+        LocationDescriptionMessage,
+    )
 
-    # Common patterns in this codebase: _MSG_TYPE_TO_CLS or similar registry.
-    registry = getattr(messages_mod, "_MSG_TYPE_TO_CLS", None)
-    if registry is None:
-        registry = getattr(messages_mod, "MESSAGE_TYPE_REGISTRY", None)
-    if registry is None:
-        registry = getattr(messages_mod, "MSG_TYPE_TO_CLS", None)
-
-    if registry is not None:
-        assert "LOCATION_DESCRIPTION" in registry, (
-            "LOCATION_DESCRIPTION must be registered in the dispatch table; "
-            "found keys: "
-            + ", ".join(sorted(registry.keys()))[:200]
-        )
-        assert registry["LOCATION_DESCRIPTION"] is LocationDescriptionMessage
-    else:
-        # No registry found at expected names — fail with a directive message
-        # so Dev knows to add the registration site that 54-3..9 will rely on.
-        pytest.fail(
-            "Could not find dispatch registry on sidequest.protocol.messages "
-            "(tried _MSG_TYPE_TO_CLS, MESSAGE_TYPE_REGISTRY, MSG_TYPE_TO_CLS). "
-            "LOCATION_DESCRIPTION must be wired into whichever registry "
-            "TacticalGridMessage uses."
-        )
+    wire = {
+        "type": "LOCATION_DESCRIPTION",
+        "payload": {
+            "region_id": "test_region",
+            "prose": "Test prose.",
+            "terrain": None,
+            "entities": [],
+            "overlays": [],
+        },
+        "player_id": "",
+    }
+    parsed = GameMessage.model_validate(wire)
+    assert isinstance(parsed.root, LocationDescriptionMessage), (
+        "LOCATION_DESCRIPTION must dispatch to LocationDescriptionMessage; "
+        f"got {type(parsed.root).__name__}"
+    )
+    assert parsed.root.payload.region_id == "test_region"
 
 
 def test_location_description_reexported_from_protocol_package():

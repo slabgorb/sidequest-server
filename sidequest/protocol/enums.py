@@ -99,6 +99,10 @@ class MessageType(StrEnum):
     # routes cavern rooms to TacticalGridRenderer and settlement rooms
     # to SettlementRoomView.
     TACTICAL_GRID = "TACTICAL_GRID"
+    # Story 54-2 / ADR-109: persistent location description + manifest
+    # snapshot. Emitted on current_room change and session resume. The
+    # LOCATION_OVERLAY_CHANGED delta variant lands in Story 54-7.
+    LOCATION_DESCRIPTION = "LOCATION_DESCRIPTION"
     # Beneath Sünden BETTER fix (seam 3). Procedural megadungeon map
     # frame: the live region graph (discovered regions + current region +
     # typed adjacencies) projected to the UI Map tab. ADR-019 MAP_UPDATE

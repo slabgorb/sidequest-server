@@ -602,6 +602,156 @@ def _maybe_emit_tactical_grid(
     emit_fn(tactical_msg, "TACTICAL_GRID")  # type: ignore[operator]
 
 
+def _maybe_emit_location_description(
+    handler: object,
+    *,
+    sd: _SessionData,
+    snapshot: GameSnapshot,
+    actor: str | None,
+    emit_fn: object,
+    room_id_override: str | None = None,
+) -> None:
+    """Emit a LOCATION_DESCRIPTION message when the party's current_room changes.
+
+    Story 54-2 / ADR-109. Mirrors the ``_maybe_emit_tactical_grid`` wiring:
+
+    1. Narrator location-change branch (same call sites as tactical grid).
+    2. Session-resume dispatch (``room_id_override`` is the resumed room).
+
+    Two source paths:
+    - Per-room YAML via ``load_room_payload`` (room_graph worlds).
+    - Cartography region (region-mode worlds) — fallback when no room YAML.
+
+    Graceful absence: missing room id → silent return; neither source
+    available → ``location_description.no_source`` watcher event so the
+    absence is observable on the GM panel (per CLAUDE.md OTEL
+    Observability Principle), then return.
+
+    The ``overlays`` payload field is always emitted as ``[]`` in this
+    story — overlay population is owned by Story 54-7
+    (``LOCATION_OVERLAY_CHANGED``).
+    """
+    from sidequest.game.room_file_loader import RoomNotFoundError, load_room_payload
+    from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
+    from sidequest.protocol.messages import LocationDescriptionMessage
+    from sidequest.protocol.models import LocationDescriptionPayload
+
+    world = sd.genre_pack.worlds.get(sd.world_slug)
+    if world is None:
+        return
+
+    if room_id_override is not None:
+        room_id = room_id_override
+    else:
+        room_id = snapshot.character_locations.get(actor or "") if actor else None
+    if not room_id:
+        return
+
+    prose: str = ""
+    terrain: str | None = None
+    entities: list = []
+    sourced = False
+
+    # Path 1: per-room YAML via load_room_payload.
+    try:
+        loader = GenreLoader(search_paths=DEFAULT_GENRE_PACK_SEARCH_PATHS)
+        world_dir = loader.find(sd.genre_slug) / "worlds" / sd.world_slug
+    except Exception as exc:  # noqa: BLE001 — non-fatal; world dir lookup must not crash a turn
+        logger.warning(
+            "location_description.world_dir_lookup_failed genre=%s world=%s error=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            exc,
+        )
+        return
+
+    try:
+        room_payload = load_room_payload(world_dir, room_id, genre_slug=sd.genre_slug)
+        prose = room_payload.settlement_description or ""
+        terrain = room_payload.room_type
+        entities = list(room_payload.entities)
+        sourced = True
+    except RoomNotFoundError:
+        # Fall back to cartography region lookup (region-mode worlds).
+        cartography = getattr(world, "cartography", None)
+        region = (
+            cartography.regions.get(room_id)
+            if cartography is not None and hasattr(cartography, "regions")
+            else None
+        )
+        if region is not None:
+            prose = getattr(region, "description", "") or ""
+            terrain = getattr(region, "terrain", None)
+            entities = list(getattr(region, "entities", []))
+            sourced = True
+    except Exception as exc:  # noqa: BLE001 — must not crash a turn
+        logger.warning(
+            "location_description.load_failed genre=%s world=%s room=%s error=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            room_id,
+            exc,
+        )
+        _watcher_publish(
+            "location_description.load_failed",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "room_id": room_id,
+                "error": str(exc),
+            },
+            component="location",
+            severity="warning",
+        )
+        return
+
+    if not sourced:
+        # Neither path produced a manifest source — make the absence
+        # observable on the GM panel rather than silently emitting an
+        # empty payload.
+        _watcher_publish(
+            "location_description.no_source",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "room_id": room_id,
+            },
+            component="location",
+        )
+        return
+
+    payload = LocationDescriptionPayload(
+        region_id=room_id,
+        prose=prose,
+        terrain=terrain,
+        entities=entities,
+        overlays=[],  # Story 54-7 populates this.
+    )
+    msg = LocationDescriptionMessage(
+        payload=payload,
+        player_id=getattr(sd, "player_id", ""),
+    )
+    _watcher_publish(
+        "location_description.emitted",
+        {
+            "genre": sd.genre_slug,
+            "world": sd.world_slug,
+            "room_id": room_id,
+            "entity_count": len(entities),
+            "prose_chars": len(prose),
+        },
+        component="location",
+    )
+    logger.info(
+        "location_description.emitted genre=%s world=%s room=%s entities=%d",
+        sd.genre_slug,
+        sd.world_slug,
+        room_id,
+        len(entities),
+    )
+    emit_fn(msg, "LOCATION_DESCRIPTION")  # type: ignore[operator]
+
+
 def _maybe_emit_dungeon_map(
     handler: object,
     *,
@@ -1061,9 +1211,7 @@ class WebSocketSessionHandler:
                 detach_dungeon_from_session,
             )
 
-            await detach_dungeon_from_session(
-                self._session_data.lookahead_handle
-            )
+            await detach_dungeon_from_session(self._session_data.lookahead_handle)
             try:
                 # ADR-037 Python port: room owns the canonical snapshot,
                 # so a plain room.save() persists it once for every
@@ -2048,6 +2196,18 @@ class WebSocketSessionHandler:
                         out.append(msg)
 
                     _maybe_emit_tactical_grid(
+                        self,
+                        sd=sd,
+                        snapshot=sd.snapshot,
+                        actor=None,
+                        emit_fn=_chargen_emit_tactical_grid,
+                        room_id_override=entrance_id,
+                    )
+                    # Story 54-2 / ADR-109: emit LOCATION_DESCRIPTION on the
+                    # chargen / session-resume init path. room_id_override
+                    # carries the entrance room so a resumed client gets the
+                    # manifest snapshot without polling.
+                    _maybe_emit_location_description(
                         self,
                         sd=sd,
                         snapshot=sd.snapshot,
@@ -3978,6 +4138,17 @@ class WebSocketSessionHandler:
                         # a room YAML file on disk. This closes the wiring
                         # gap: load_room_payload is now reachable from gameplay.
                         _maybe_emit_tactical_grid(
+                            self,
+                            sd=sd,
+                            snapshot=snapshot,
+                            actor=_acting_for_render_trigger,
+                            emit_fn=_emit_shared_world_frame,
+                        )
+                        # Story 54-2 / ADR-109: emit LOCATION_DESCRIPTION on
+                        # the same room-change branch. Carries the typed
+                        # entity manifest + base prose so the UI Location
+                        # tab stays in sync with the party's current room.
+                        _maybe_emit_location_description(
                             self,
                             sd=sd,
                             snapshot=snapshot,
