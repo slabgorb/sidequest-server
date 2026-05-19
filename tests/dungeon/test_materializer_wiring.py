@@ -301,3 +301,88 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
         "worker is not wired into Task 6's producer (CLAUDE.md: half-wired "
         "features are forbidden)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Story 52-2 — ADR-096 mask emit wiring test.
+#
+# CLAUDE.md "Every Test Suite Needs a Wiring Test": this proves the mask
+# emit step is reached FROM the REAL production materialize() pipeline (not
+# called directly by a unit test). The mask span fires inside the real
+# coordinator when the look-ahead worker drives materialize() through the
+# real region-transition producer. If 52-2 is properly wired, the GM panel
+# (via SPAN_ROUTES) sees one ``dungeon.materialize.mask`` span per region
+# in every real expansion.
+# ---------------------------------------------------------------------------
+
+
+async def test_mask_emit_fires_from_real_materialize_pipeline() -> None:
+    """Drive the REAL materialize() coordinator (the same path the look-ahead
+    worker uses) and assert that ``dungeon.materialize.mask`` spans were
+    emitted during the run — proving the mask-emit step is wired INSIDE the
+    fill stage and reached on every production-shape pipeline run.
+
+    Non-circular: the test never calls ``_emit_mask`` or builds a
+    ``RegionMask`` itself — it only inspects spans the real pipeline emitted
+    via the routed OTEL surface (the GM panel's consumer).
+    """
+    import sidequest.telemetry.spans as _spans_module
+    from sidequest.dungeon.materializer import materialize
+    from sidequest.dungeon.persistence import DungeonStore
+    from sidequest.telemetry.spans import SPAN_ROUTES
+    from sidequest.telemetry.spans.dungeon_materialize import (
+        SPAN_DUNGEON_MATERIALIZE_MASK,
+    )
+    from tests.dungeon.test_materializer import (
+        _attach_pack,
+        _commit_palette,
+        _fresh_snapshot,
+        _make_request_task3,
+        _otel_in_memory,
+        _real_cookbook_bundle,
+        _reflecting_sdk_client,
+        _seed_graph_themed,
+    )
+
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+
+    bundle = _real_cookbook_bundle()
+    theme_id = "mask_wired_crypt"
+    palette = _commit_palette(theme_id)
+    graph = _seed_graph_themed(theme_id)
+
+    exporter, _provider, real_tracer = _otel_in_memory()
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        req = _make_request_task3()
+        await materialize(
+            req,
+            graph=graph,
+            bundle=bundle,
+            palette=palette,
+            persistence=store,
+            snapshot=_fresh_snapshot(),
+            pack_tropes=_attach_pack("cave_in"),
+            claude_client=_reflecting_sdk_client(),
+        )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    finished = exporter.get_finished_spans()
+    mask_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_MASK]
+    assert mask_spans, (
+        "dungeon.materialize.mask span was NOT emitted by the real "
+        "materialize() pipeline — the emit step is not wired into the fill "
+        "stage (CLAUDE.md: half-wired features are forbidden)"
+    )
+    # The routed extractor surfaces the lie-detector attributes
+    route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_MASK]
+    for span_obj in mask_spans:
+        attrs = route.extract(span_obj)  # type: ignore[arg-type]
+        assert attrs.get("cell_width") == 28
+        assert attrs.get("mask_sha") is not None
+        assert isinstance(attrs.get("grid_width"), int)
+        assert isinstance(attrs.get("grid_height"), int)

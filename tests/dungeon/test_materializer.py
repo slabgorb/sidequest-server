@@ -3500,3 +3500,409 @@ class TestStageCommit:
         # Span count matches persisted frontier rows (lie detector:
         # spans vs the real save, not narration).
         assert len(expand_spans) == len(store.load_frontier())
+
+
+# ---------------------------------------------------------------------------
+# Story 52-2: Stage 2 mask emit — ADR-096 mask + derived block per region
+# ---------------------------------------------------------------------------
+#
+# These tests pin the contract for the materializer's mask-emit seam (Plan 7
+# Task 3 follow-on, ADR-106 §10 spec item 6 + ADR-096 format contract). The
+# fill stage builds the grid; the emit step turns that grid into:
+#
+#   - ``RegionMask.mask_bytes`` — ASCII wall/floor mask (the truth ADR-096 §2)
+#   - ``RegionMask.mask_sha``   — SHA-256 hex of mask_bytes (dedupe + lie-detector)
+#   - ``RegionMask.block``      — ``BlockInfo`` with cell_width=28 (ADR-096),
+#                                  grid_width/grid_height matching the grid
+#
+# OTEL: a ``dungeon.materialize.mask`` child span nests under the active
+# ``dungeon.materialize.fill`` span (which itself nests under the parent
+# ``dungeon.materialize`` span — so the new span is a grandchild). The span's
+# attributes carry ``grid_width``, ``grid_height``, ``cell_width``, ``mask_sha``
+# — the GM-panel lie-detector for mask emission.
+#
+# No silent fallbacks: an empty grid is a loud ValueError, not an empty mask.
+
+
+class TestStageEmitMask:
+    """Story 52-2 tests:
+
+    1. Data model: ``RegionMask`` and ``BlockInfo`` exist with the spec shape.
+    2. Mask emit per region: every ``RegionFill`` returned by ``_stage_fill``
+       carries a populated ``mask`` field.
+    3. Mask bytes are ASCII (``#`` walls + ``.`` floors + optional ``\\n``); no
+       other bytes leak.
+    4. SHA-256 is 64-char lowercase hex AND deterministic for identical grids.
+    5. ``BlockInfo.cell_width == 28`` (ADR-096 canonical) — locked, not derived
+       from data.
+    6. ``BlockInfo.grid_width`` / ``grid_height`` match the source grid shape.
+    7. ``dungeon.materialize.mask`` OTEL span is emitted per region with the
+       routed lie-detector attributes (``grid_width``, ``grid_height``,
+       ``cell_width``, ``mask_sha``).
+    8. The mask span nests under ``dungeon.materialize.fill`` (the live parent
+       context during fill stage execution).
+    9. The span is registered in ``SPAN_ROUTES`` so the GM panel actually
+       renders it (set-but-not-routed is a Plan-7-Task-2 defect class).
+    10. Empty/zero-cell grid raises ``ValueError`` loudly — No Silent Fallbacks.
+    """
+
+    def test_region_mask_dataclass_shape_exists(self) -> None:
+        """``RegionMask`` and ``BlockInfo`` are real, importable dataclasses
+        with the spec-pinned field set (story 52-2 Data Model Shape)."""
+        from sidequest.dungeon.materializer import BlockInfo, RegionMask
+
+        # RegionMask carries grid + mask_bytes + mask_sha + block (4 fields).
+        rm_fields = {f.name for f in RegionMask.__dataclass_fields__.values()}
+        assert {"grid", "mask_bytes", "mask_sha", "block"} <= rm_fields, (
+            f"RegionMask must expose grid/mask_bytes/mask_sha/block; got {rm_fields}"
+        )
+        # BlockInfo carries cell_width + grid_width + grid_height (+ origins).
+        bi_fields = {f.name for f in BlockInfo.__dataclass_fields__.values()}
+        assert {"cell_width", "grid_width", "grid_height"} <= bi_fields, (
+            f"BlockInfo must expose cell_width/grid_width/grid_height; got {bi_fields}"
+        )
+
+    def test_emit_mask_attaches_region_mask_to_each_fill(self) -> None:
+        """Every ``RegionFill`` returned by ``_stage_fill`` carries a populated
+        ``mask: RegionMask``. The contract: fill stage produces masks for every
+        generated region — no None, no skip."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.materializer import RegionMask
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        palette = ThemePalette(
+            themes={
+                "t_organic": _theme_for_class("t_organic", "organic"),
+                "t_laby": _theme_for_class("t_laby", "labyrinthine"),
+            }
+        )
+        expansion = _expansion_with_themes("t_organic", "t_laby")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        assert len(result) == 2
+        for region_id, fill in result.items():
+            assert fill.mask is not None, f"region {region_id!r} missing mask after fill"
+            assert isinstance(fill.mask, RegionMask), (
+                f"region {region_id!r} mask is {type(fill.mask).__name__}, not RegionMask"
+            )
+            # Same grid identity — fill's grid IS the mask's source grid
+            # (no recomputation, no copy that drifts).
+            assert fill.mask.grid is fill.grid, (
+                "RegionMask.grid must be the same Grid object the fill was built "
+                "from — no silent re-derive, no copy that can drift"
+            )
+
+    def test_emit_mask_bytes_are_ascii_walls_and_floors_only(self) -> None:
+        """``mask_bytes`` contains only the wall char (``#``), floor char
+        (``.``), and an optional row separator (``\\n``). No other bytes leak —
+        downstream PNG (52-4) and persistence (52-3) depend on a strict
+        wall/floor alphabet (ADR-096 §2 "mask is the truth")."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
+        expansion = _expansion_with_themes("t_organic")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        fill = next(iter(result.values()))
+        assert isinstance(fill.mask.mask_bytes, bytes), "mask_bytes must be bytes"
+        allowed = set(b"#.\n")
+        leaked = {b for b in fill.mask.mask_bytes if b not in allowed}
+        assert not leaked, (
+            f"mask_bytes contained non-ASCII-mask bytes {leaked!r}; "
+            "only wall (#), floor (.), and newline are allowed per ADR-096"
+        )
+        # At least one wall AND one floor must appear (a fully-wall or fully-
+        # floor mask would mean the cellular pass produced a degenerate region;
+        # no useful test fixture should be all-one-byte).
+        assert b"#" in fill.mask.mask_bytes, "mask has no wall cells — degenerate"
+        assert b"." in fill.mask.mask_bytes, "mask has no floor cells — degenerate"
+
+    def test_emit_mask_sha256_is_64_hex_lowercase_and_deterministic(self) -> None:
+        """``mask_sha`` is a 64-char lowercase hex SHA-256 of ``mask_bytes`` and
+        is byte-identical for byte-identical inputs (the dedupe contract)."""
+        import hashlib
+
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
+
+        def _run() -> Any:
+            expansion = _expansion_with_themes("t_organic")
+            request = _make_request_task3(campaign_seed=12345, expansion_id=3)
+            _exp, orig, mod = _setup_otel_task3()
+            try:
+                with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                    return _mat_module._stage_fill(
+                        request, expansion=expansion, palette=palette, span=span
+                    )
+            finally:
+                mod.tracer = orig
+
+        fill_a = next(iter(_run().values()))
+        fill_b = next(iter(_run().values()))
+
+        # 64-char lowercase hex
+        assert len(fill_a.mask.mask_sha) == 64
+        assert fill_a.mask.mask_sha == fill_a.mask.mask_sha.lower()
+        int(fill_a.mask.mask_sha, 16)  # raises if not hex — what we want
+
+        # Determinism across two materialization runs with identical seed
+        assert fill_a.mask.mask_sha == fill_b.mask.mask_sha, (
+            "identical inputs must yield identical mask_sha (dedupe contract)"
+        )
+
+        # SHA actually matches the bytes (not a fabricated string)
+        expected = hashlib.sha256(fill_a.mask.mask_bytes).hexdigest()
+        assert fill_a.mask.mask_sha == expected, (
+            f"mask_sha {fill_a.mask.mask_sha!r} does not equal sha256(mask_bytes); "
+            "expected = {expected!r}. The sha must be derived from the bytes, "
+            "not constructed independently."
+        )
+
+    def test_block_info_cell_width_is_adr096_canonical_28(self) -> None:
+        """``BlockInfo.cell_width`` is locked to 28 per ADR-096 — not derived
+        from grid dimensions, not configurable per-region. This is a rule-of-
+        the-format constant; downstream tile placement assumes it."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        # Four different generators — none of them can change cell_width.
+        palette = ThemePalette(
+            themes={
+                "t_organic": _theme_for_class("t_organic", "organic"),
+                "t_laby": _theme_for_class("t_laby", "labyrinthine"),
+                "t_struct": _theme_for_class("t_struct", "structured"),
+                "t_built": _theme_for_class("t_built", "built"),
+            }
+        )
+        expansion = _expansion_with_themes("t_organic", "t_laby", "t_struct", "t_built")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        for region_id, fill in result.items():
+            assert fill.mask.block.cell_width == 28, (
+                f"region {region_id!r} cell_width is {fill.mask.block.cell_width}, "
+                "must be 28 per ADR-096 (cell-stepped math canonical)"
+            )
+
+    def test_block_info_dimensions_match_source_grid(self) -> None:
+        """``BlockInfo.grid_width``/``grid_height`` equal the source ``Grid``'s
+        column / row counts. The block is the ADR-096 cell-math anchor; if it
+        drifts from the actual grid, downstream movement/AoE evaluation lies."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
+        expansion = _expansion_with_themes("t_organic")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        fill = next(iter(result.values()))
+        grid = fill.grid
+        assert fill.mask.block.grid_height == len(grid)
+        assert fill.mask.block.grid_width == len(grid[0])
+
+    def test_dungeon_materialize_mask_span_emitted_per_region(self) -> None:
+        """A ``dungeon.materialize.mask`` span is emitted for every region with
+        ``grid_width``, ``grid_height``, ``cell_width``, ``mask_sha`` attrs —
+        the GM-panel lie-detector for mask emission."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        SPAN_DUNGEON_MATERIALIZE_MASK = "dungeon.materialize.mask"
+
+        palette = ThemePalette(
+            themes={
+                "t_organic": _theme_for_class("t_organic", "organic"),
+                "t_laby": _theme_for_class("t_laby", "labyrinthine"),
+            }
+        )
+        expansion = _expansion_with_themes("t_organic", "t_laby")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        finished = exporter.get_finished_spans()
+        mask_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_MASK]
+        assert len(mask_spans) == 2, (
+            f"expected one dungeon.materialize.mask span per region (2); "
+            f"got {len(mask_spans)}"
+        )
+        # Every mask span carries the routed attribute set
+        masks_by_sha = {f.mask.mask_sha: f for f in result.values()}
+        for span_obj in mask_spans:
+            attrs = dict(span_obj.attributes or {})
+            assert "grid_width" in attrs, f"missing grid_width on span; have {sorted(attrs)}"
+            assert "grid_height" in attrs, f"missing grid_height on span; have {sorted(attrs)}"
+            assert "cell_width" in attrs, f"missing cell_width on span; have {sorted(attrs)}"
+            assert "mask_sha" in attrs, f"missing mask_sha on span; have {sorted(attrs)}"
+            assert attrs["cell_width"] == 28
+            # mask_sha on the span must be one of the real per-region sha values
+            assert attrs["mask_sha"] in masks_by_sha, (
+                f"span mask_sha {attrs['mask_sha']!r} does not match any "
+                f"region's mask (have {sorted(masks_by_sha)}); the span is "
+                "decoupled from the real emit"
+            )
+
+    def test_mask_span_nests_under_fill_span(self) -> None:
+        """The mask span's parent context is the live ``dungeon.materialize.fill``
+        span — proving the emit step runs INSIDE the fill stage (not bolted on
+        after, not opened at module scope)."""
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_FILL,
+            dungeon_materialize_fill_span,
+        )
+
+        SPAN_DUNGEON_MATERIALIZE_MASK = "dungeon.materialize.mask"
+
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
+        expansion = _expansion_with_themes("t_organic")
+        request = _make_request_task3()
+
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        finished = exporter.get_finished_spans()
+        by_name = {s.name: s for s in finished}
+        assert SPAN_DUNGEON_MATERIALIZE_FILL in by_name, "fill span missing"
+        assert SPAN_DUNGEON_MATERIALIZE_MASK in by_name, "mask span missing"
+
+        mask_span = by_name[SPAN_DUNGEON_MATERIALIZE_MASK]
+        fill_span = by_name[SPAN_DUNGEON_MATERIALIZE_FILL]
+        assert mask_span.parent is not None, "mask span has no parent — not nested"
+        assert mask_span.parent.span_id == fill_span.context.span_id, (
+            "dungeon.materialize.mask must nest under dungeon.materialize.fill "
+            "(the live context during fill-stage emit)"
+        )
+
+    def test_mask_span_routed_for_gm_panel(self) -> None:
+        """The span constant is registered in ``SPAN_ROUTES`` with the lie-
+        detector attribute extractor — set-but-not-routed is the Plan-7-Task-2
+        defect class (GM panel would never render it)."""
+        from sidequest.telemetry.spans import SPAN_ROUTES
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_MASK,
+        )
+
+        assert SPAN_DUNGEON_MATERIALIZE_MASK == "dungeon.materialize.mask"
+        assert SPAN_DUNGEON_MATERIALIZE_MASK in SPAN_ROUTES, (
+            "dungeon.materialize.mask is set but not routed — GM panel would "
+            "never render it (Plan-7-Task-2 defect class)"
+        )
+        # The route extracts the routed attribute set
+        route = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_MASK]
+        assert route.component == "dungeon"
+
+    def test_empty_grid_raises_loudly_no_silent_fallback(self) -> None:
+        """An empty grid (``[]`` or ``[[]]``) at the emit seam is a loud
+        ``ValueError`` — never a silent empty-mask. The mask is the truth for
+        downstream stages; an empty mask would be a silent lie."""
+        from sidequest.dungeon.materializer import _emit_mask
+
+        with pytest.raises(ValueError, match="empty|grid|cells"):
+            _emit_mask([])
+        with pytest.raises(ValueError, match="empty|grid|cells"):
+            _emit_mask([[]])
+
+    def test_region_fill_is_still_frozen_after_mask_field_added(self) -> None:
+        """Adding the ``mask`` field to ``RegionFill`` must not weaken the
+        frozen+slots discipline — the dataclass still rejects field reassign."""
+        import dataclasses
+
+        from sidequest.dungeon.materializer import RegionFill
+
+        # Frozen check: the dataclass-options dict is the canonical contract
+        params = RegionFill.__dataclass_params__
+        assert params.frozen is True, "RegionFill must stay frozen after mask added"
+        # Re-assignment of the new field must raise on a real instance.
+        # Build via _stage_fill so we don't have to guess Field defaults.
+        import sidequest.dungeon.materializer as _mat_module
+        from sidequest.dungeon.themes import ThemePalette
+        from sidequest.telemetry.spans.dungeon_materialize import (
+            dungeon_materialize_fill_span,
+        )
+
+        palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
+        expansion = _expansion_with_themes("t_organic")
+        request = _make_request_task3()
+        exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
+        try:
+            with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
+                result = _mat_module._stage_fill(
+                    request, expansion=expansion, palette=palette, span=span
+                )
+        finally:
+            _spans_mod.tracer = original_tracer_fn
+
+        fill = next(iter(result.values()))
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            fill.mask = None  # type: ignore[misc]
