@@ -663,13 +663,23 @@ def _maybe_emit_location_description(
             sd.world_slug,
             exc,
         )
+        _watcher_publish(
+            "location_description.world_dir_lookup_failed",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "error": str(exc),
+            },
+            component="location",
+            severity="warning",
+        )
         return
 
     try:
         room_payload = load_room_payload(world_dir, room_id, genre_slug=sd.genre_slug)
         prose = room_payload.settlement_description or ""
         terrain = room_payload.room_type
-        entities = list(room_payload.entities)
+        entities = room_payload.entities
         sourced = True
     except RoomNotFoundError:
         # Fall back to cartography region lookup (region-mode worlds).
@@ -682,7 +692,7 @@ def _maybe_emit_location_description(
         if region is not None:
             prose = getattr(region, "description", "") or ""
             terrain = getattr(region, "terrain", None)
-            entities = list(getattr(region, "entities", []))
+            entities = getattr(region, "entities", [])
             sourced = True
     except Exception as exc:  # noqa: BLE001 — must not crash a turn
         logger.warning(
