@@ -1,0 +1,4 @@
+name: coherence_npc_resolved
+description: "Fixture: prose mentions a known NPC by name — must not warn."
+version: "0.1.0"
+generic_allowlist: []

@@ -1,0 +1,7 @@
+id: the_locked_room
+title: The Locked Room
+clues:
+  - id: bloodstained_blotter
+    label: A bloodstained blotter
+  - id: open_window
+    label: An open window

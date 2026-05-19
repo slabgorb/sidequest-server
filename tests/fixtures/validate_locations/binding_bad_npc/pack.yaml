@@ -1,0 +1,3 @@
+name: binding_bad_npc
+description: "Fixture: entity bound to npc id that doesn't appear in npcs.yaml."
+version: "0.1.0"

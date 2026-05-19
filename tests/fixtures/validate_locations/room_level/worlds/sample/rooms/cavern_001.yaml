@@ -1,0 +1,11 @@
+room_id: cavern_001
+description: A wet limestone cavern.
+entities:
+  - id: stalactite
+    label: the dripping stalactite
+    tier: flavor_only
+    provenance: cookbook
+  - id: stalactite
+    label: another dripping stalactite
+    tier: flavor_only
+    provenance: cookbook

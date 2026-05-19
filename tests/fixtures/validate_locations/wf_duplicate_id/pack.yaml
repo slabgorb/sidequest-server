@@ -1,0 +1,3 @@
+name: wf_duplicate_id
+description: "Fixture: two entities sharing the same id in one region."
+version: "0.1.0"

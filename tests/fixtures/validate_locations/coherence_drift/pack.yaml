@@ -1,0 +1,4 @@
+name: coherence_drift
+description: "Fixture: prose mentions a noun phrase the manifest never declares."
+version: "0.1.0"
+generic_allowlist: []

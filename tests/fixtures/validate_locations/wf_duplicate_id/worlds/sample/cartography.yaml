@@ -1,0 +1,20 @@
+world_name: Sample World
+starting_region: village_square
+regions:
+  village_square:
+    name: Village Square
+    summary: A square.
+    description: A simple square with two wells, apparently.
+    entities:
+      - id: well
+        label: the north well
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: north_well
+      - id: well
+        label: the south well
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: south_well

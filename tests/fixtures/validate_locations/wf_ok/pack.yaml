@@ -1,0 +1,14 @@
+name: wf_ok
+description: "Fixture pack: well-formed entities, clean baseline."
+version: "0.1.0"
+recommended_players:
+  min: 1
+  max: 4
+  sweet_spot: 2
+generic_allowlist:
+  - the day
+  - the weather
+  - the village
+  - the sky
+  - the centre
+  - the rules

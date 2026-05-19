@@ -1,0 +1,16 @@
+world_name: Sample World
+starting_region: well_square
+regions:
+  well_square:
+    name: Well Square
+    summary: A square with a well.
+    description: >-
+      The dragon coils against the well, breathing smoke. The villagers have not
+      come out today.
+    entities:
+      - id: well
+        label: the well
+        tier: real_object
+        binding:
+          kind: location_feature
+          ref: well_square_well

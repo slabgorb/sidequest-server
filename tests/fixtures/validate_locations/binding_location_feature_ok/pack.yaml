@@ -1,0 +1,3 @@
+name: binding_location_feature_ok
+description: "Fixture: location_feature binding is free-form — never resolution-checked."
+version: "0.1.0"

@@ -1,0 +1,14 @@
+world_name: Sample World
+starting_region: tavern
+regions:
+  tavern:
+    name: The Tavern
+    summary: A tavern.
+    description: A small dim tavern.
+    entities:
+      - id: barkeep
+        label: the barkeep
+        tier: real_object
+        binding:
+          kind: npc
+          ref: nonexistent_npc_id

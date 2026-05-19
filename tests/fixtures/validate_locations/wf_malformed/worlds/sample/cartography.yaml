@@ -1,0 +1,18 @@
+world_name: Sample World
+starting_region: village_square
+regions:
+  village_square:
+    name: Village Square
+    summary: A square.
+    description: A square with three independently-malformed entities.
+    entities:
+      - id: ""
+        label: empty id
+        tier: flavor_only
+      - id: blank_label
+        label: ""
+        tier: flavor_only
+      - id: stowaway
+        label: the stowaway
+        tier: flavor_only
+        unexpected_field: this should be rejected by extra=forbid
