@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from sidequest.protocol.models import LocationEntity
+
 _FORBID = {"extra": "forbid"}
 
 
@@ -152,11 +154,33 @@ class WorldRegister(BaseModel):
     marquee: list[str] = Field(default_factory=list)
 
 
+class GeneratedRoomDescription(BaseModel):
+    """Cookbook-composed room prose + manifest for ONE materialized region.
+
+    Story 55-1 / ADR-109. Produced by ``compose_room_prose`` from
+    ``LookDef.dressing`` lines and any attached ``SpecialRoom.telegraph``
+    references; consumed by ``_stage_emit_room_yamls`` which writes the
+    YAML to ``<world>/rooms/<room_id>.yaml``. All entities emitted by
+    this path carry ``provenance="cookbook"`` — the seam ADR-100
+    KnownFacts / Story 54-6 promotion logic uses to tell authored
+    content from procedurally composed content.
+    """
+
+    model_config = _FORBID
+    room_id: str = Field(min_length=1)
+    description: str
+    entities: list[LocationEntity] = Field(default_factory=list)
+
+
 class RegionContentManifest(BaseModel):
     """The deterministic contract output oq-1's materializer consumes.
 
     Carries cr_band + raw corpus rows. CR→Edge translation is the
     oq-1 materializer seam (ADR-014/078) — NOT done here.
+
+    Story 55-1 / ADR-109: ``room_descriptions`` carries the
+    cookbook-composed ``(prose, entities[])`` tuple per region the
+    materializer will write to ``<world>/rooms/<id>.yaml``.
     """
 
     model_config = _FORBID
@@ -167,3 +191,4 @@ class RegionContentManifest(BaseModel):
     loot_table: list[dict]
     special_rooms: list[dict]
     big_bad: dict | None = None
+    room_descriptions: list[GeneratedRoomDescription] = Field(default_factory=list)

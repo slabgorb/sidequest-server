@@ -66,13 +66,24 @@ def build_entrance_seed_graph(entrance_theme_id: str) -> RegionGraph:
     return g
 
 
-def build_expansion_one_request(*, campaign_seed: int) -> MaterializationRequest:
+def build_expansion_one_request(
+    *,
+    campaign_seed: int,
+    genre_slug: str = "",
+    world_slug: str = "",
+) -> MaterializationRequest:
     """The first generated expansion's request (expansion_id == 1),
     pushing off the entrance.
 
     Mirrors the test ``MaterializationRequest_build`` shape: one frontier
     edge rooted at the entrance at spawn depth 0.0; attach to the
     entrance; burst 3.
+
+    ``genre_slug`` / ``world_slug`` (Story 55-1) are threaded onto the
+    returned request so the materializer's post-commit YAML emit can
+    resolve ``<pack_root>/worlds/<world>``. Optional (default empty)
+    for back-compat with bootstrap callers that don't need the YAML
+    emit; production ``session_integration`` passes the live slugs.
     """
     fe = FrontierEdge(
         frontier_edge_id="seed_fe1",
@@ -89,4 +100,6 @@ def build_expansion_one_request(*, campaign_seed: int) -> MaterializationRequest
         heading="down",
         burst_magnitude=3,
         lookahead_breadth=1,
+        genre_slug=genre_slug,
+        world_slug=world_slug,
     )

@@ -26,6 +26,8 @@ def test_public_contract_signature_is_stable() -> None:
         "burst_magnitude",
         "look",
         "is_first_band_entry",
+        # Story 55-1 / ADR-109: per-room deterministic seed.
+        "room_id",
     }
 
 
@@ -40,6 +42,7 @@ def test_real_bundle_validates_and_assembles() -> None:
         burst_magnitude=3,
         look="necropolis",
         is_first_band_entry=False,
+        room_id="wiring_test_region",
     )
     # oq-1 consumes this dict shape (then does CR→Edge at its seam).
     payload = man.model_dump()
@@ -51,6 +54,8 @@ def test_real_bundle_validates_and_assembles() -> None:
         "loot_table",
         "special_rooms",
         "big_bad",
+        # Story 55-1: cookbook-composed per-region prose + manifest.
+        "room_descriptions",
     }
     for row in payload["wandering_table"]:
         assert {"name", "cr", "xp", "type", "weight", "count", "telegraph"} <= set(row)

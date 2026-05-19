@@ -16,6 +16,7 @@ def test_manifest_is_complete_and_typed(bundle) -> None:
         burst_magnitude=3,
         look="necropolis",
         is_first_band_entry=True,
+        room_id="test_region_1",
     )
     assert isinstance(man, RegionContentManifest)
     assert man.cr_band == "mid"
@@ -36,6 +37,7 @@ def test_pure_function_same_inputs_same_manifest(bundle) -> None:
         burst_magnitude=2,
         look="sunken",
         is_first_band_entry=False,
+        room_id="test_region_pure",
     )
     a = assemble_region(bundle, **kw)
     b = assemble_region(bundle, **kw)
@@ -52,6 +54,7 @@ def test_capstone_floors_size(bundle) -> None:
         burst_magnitude=1,
         look="delvehold",
         is_first_band_entry=True,
+        room_id="test_region_capstone",
     )
     assert man.big_bad is not None
     largest = bundle.affinities.size_by_burst[-1]
@@ -72,6 +75,7 @@ def test_low_ceiling_reroll_never_emits_empty_deep_table(bundle) -> None:
             burst_magnitude=3,
             look="sunken",
             is_first_band_entry=False,
+            room_id=f"test_region_reroll_{i}",
         )
         assert man.cr_band == "deep"
         assert man.wandering_table, "deep region must never be empty"

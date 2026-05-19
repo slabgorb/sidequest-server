@@ -1376,9 +1376,7 @@ def _truncating_sdk_client(call_log: list[int] | None = None) -> Any:
     test can assert the attempt count is bounded (AC-4)."""
 
     class _Truncating:
-        async def complete_with_tools(
-            self, *a: Any, model: str, **k: Any
-        ) -> Any:
+        async def complete_with_tools(self, *a: Any, model: str, **k: Any) -> Any:
             if call_log is not None:
                 call_log.append(1)
             return _tooling_result(_PINGPONG_TRUNCATED_VERDICT, model)
@@ -1394,9 +1392,7 @@ def _truncated_then_valid_sdk_client(call_log: list[int] | None = None) -> Any:
     state = {"n": 0}
 
     class _TruncatedThenValid:
-        async def complete_with_tools(
-            self, *a: Any, model: str, messages: Any, **k: Any
-        ) -> Any:
+        async def complete_with_tools(self, *a: Any, model: str, messages: Any, **k: Any) -> Any:
             state["n"] += 1
             if call_log is not None:
                 call_log.append(state["n"])
@@ -1414,9 +1410,7 @@ def _slow_then_valid_sdk_client(delay_s: float) -> Any:
     import asyncio as _asyncio
 
     class _Slow:
-        async def complete_with_tools(
-            self, *a: Any, model: str, messages: Any, **k: Any
-        ) -> Any:
+        async def complete_with_tools(self, *a: Any, model: str, messages: Any, **k: Any) -> Any:
             await _asyncio.sleep(delay_s)
             return _tooling_result(_well_formed_verdict_text(messages), model)
 
@@ -1431,9 +1425,7 @@ def _per_region_partial_sdk_client() -> Any:
     import json as _json
 
     class _PartialVerdict:
-        async def complete_with_tools(
-            self, *a: Any, model: str, messages: Any, **k: Any
-        ) -> Any:
+        async def complete_with_tools(self, *a: Any, model: str, messages: Any, **k: Any) -> Any:
             prompt = messages[0].content
             _, _, input_blob = prompt.partition("INPUT:\n")
             payload = _json.loads(input_blob)
@@ -1467,9 +1459,7 @@ def _missing_cr_sdk_client() -> Any:
     import json as _json
 
     class _MissingCr:
-        async def complete_with_tools(
-            self, *a: Any, model: str, messages: Any, **k: Any
-        ) -> Any:
+        async def complete_with_tools(self, *a: Any, model: str, messages: Any, **k: Any) -> Any:
             prompt = messages[0].content
             _, _, input_blob = prompt.partition("INPUT:\n")
             payload = _json.loads(input_blob)
@@ -1707,6 +1697,7 @@ class TestStageCurate:
             burst_magnitude=request.burst_magnitude,
             look=look,
             is_first_band_entry=True,
+            room_id=rid0,
         )
         m_b = original(
             bundle,
@@ -1716,6 +1707,7 @@ class TestStageCurate:
             burst_magnitude=request.burst_magnitude,
             look=look,
             is_first_band_entry=True,
+            room_id=rid0,
         )
         assert m_a.model_dump() == m_b.model_dump(), (
             "assemble_region must be deterministic for identical inputs "
@@ -1785,9 +1777,7 @@ class TestStageCurate:
         # RETAINED: the stage span still surfaces curated=False to the GM
         # panel (set-but-not-routed was the Task-2 defect lesson).
         curate_spans = [
-            s
-            for s in exporter.get_finished_spans()
-            if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE
+            s for s in exporter.get_finished_spans() if s.name == SPAN_DUNGEON_MATERIALIZE_CURATE
         ]
         assert curate_spans, "stage curate span must be emitted even on degrade"
         fields = SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_CURATE].extract(
@@ -1827,6 +1817,7 @@ class TestStageCurate:
             burst_magnitude=request.burst_magnitude,
             look=look,
             is_first_band_entry=True,
+            room_id=rid0,
         )
         assert m0.wandering_table, "fixture must exercise a non-empty wandering table"
         assert m0.big_bad is not None, (
@@ -2085,8 +2076,7 @@ class TestStageCurateRobustness:
 
         degraded = self._spans_named(exporter, "dungeon.curate.degraded")
         assert degraded, (
-            "Layer 2 must emit a `dungeon.curate.degraded` span "
-            "(clause-12 OTEL mandate)"
+            "Layer 2 must emit a `dungeon.curate.degraded` span (clause-12 OTEL mandate)"
         )
         attrs = dict(degraded[0].attributes or {})
         assert attrs.get("region_id") == rid
@@ -2139,9 +2129,7 @@ class TestStageCurateRobustness:
             "one `dungeon.curate.parse_failed` span per attempt "
             f"(expected 2, got {len(parse_failed)})"
         )
-        attempts = sorted(
-            int(dict(s.attributes or {}).get("attempt", -1)) for s in parse_failed
-        )
+        attempts = sorted(int(dict(s.attributes or {}).get("attempt", -1)) for s in parse_failed)
         assert attempts == [1, 2], f"parse_failed spans must tag attempt 1,2; got {attempts}"
 
     async def test_retry_recovers_no_degrade_when_second_attempt_valid(
@@ -2325,9 +2313,7 @@ class TestStageCurateRobustness:
         finally:
             _spans_mod.tracer = original_tracer_fn
 
-    async def test_degrade_logs_at_error_level_not_swallowed_silently(
-        self, caplog: Any
-    ) -> None:
+    async def test_degrade_logs_at_error_level_not_swallowed_silently(self, caplog: Any) -> None:
         """RULE ENFORCEMENT — lang-review/python.md #1 (silent exception
         swallowing) + #42 (error paths MUST log error/warning) + CLAUDE.md
         No-Silent-Fallbacks. Layer 2 is an error path: it MUST emit an
@@ -2418,9 +2404,9 @@ class TestStageCurateRobustness:
         # The turn proceeded: the expansion committed despite the
         # truncating curator (no frozen turn, no aborted materialize).
         assert "entrance" in store.load_map(entrance_id="entrance").nodes
-        assert [
-            s for s in exporter.get_finished_spans() if s.name == "dungeon.curate.degraded"
-        ], "the degrade must be observable through the real chain too"
+        assert [s for s in exporter.get_finished_spans() if s.name == "dungeon.curate.degraded"], (
+            "the degrade must be observable through the real chain too"
+        )
 
 
 # ===========================================================================
@@ -3282,6 +3268,7 @@ class TestStageCommit:
         import sidequest.telemetry.spans as _spans_module
         from sidequest.dungeon.materializer import (
             AttachResult,
+            RegionCuration,
             _stage_commit,
         )
         from sidequest.dungeon.persistence import (
@@ -3384,6 +3371,15 @@ class TestStageCommit:
                 attach_reports=[],
             )
 
+            # A minimal RegionCuration with empty manifests for this focused test
+            # (commit doesn't read the manifests when there are no new_nodes with manifests)
+            curation2 = RegionCuration(
+                region_manifests={},
+                region_creatures={},
+                region_big_bad={},
+                region_look={},
+            )
+
             _exporter, _provider, real_tracer = _otel_in_memory()
             original_tracer_fn = _spans_module.tracer
             _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
@@ -3391,6 +3387,7 @@ class TestStageCommit:
                 with dungeon_materialize_commit_span(expansion_id=2) as span2:
                     _stage_commit(
                         request2,
+                        curation=curation2,
                         graph=live,
                         expansion=exp2,
                         attach_result=attach_result2,
@@ -3785,8 +3782,7 @@ class TestStageEmitMask:
         finished = exporter.get_finished_spans()
         mask_spans = [s for s in finished if s.name == SPAN_DUNGEON_MATERIALIZE_MASK]
         assert len(mask_spans) == 2, (
-            f"expected one dungeon.materialize.mask span per region (2); "
-            f"got {len(mask_spans)}"
+            f"expected one dungeon.materialize.mask span per region (2); got {len(mask_spans)}"
         )
         # Every mask span carries the routed attribute set
         masks_by_sha = {f.mask.mask_sha: f for f in result.values()}
@@ -3823,9 +3819,7 @@ class TestStageEmitMask:
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
             with dungeon_materialize_fill_span(expansion_id=request.expansion_id) as span:
-                _mat_module._stage_fill(
-                    request, expansion=expansion, palette=palette, span=span
-                )
+                _mat_module._stage_fill(request, expansion=expansion, palette=palette, span=span)
         finally:
             _spans_mod.tracer = original_tracer_fn
 

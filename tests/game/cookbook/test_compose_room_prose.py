@@ -315,6 +315,4 @@ def test_entity_ids_are_unique_within_a_room() -> None:
         room_id="region_42",
     )
     ids = [e.id for e in result.entities]
-    assert len(ids) == len(set(ids)), (
-        f"compose must dedupe entity ids within a room; got {ids}"
-    )
+    assert len(ids) == len(set(ids)), f"compose must dedupe entity ids within a room; got {ids}"

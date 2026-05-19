@@ -140,6 +140,12 @@ class LookaheadWorkerHandle:
     claude_client: Any
     campaign_seed: int
     lookahead_breadth: int = 1
+    # Story 55-1 / ADR-109: the session genre + world the materializer's
+    # YAML emit needs to resolve ``<pack_root>/worlds/<world>``. Default
+    # empty — the materializer's emit branch is a no-op when either is
+    # absent (test fixtures keep the older worker shape valid).
+    genre_slug: str = ""
+    world_slug: str = ""
     _in_flight: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
 
     def _observer(
@@ -349,6 +355,11 @@ class LookaheadWorkerHandle:
                 burst_magnitude=3,
                 lookahead_breadth=self.lookahead_breadth,
                 frontier=[edge],
+                # Story 55-1: thread the session slugs so the
+                # materializer's post-commit YAML emit knows where to
+                # write.
+                genre_slug=self.genre_slug,
+                world_slug=self.world_slug,
             )
             await materialize(
                 request,
@@ -386,6 +397,8 @@ def register_lookahead_worker(
     claude_client: Any,
     campaign_seed: int,
     lookahead_breadth: int = 1,
+    genre_slug: str = "",
+    world_slug: str = "",
 ) -> LookaheadWorkerHandle:
     """Register the async look-ahead worker as Task 6's consuming
     frontier-approach observer.
@@ -395,7 +408,12 @@ def register_lookahead_worker(
     :class:`LookaheadWorkerHandle`; the live session lifecycle calls
     ``.unregister()`` at teardown. ``register_frontier_observer`` is
     idempotent per identity, so a re-entrant session setup cannot
-    double-enqueue."""
+    double-enqueue.
+
+    ``genre_slug`` / ``world_slug`` (Story 55-1): the session's genre +
+    world the materializer's post-commit YAML emit resolves into a
+    world directory. Default empty for back-compat — the emit is a
+    no-op when either is absent."""
     handle = LookaheadWorkerHandle(
         persistence=persistence,
         bundle=bundle,
@@ -404,6 +422,8 @@ def register_lookahead_worker(
         claude_client=claude_client,
         campaign_seed=campaign_seed,
         lookahead_breadth=lookahead_breadth,
+        genre_slug=genre_slug,
+        world_slug=world_slug,
     )
     register_frontier_observer(handle._observer)
     return handle

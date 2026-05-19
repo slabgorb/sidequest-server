@@ -83,9 +83,7 @@ def test_existing_yaml_is_not_overwritten(tmp_path: Path) -> None:
     its content (ADR-106 §7)."""
     world_dir = tmp_path / "caverns_sunden"
     (world_dir / "rooms").mkdir(parents=True)
-    (world_dir / "rooms" / "region_1.yaml").write_text(
-        "description: pre-existing\nentities: []\n"
-    )
+    (world_dir / "rooms" / "region_1.yaml").write_text("description: pre-existing\nentities: []\n")
     composed_by_region = {
         "region_1": _composed("region_1"),
         "region_2": _composed("region_2"),
@@ -129,10 +127,7 @@ def test_emit_helper_has_a_caller_in_production_code() -> None:
     materializer.py.
     """
     src = (
-        Path(__file__).resolve().parents[2]
-        / "sidequest"
-        / "dungeon"
-        / "materializer.py"
+        Path(__file__).resolve().parents[2] / "sidequest" / "dungeon" / "materializer.py"
     ).read_text()
     assert "def _stage_emit_room_yamls(" in src, (
         "_stage_emit_room_yamls must be defined in materializer.py."
@@ -149,10 +144,7 @@ def test_emit_call_site_is_inside_stage_commit() -> None:
     body (not in a sibling helper that isn't actually invoked during a
     real materialization)."""
     src = (
-        Path(__file__).resolve().parents[2]
-        / "sidequest"
-        / "dungeon"
-        / "materializer.py"
+        Path(__file__).resolve().parents[2] / "sidequest" / "dungeon" / "materializer.py"
     ).read_text()
 
     # Find _stage_commit's body by locating its def and the next top-level def.
@@ -174,27 +166,18 @@ def test_emit_runs_after_conn_commit() -> None:
     YAMLs on disk. In source-order terms inside _stage_commit, the
     emit call site must appear strictly after the conn.commit() line."""
     src = (
-        Path(__file__).resolve().parents[2]
-        / "sidequest"
-        / "dungeon"
-        / "materializer.py"
+        Path(__file__).resolve().parents[2] / "sidequest" / "dungeon" / "materializer.py"
     ).read_text()
     start = src.find("def _stage_commit(")
     assert start >= 0
     after_start = src[start:]
     next_def = after_start[len("def _stage_commit(") :].find("\ndef ")
-    body = (
-        after_start
-        if next_def < 0
-        else after_start[: len("def _stage_commit(") + next_def]
-    )
+    body = after_start if next_def < 0 else after_start[: len("def _stage_commit(") + next_def]
 
     commit_idx = body.find("conn.commit()")
     emit_idx = body.find("_stage_emit_room_yamls(")
     assert commit_idx >= 0, "conn.commit() must remain inside _stage_commit."
-    assert emit_idx >= 0, (
-        "_stage_emit_room_yamls() must be called from inside _stage_commit."
-    )
+    assert emit_idx >= 0, "_stage_emit_room_yamls() must be called from inside _stage_commit."
     assert emit_idx > commit_idx, (
         "AC-9 ordering: _stage_emit_room_yamls must be called AFTER "
         "conn.commit() so a rolled-back expansion produces no orphan "
