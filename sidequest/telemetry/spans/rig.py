@@ -30,6 +30,12 @@ SPAN_RIG_POOL_CREATED = "rig_pool.created"
 SPAN_RIG_POOL_DELTA = "rig_pool.delta"
 SPAN_RIG_POOL_ZERO_CROSSING = "rig_pool.zero_crossing"
 
+# Story 53-3: rig crash handler emits crash_event when Composure→0
+# triggers the injury + Edge -1 + dismount consequences. Attrs include
+# character_id, chassis_id, location, attacker per road_warrior rules.yaml
+# rig_composure_spec.
+SPAN_RIG_POOL_CRASH_EVENT = "rig_pool.crash_event"
+
 FLAT_ONLY_SPANS.update(
     {
         SPAN_RIG_BOND_EVENT,
@@ -40,6 +46,7 @@ FLAT_ONLY_SPANS.update(
         SPAN_RIG_POOL_CREATED,
         SPAN_RIG_POOL_DELTA,
         SPAN_RIG_POOL_ZERO_CROSSING,
+        SPAN_RIG_POOL_CRASH_EVENT,
     }
 )
 
