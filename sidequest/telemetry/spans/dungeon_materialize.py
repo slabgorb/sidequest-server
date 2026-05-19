@@ -30,6 +30,8 @@ from .span import Span
 SPAN_DUNGEON_MATERIALIZE = "dungeon.materialize"
 SPAN_DUNGEON_MATERIALIZE_DESIGN = "dungeon.materialize.design"
 SPAN_DUNGEON_MATERIALIZE_FILL = "dungeon.materialize.fill"
+# Story 52-2 — ADR-096 mask emit, one per region inside the fill stage.
+SPAN_DUNGEON_MATERIALIZE_MASK = "dungeon.materialize.mask"
 SPAN_DUNGEON_MATERIALIZE_CURATE = "dungeon.materialize.curate"
 # ADR-106 Amendment A (story 50-26) — curate-stage robustness spans.
 SPAN_DUNGEON_CURATE_PARSE_FAILED = "dungeon.curate.parse_failed"
@@ -102,6 +104,26 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_FILL] = SpanRoute(
         "regions": _attr("regions")(s),
         "region_count": _attr("region_count")(s),
         "error": _attr("error")(s),
+    },
+)
+
+SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_MASK] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    # Story 52-2: one span per region inside the fill stage carrying the
+    # ADR-096 mask emit lie-detector surface. `mask_sha` is the dedupe key +
+    # GM-panel "did mask emission actually run?" signal; `cell_width` is the
+    # ADR-096 canonical constant (locked to 28); grid_width/grid_height are
+    # the source-grid cell counts. A set-but-not-routed marker is the
+    # Plan-7-Task-2 defect class — route it.
+    extract=lambda s: {
+        "field": "dungeon_map",
+        "op": "materialize.mask",
+        "region_id": _attr("region_id")(s),
+        "grid_width": _attr("grid_width")(s),
+        "grid_height": _attr("grid_height")(s),
+        "cell_width": _attr("cell_width")(s),
+        "mask_sha": _attr("mask_sha")(s),
     },
 )
 
@@ -361,6 +383,36 @@ def dungeon_materialize_fill_span(
 
 
 @contextmanager
+def dungeon_materialize_mask_span(
+    *,
+    region_id: str,
+    grid_width: int,
+    grid_height: int,
+    cell_width: int,
+    mask_sha: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Open the ``dungeon.materialize.mask`` child span for one region's
+    ADR-096 mask emit (story 52-2). Opened inside the fill stage's loop so
+    it nests under the live ``dungeon.materialize.fill`` span. All
+    lie-detector attributes are routed (see ``SPAN_ROUTES``)."""
+    with Span.open(
+        SPAN_DUNGEON_MATERIALIZE_MASK,
+        {
+            "region_id": region_id,
+            "grid_width": grid_width,
+            "grid_height": grid_height,
+            "cell_width": cell_width,
+            "mask_sha": mask_sha,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
 def dungeon_materialize_curate_span(
     *,
     expansion_id: int,
@@ -545,6 +597,7 @@ __all__ = [
     "SPAN_DUNGEON_MATERIALIZE_CURATE",
     "SPAN_DUNGEON_MATERIALIZE_DESIGN",
     "SPAN_DUNGEON_MATERIALIZE_FILL",
+    "SPAN_DUNGEON_MATERIALIZE_MASK",
     "SPAN_FRONTIER_EXPAND",
     "SPAN_FRONTIER_LOOKAHEAD",
     "SPAN_FRONTIER_REGION_TRANSITION",
@@ -555,6 +608,7 @@ __all__ = [
     "dungeon_materialize_curate_span",
     "dungeon_materialize_design_span",
     "dungeon_materialize_fill_span",
+    "dungeon_materialize_mask_span",
     "dungeon_materialize_span",
     "frontier_expand_span",
     "frontier_lookahead_span",

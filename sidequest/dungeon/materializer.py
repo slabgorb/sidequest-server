@@ -146,7 +146,7 @@ from sidequest.agents.claude_client import LlmClientError
 from sidequest.agents.model_routing import CallType, resolve_model
 from sidequest.agents.tooling_protocol import CacheableBlock, Message
 from sidequest.dungeon.interiors import generate_interior
-from sidequest.dungeon.interiors.grid import Grid
+from sidequest.dungeon.interiors.grid import WALL, Grid
 from sidequest.dungeon.persistence import DungeonStore, FrontierEdge, PersistError
 from sidequest.dungeon.region_graph import (
     DepthReport,
@@ -174,6 +174,7 @@ from sidequest.telemetry.spans.dungeon_materialize import (
     dungeon_materialize_curate_span,
     dungeon_materialize_design_span,
     dungeon_materialize_fill_span,
+    dungeon_materialize_mask_span,
     dungeon_materialize_span,
     frontier_expand_span,
 )
@@ -188,10 +189,12 @@ CURATE_DEADLINE_S: float = 25.0
 
 __all__ = [
     "AttachResult",
+    "BlockInfo",
     "CuratedCreature",
     "MaterializationRequest",
     "RegionCuration",
     "RegionFill",
+    "RegionMask",
     "assemble_region",
     "materialize",
 ]
@@ -293,6 +296,100 @@ def _region_interior_seed(campaign_seed: int, expansion_id: int, region_id: str)
     return int.from_bytes(digest, "big")
 
 
+# ---------------------------------------------------------------------------
+# Story 52-2 — ADR-096 mask emit (fill-stage seam)
+# ---------------------------------------------------------------------------
+#
+# ADR-096 §2: "Cell-stepped math is canonical. Tokens occupy one cell;
+# movement is N cells per turn; reach is Chebyshev radius `speed/5`; AoE
+# is evaluated cell-by-cell against the mask. The PNG is the visual; the
+# mask is the truth." This emit seam turns the fill stage's raw Grid into
+# the ADR-096-shaped mask + derived block so persistence (52-3), PNG
+# (52-4), and UI (52-5) can consume it without re-deriving.
+#
+# ``ADR096_CELL_WIDTH`` is the locked ADR-096 constant (pixels per cell);
+# all materialized regions share it. ``_MASK_WALL`` / ``_MASK_FLOOR`` are
+# the locked wall/floor characters of the ASCII alphabet (consumed by 52-4
+# PNG rendering). The mask uses ``\n`` as a row separator.
+ADR096_CELL_WIDTH = 28
+_MASK_WALL = b"#"
+_MASK_FLOOR = b"."
+_MASK_ROW_SEP = b"\n"
+
+
+@dataclass(frozen=True, slots=True)
+class BlockInfo:
+    """ADR-096 cell-stepped block metadata for one region's mask.
+
+    The block is the anchor for downstream cell math (token placement,
+    movement validation, AoE evaluation per ADR-096 §2). ``cell_width``
+    is locked to ``ADR096_CELL_WIDTH`` (28) by the ADR; ``grid_width`` /
+    ``grid_height`` are the source grid's cell counts (columns / rows);
+    ``origin_x`` / ``origin_y`` are the base coordinate (default 0 — the
+    block is laid out from the upper-left).
+    """
+
+    cell_width: int
+    grid_width: int
+    grid_height: int
+    origin_x: int = 0
+    origin_y: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RegionMask:
+    """ADR-096 mask + derived block for one region.
+
+    ``grid`` is the SAME ``Grid`` object the mask was emitted from (no
+    copy that can drift). ``mask_bytes`` is the ASCII serialization
+    (``#`` walls, ``.`` floors, ``\\n`` row separators). ``mask_sha`` is
+    ``hashlib.sha256(mask_bytes).hexdigest()`` (the dedupe key + GM-panel
+    lie-detector). ``block`` is the cell-math anchor.
+
+    Note: ``frozen`` blocks field reassignment but ``grid`` is a mutable
+    list-of-lists; treat as read-only (same caveat as ``RegionFill.grid``).
+    """
+
+    grid: Grid
+    mask_bytes: bytes
+    mask_sha: str
+    block: BlockInfo
+
+
+def _emit_mask(grid: Grid) -> RegionMask:
+    """Turn a filled ``Grid`` into the ADR-096-shaped ``RegionMask``.
+
+    The mask is the truth (ADR-096 §2). ``FLOOR`` cells become ``.``,
+    ``WALL`` cells become ``#``; rows are joined with ``\\n``. SHA-256 is
+    computed over the resulting bytes; the block carries the canonical
+    ``cell_width=28`` plus the source grid's dimensions.
+
+    Raises ``ValueError`` (No Silent Fallbacks) when the grid has zero
+    rows OR zero columns — an empty mask is a silent lie and must not be
+    emitted.
+    """
+    if not grid or not grid[0]:
+        raise ValueError(
+            "_emit_mask: cannot emit a mask from an empty grid (no rows or no "
+            "cells). ADR-096 requires real wall/floor topology; an empty mask "
+            "would be a silent lie. No Silent Fallbacks."
+        )
+    rows = bytearray()
+    for y, row in enumerate(grid):
+        if y > 0:
+            rows.extend(_MASK_ROW_SEP)
+        for cell in row:
+            rows.extend(_MASK_WALL if cell == WALL else _MASK_FLOOR)
+    mask_bytes = bytes(rows)
+    mask_sha = hashlib.sha256(mask_bytes).hexdigest()
+    block = BlockInfo(
+        cell_width=ADR096_CELL_WIDTH,
+        grid_width=len(grid[0]),
+        grid_height=len(grid),
+    )
+    return RegionMask(grid=grid, mask_bytes=mask_bytes, mask_sha=mask_sha, block=block)
+
+
 @dataclass(frozen=True, slots=True)
 class RegionFill:
     """In-memory result of filling one region's interior (Plan 7 Task 3).
@@ -304,6 +401,12 @@ class RegionFill:
     intermediate per-region grid + the metadata the lie-detector span
     needs.
 
+    Story 52-2 adds ``mask``: the ADR-096 mask + derived block, emitted
+    inside the fill stage once per region. New ``RegionFill`` instances
+    produced by ``_stage_fill`` always carry a non-None mask; the default
+    of ``None`` preserves backward compatibility with test fixtures that
+    construct ``RegionFill`` directly without going through fill.
+
     Note: ``frozen`` blocks field reassignment but ``grid`` is a mutable
     list-of-lists; treat it as read-only by convention.
     """
@@ -314,6 +417,7 @@ class RegionFill:
     height: int
     braid_ratio: float
     grid: Grid
+    mask: RegionMask | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,6 +738,20 @@ def _stage_fill(
                 braid_ratio=braid_ratio,
                 params=params or None,
             )
+            # Story 52-2: emit the ADR-096 mask + derived block here, inside
+            # the live dungeon.materialize.fill span context so the mask span
+            # nests under it. _emit_mask is loud on empty grids (No Silent
+            # Fallbacks); we let the ValueError propagate to the outer
+            # try/except so the fill span carries the failure marker.
+            mask = _emit_mask(grid)
+            with dungeon_materialize_mask_span(
+                region_id=node.id,
+                grid_width=mask.block.grid_width,
+                grid_height=mask.block.grid_height,
+                cell_width=mask.block.cell_width,
+                mask_sha=mask.mask_sha,
+            ):
+                pass
             fills[node.id] = RegionFill(
                 region_id=node.id,
                 algorithm=algorithm,
@@ -641,6 +759,7 @@ def _stage_fill(
                 height=height,
                 braid_ratio=braid_ratio,
                 grid=grid,
+                mask=mask,
             )
     except ValueError as exc:
         # Lie-detector: surface the fill failure on the span before re-raise
