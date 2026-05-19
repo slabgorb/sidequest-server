@@ -3760,10 +3760,9 @@ class TestStageEmitMask:
         import sidequest.dungeon.materializer as _mat_module
         from sidequest.dungeon.themes import ThemePalette
         from sidequest.telemetry.spans.dungeon_materialize import (
+            SPAN_DUNGEON_MATERIALIZE_MASK,
             dungeon_materialize_fill_span,
         )
-
-        SPAN_DUNGEON_MATERIALIZE_MASK = "dungeon.materialize.mask"
 
         palette = ThemePalette(
             themes={
@@ -3813,10 +3812,9 @@ class TestStageEmitMask:
         from sidequest.dungeon.themes import ThemePalette
         from sidequest.telemetry.spans.dungeon_materialize import (
             SPAN_DUNGEON_MATERIALIZE_FILL,
+            SPAN_DUNGEON_MATERIALIZE_MASK,
             dungeon_materialize_fill_span,
         )
-
-        SPAN_DUNGEON_MATERIALIZE_MASK = "dungeon.materialize.mask"
 
         palette = ThemePalette(themes={"t_organic": _theme_for_class("t_organic", "organic")})
         expansion = _expansion_with_themes("t_organic")

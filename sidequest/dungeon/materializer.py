@@ -189,10 +189,12 @@ CURATE_DEADLINE_S: float = 25.0
 
 __all__ = [
     "AttachResult",
+    "BlockInfo",
     "CuratedCreature",
     "MaterializationRequest",
     "RegionCuration",
     "RegionFill",
+    "RegionMask",
     "assemble_region",
     "materialize",
 ]
