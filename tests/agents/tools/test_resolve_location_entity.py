@@ -38,7 +38,6 @@ from sidequest.agents.tools.resolve_location_entity import (
 from sidequest.game.persistence import SqliteStore
 from sidequest.protocol.models import LocationEntity, LocationEntityBinding
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
