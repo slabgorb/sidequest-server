@@ -93,6 +93,12 @@ from sidequest.game.rig_composure_pool import (
     RigComposureDeltaResult,
     RigComposurePool,
 )
+from sidequest.game.rig_crash import (
+    RigCrashResult,
+    RigDamageResult,
+    apply_rig_damage,
+    handle_rig_crash,
+)
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
@@ -187,6 +193,11 @@ __all__ = [
     # rig_composure_pool (ADR-078, Epic 53)
     "RigComposureDeltaResult",
     "RigComposurePool",
+    # rig_crash (Epic 53, story 53-3 — Composure→0 consequences)
+    "RigCrashResult",
+    "RigDamageResult",
+    "apply_rig_damage",
+    "handle_rig_crash",
     # session
     "AchievementTracker",
     "AxisValue",
