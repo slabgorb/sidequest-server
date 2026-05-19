@@ -497,6 +497,7 @@ def _maybe_build_runtime_cavern_payload(
     and is caught by the outer ``_maybe_emit_tactical_grid``'s generic
     ``except Exception`` handler (logged at warning level).
     """
+    import base64 as _base64
     import os as _os
 
     from sidequest.game.room_file_loader import emit_runtime_cavern_png
@@ -550,8 +551,6 @@ def _maybe_build_runtime_cavern_payload(
         # Decode the mask ASCII for the UI overlay (independent of the PNG
         # — the UI uses the mask string for cell-stepped math, not pixel-
         # peeping).
-        import base64 as _base64
-
         mask_text = _base64.b64decode(mask_dict["mask_bytes_b64"]).decode("ascii")
         floor_count = mask_text.count(".")
         block = mask_dict["block"]
