@@ -47,9 +47,9 @@ async def test_materialize_pipeline_writes_mask_blobs_for_generated_regions() ->
     computed but never persisted, and Plan 1–6 silently used a default
     on reload. That is exactly the materializer.py:57 gap this story
     closes."""
+    import sidequest.telemetry.spans as _spans_module
     from sidequest.dungeon.materializer import materialize
     from sidequest.dungeon.persistence import DungeonStore
-    import sidequest.telemetry.spans as _spans_module
 
     # Re-use the Plan 7 fixture stack — these are the live helpers that
     # already drive the rest of TestStageCommit's real-coordinator tests
@@ -76,9 +76,7 @@ async def test_materialize_pipeline_writes_mask_blobs_for_generated_regions() ->
     store.ensure_schema()
 
     bundle = _real_cookbook_bundle()
-    request = MaterializationRequest_build(
-        campaign_seed=7, expansion_id=1, spawn_depth_score=0.0
-    )
+    request = MaterializationRequest_build(campaign_seed=7, expansion_id=1, spawn_depth_score=0.0)
 
     _exporter, _provider, real_tracer = _otel_in_memory()
     original_tracer_fn = _spans_module.tracer
@@ -144,10 +142,9 @@ async def test_materialize_then_reload_returns_masks_for_generated_regions() -> 
     procedural dungeon must come back with its masks intact, not as a
     pile of NULL rows that the next render silently treats as empty
     grids."""
+    import sidequest.telemetry.spans as _spans_module
     from sidequest.dungeon.materializer import materialize
     from sidequest.dungeon.persistence import DungeonStore
-    import sidequest.telemetry.spans as _spans_module
-
     from tests.dungeon.test_materializer import (
         MaterializationRequest_build,
         _attach_pack,
@@ -167,9 +164,7 @@ async def test_materialize_then_reload_returns_masks_for_generated_regions() -> 
     store = DungeonStore(conn)
     store.ensure_schema()
 
-    request = MaterializationRequest_build(
-        campaign_seed=42, expansion_id=1, spawn_depth_score=0.0
-    )
+    request = MaterializationRequest_build(campaign_seed=42, expansion_id=1, spawn_depth_score=0.0)
     _exporter, _provider, real_tracer = _otel_in_memory()
     original_tracer_fn = _spans_module.tracer
     _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
@@ -200,6 +195,5 @@ async def test_materialize_then_reload_returns_masks_for_generated_regions() -> 
 
     loaded_masks = store.load_masks()
     assert set(loaded_masks) == gen_region_ids, (
-        f"load_masks() key set drift: got {set(loaded_masks)!r}, "
-        f"expected {gen_region_ids!r}"
+        f"load_masks() key set drift: got {set(loaded_masks)!r}, expected {gen_region_ids!r}"
     )

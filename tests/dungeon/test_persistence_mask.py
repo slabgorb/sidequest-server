@@ -121,7 +121,7 @@ def _example_mask_dict(region_id: str, *, w: int = 5, h: int = 5) -> dict:
     # A deterministic per-region payload so byte-identical reload can be
     # asserted by JSON-equality after load.
     return {
-        "mask_bytes_b64": f"YmFzZTY0LXtyZWdpb24taWQ9e3JpZH19".replace("{rid}", region_id),
+        "mask_bytes_b64": "YmFzZTY0LXtyZWdpb24taWQ9e3JpZH19".replace("{rid}", region_id),
         "mask_sha": f"sha256-stub-{region_id}",
         "block": {
             "cell_width": 28,
@@ -180,9 +180,7 @@ def test_commit_expansion_writes_mask_blob_when_masks_provided() -> None:
     store.commit_expansion(exp, g, masks=masks)
     conn.commit()
 
-    rows = conn.execute(
-        "SELECT region_id, mask FROM dungeon_map WHERE expansion_id = 1"
-    ).fetchall()
+    rows = conn.execute("SELECT region_id, mask FROM dungeon_map WHERE expansion_id = 1").fetchall()
     assert rows, "no expansion-1 rows persisted — commit_expansion did not run"
     for row in rows:
         rid = row["region_id"]
@@ -288,9 +286,7 @@ def test_load_masks_returns_per_region_dict_for_persisted_masks() -> None:
     conn.commit()
 
     loaded = store.load_masks()
-    assert loaded == masks, (
-        f"load_masks() output != input masks; got {loaded!r} expected {masks!r}"
-    )
+    assert loaded == masks, f"load_masks() output != input masks; got {loaded!r} expected {masks!r}"
 
 
 def test_load_masks_omits_regions_with_null_mask_column() -> None:
