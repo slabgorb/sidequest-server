@@ -38,9 +38,7 @@ def _entities() -> list[LocationEntity]:
             id="bar",
             label="the bar",
             tier="real_object",
-            binding=LocationEntityBinding(
-                kind="location_feature", ref="glenross_arms_bar"
-            ),
+            binding=LocationEntityBinding(kind="location_feature", ref="glenross_arms_bar"),
         ),
         LocationEntity(id="cobwebs", label="cobwebs", tier="flavor_only"),
         LocationEntity(id="snug", label="the snug at the end", tier="yes_and"),
@@ -75,12 +73,7 @@ def test_proactive_match_real_object_returns_resolved(store: SqliteStore) -> Non
     assert res.mode_outcome == "matched"
     assert res.region_id == "the_glenross_arms"
     # No row written — a match on a real_object never mutates.
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 def test_proactive_miss_returns_no_match_and_does_not_mint(
@@ -105,12 +98,7 @@ def test_proactive_miss_returns_no_match_and_does_not_mint(
     assert res.mode_outcome == "no_match"
     assert res.region_id == "the_glenross_arms"
     assert res.from_promotion is False
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 def test_proactive_mechanical_miss_still_does_not_mint(
@@ -129,12 +117,7 @@ def test_proactive_mechanical_miss_still_does_not_mint(
         turn_number=1,
     )
     assert res.resolved is False
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 def test_player_initiated_miss_mints_yes_and_entity(store: SqliteStore) -> None:
@@ -155,9 +138,7 @@ def test_player_initiated_miss_mints_yes_and_entity(store: SqliteStore) -> None:
     assert res.entity.provenance == "yes_and_minted"
     assert res.mode_outcome == "minted"
     assert res.from_promotion is True
-    rows = store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
     assert rows[0].label == "the antique sextant"
     assert rows[0].provenance == "yes_and_minted"
@@ -182,12 +163,7 @@ def test_player_initiated_match_does_not_mint(store: SqliteStore) -> None:
     assert res.entity is not None
     assert res.entity.id == "bar"
     assert res.mode_outcome == "matched"
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +189,7 @@ def test_flavor_only_engaged_mechanically_promotes(store: SqliteStore) -> None:
     assert res.entity.provenance == "yes_and_promoted"
     assert res.mode_outcome == "promoted"
     assert res.from_promotion is True
-    rows = store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
     assert rows[0].entity_id == "cobwebs"
     assert rows[0].provenance == "yes_and_promoted"
@@ -259,12 +233,7 @@ def test_flavor_only_mention_does_not_promote(store: SqliteStore) -> None:
     assert res.entity is not None
     assert res.entity.tier == "flavor_only"
     assert res.mode_outcome == "matched"
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 def test_real_object_mechanical_engagement_does_not_promote(
@@ -286,12 +255,7 @@ def test_real_object_mechanical_engagement_does_not_promote(
     assert res.mode_outcome == "matched"
     assert res.entity is not None
     assert res.entity.tier == "real_object"
-    assert (
-        store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
-    )
+    assert store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +424,7 @@ def test_existing_promotion_layers_on_top_of_authored(store: SqliteStore) -> Non
     assert res.entity.provenance == "yes_and_promoted"
     assert res.from_promotion is True
     # And the row is not duplicated on the no-op second touch.
-    rows = store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
 
 

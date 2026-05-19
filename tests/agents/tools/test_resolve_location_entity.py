@@ -50,9 +50,7 @@ def _authored() -> list[LocationEntity]:
             id="bar",
             label="the bar",
             tier="real_object",
-            binding=LocationEntityBinding(
-                kind="location_feature", ref="glenross_arms_bar"
-            ),
+            binding=LocationEntityBinding(kind="location_feature", ref="glenross_arms_bar"),
         ),
         LocationEntity(id="cobwebs", label="cobwebs", tier="flavor_only"),
     ]
@@ -192,10 +190,7 @@ async def test_proactive_miss_returns_not_found(tmp_path: Path) -> None:
     assert "the dragon" in result.message
     # And no row was minted.
     assert (
-        ctx.store.list_location_promotions(
-            save_id="default", region_id="the_glenross_arms"
-        )
-        == []
+        ctx.store.list_location_promotions(save_id="default", region_id="the_glenross_arms") == []
     )
 
 
@@ -220,9 +215,7 @@ async def test_player_initiated_miss_mints(tmp_path: Path) -> None:
     assert payload["entity"]["tier"] == "yes_and"
     assert payload["entity"]["provenance"] == "yes_and_minted"
     # And the row hit the store.
-    rows = ctx.store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = ctx.store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
     assert rows[0].label == "the antique sextant"
 
@@ -246,9 +239,7 @@ async def test_flavor_only_mechanical_engagement_promotes(tmp_path: Path) -> Non
     assert payload["mode_outcome"] == "promoted"
     assert payload["entity"]["tier"] == "yes_and"
     assert payload["entity"]["provenance"] == "yes_and_promoted"
-    rows = ctx.store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = ctx.store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
     assert rows[0].entity_id == "cobwebs"
     assert rows[0].provenance == "yes_and_promoted"
@@ -274,10 +265,7 @@ async def test_unknown_region_returns_not_found(tmp_path: Path) -> None:
     assert result.status is ToolResultStatus.NOT_FOUND
     # Critically, no promotions written for the bogus region.
     assert (
-        ctx.store.list_location_promotions(
-            save_id="default", region_id="nonexistent_region"
-        )
-        == []
+        ctx.store.list_location_promotions(save_id="default", region_id="nonexistent_region") == []
     )
 
 
@@ -326,10 +314,7 @@ async def test_otel_attributes_on_resolved_match(tmp_path: Path) -> None:
     )
     await resolve_location_entity(args, ctx)
 
-    attrs = {
-        c.args[0]: c.args[1]
-        for c in cast(Any, ctx.otel_span).set_attribute.call_args_list
-    }
+    attrs = {c.args[0]: c.args[1] for c in cast(Any, ctx.otel_span).set_attribute.call_args_list}
     # AC-9 required attributes
     assert attrs["location.region_id"] == "the_glenross_arms"
     assert attrs["location.label"] == "the bar"
@@ -358,10 +343,7 @@ async def test_otel_attributes_on_miss(tmp_path: Path) -> None:
         ),
         ctx,
     )
-    attrs = {
-        c.args[0]: c.args[1]
-        for c in cast(Any, ctx.otel_span).set_attribute.call_args_list
-    }
+    attrs = {c.args[0]: c.args[1] for c in cast(Any, ctx.otel_span).set_attribute.call_args_list}
     assert attrs["location.resolved"] is False
     assert attrs["location.mode_outcome"] == "no_match"
     # On a miss there is no resolved entity, so entity_* attributes are absent.
@@ -380,10 +362,7 @@ async def test_otel_attributes_on_mint(tmp_path: Path) -> None:
         ),
         ctx,
     )
-    attrs = {
-        c.args[0]: c.args[1]
-        for c in cast(Any, ctx.otel_span).set_attribute.call_args_list
-    }
+    attrs = {c.args[0]: c.args[1] for c in cast(Any, ctx.otel_span).set_attribute.call_args_list}
     assert attrs["location.resolved"] is True
     assert attrs["location.mode_outcome"] == "minted"
     assert attrs["location.from_promotion"] is True

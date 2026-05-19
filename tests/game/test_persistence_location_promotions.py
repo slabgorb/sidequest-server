@@ -52,9 +52,7 @@ def test_upsert_minted_promotion_persists(store: SqliteStore) -> None:
     assert rows[0].provenance == "yes_and_minted"
     assert rows[0].label == "the overturned lamp"
     assert rows[0].promoted_at_turn == 12
-    assert rows[0].promoted_canon == (
-        "A lamp lies on its side near the rope, oil spreading."
-    )
+    assert rows[0].promoted_canon == ("A lamp lies on its side near the rope, oil spreading.")
     assert rows[0].new_tier == "yes_and"
     assert rows[0].new_binding_kind is None
     assert rows[0].new_binding_ref is None
@@ -111,9 +109,7 @@ def test_upsert_preserves_binding_fields(store: SqliteStore) -> None:
         new_binding_ref="glenross_arms_bar",
     )
     store.upsert_location_promotion(row)
-    rows = store.list_location_promotions(
-        save_id="default", region_id="the_glenross_arms"
-    )
+    rows = store.list_location_promotions(save_id="default", region_id="the_glenross_arms")
     assert len(rows) == 1
     assert rows[0].new_binding_kind == "location_feature"
     assert rows[0].new_binding_ref == "glenross_arms_bar"
@@ -141,19 +137,13 @@ def test_promotions_scoped_by_save_and_region(store: SqliteStore) -> None:
             )
         )
 
-    ropefoot_default = store.list_location_promotions(
-        save_id="default", region_id="ropefoot"
-    )
+    ropefoot_default = store.list_location_promotions(save_id="default", region_id="ropefoot")
     assert {r.entity_id for r in ropefoot_default} == {"a"}
 
-    dropmouth_default = store.list_location_promotions(
-        save_id="default", region_id="the_dropmouth"
-    )
+    dropmouth_default = store.list_location_promotions(save_id="default", region_id="the_dropmouth")
     assert {r.entity_id for r in dropmouth_default} == {"b"}
 
-    ropefoot_other = store.list_location_promotions(
-        save_id="other_save", region_id="ropefoot"
-    )
+    ropefoot_other = store.list_location_promotions(save_id="other_save", region_id="ropefoot")
     assert {r.entity_id for r in ropefoot_other} == {"c"}
 
 
@@ -197,8 +187,7 @@ def test_existing_save_without_table_migrates_transparently(tmp_path: Path) -> N
     # Sanity: the table doesn't exist yet.
     with sqlite3.connect(db_path) as conn:
         result = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='location_promotions'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='location_promotions'"
         ).fetchone()
         assert result is None
 

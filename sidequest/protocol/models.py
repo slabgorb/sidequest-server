@@ -565,6 +565,30 @@ class LocationDescriptionPayload(BaseModel):
     overlays: list[LocationDescriptionOverlaySummary] = Field(default_factory=list)
 
 
+class LocationEntityResolution(BaseModel):
+    """Result of resolve_location_entity. ADR-109 §5.3.
+
+    ``resolved`` is the single source of truth for the caller. When
+    ``resolved=True``, ``entity`` is populated and ``mode_outcome`` records
+    which path produced it (matched / promoted / minted). When
+    ``resolved=False`` (narrator_proactive miss), ``entity`` is None and
+    ``mode_outcome`` is ``"no_match"``.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    resolved: bool
+    entity: LocationEntity | None = None
+    mode_outcome: Literal[
+        "matched",  # plain manifest hit, no mutation
+        "promoted",  # flavor_only → yes_and, row written
+        "minted",  # player_initiated mint, new row written
+        "no_match",  # narrator_proactive miss, no mutation
+    ]
+    region_id: str = Field(min_length=1)
+    from_promotion: bool = False
+
+
 class TokenPayload(ProtocolBase):
     """A token placed on the tactical grid (placeholder — populated at dispatch)."""
 
