@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +33,8 @@ from sidequest.telemetry.spans.dungeon_persist import (
     dungeon_persist_commit_span,
     ledger_add_span,
     ledger_resolve_span,
+    mask_load_span,
+    mask_write_span,
 )
 
 __all__ = [
@@ -274,11 +277,20 @@ class DungeonStore:
         graph: RegionGraph,
         *,
         generator_version: str = GENERATOR_VERSION,
+        masks: Mapping[str, dict] | None = None,
     ) -> None:
         """Persist one expansion's regions + edges WITHIN the caller's
         transaction (no autocommit — Plan 7 owns the txn boundary,
         spec §7.5). Regions are read from `graph` (depth-scored); edge
         ownership is taken from `expansion`.
+
+        Story 52-3 adds the optional ``masks`` parameter: a per-region
+        map ``{region_id: mask_dict}``. Supplied masks are JSON-encoded
+        and written to the ``dungeon_map.mask`` BLOB column (ADR-096
+        "the mask is the truth"). Regions absent from the map persist
+        as NULL — never a silent default mask. ``masks=None`` (the
+        default) leaves every row's BLOB NULL and emits NO write span
+        (the spec §6 Illusionism guard).
         """
         with dungeon_persist_commit_span(
             expansion_id=expansion.expansion_id,
@@ -294,16 +306,27 @@ class DungeonStore:
                             f"expansion region {node.id!r} is not in the graph "
                             f"(commit must run after attach_expansion)"
                         )
+                    mask_blob: bytes | None = None
+                    if masks is not None and live.id in masks:
+                        try:
+                            mask_blob = json.dumps(masks[live.id], sort_keys=True).encode("utf-8")
+                        except (TypeError, ValueError) as exc:
+                            # Fail loud — never silently substitute NULL or
+                            # stringify a non-serialisable mask payload.
+                            raise PersistError(
+                                f"mask for region {live.id!r} is not JSON-serialisable: {exc}"
+                            ) from exc
                     self._conn.execute(
                         "INSERT INTO dungeon_map "
-                        "(region_id, expansion_id, depth_score, generator_version, payload) "
-                        "VALUES (?, ?, ?, ?, ?)",
+                        "(region_id, expansion_id, depth_score, generator_version, "
+                        " payload, mask) VALUES (?, ?, ?, ?, ?, ?)",
                         (
                             live.id,
                             live.expansion_id,
                             live.depth_score,
                             generator_version,
                             json.dumps(live.to_dict()),
+                            mask_blob,
                         ),
                     )
                 for edge in expansion.new_edges:
@@ -331,6 +354,14 @@ class DungeonStore:
             except sqlite3.Error as exc:
                 raise DatabaseError(f"commit_expansion failed: {exc}") from exc
 
+        # Mask write span fires ONLY when masks were supplied — emitting
+        # it for masks=None would be the Illusionism the GM panel exists
+        # to catch (spec §6). The span is nested OUTSIDE the commit span
+        # because it summarises this commit call's mask-write count.
+        if masks is not None:
+            with mask_write_span(mask_rows=len(masks)):
+                pass
+
     def load_map(self, *, entrance_id: str) -> RegionGraph:
         """Rebuild the full RegionGraph from dungeon_map + dungeon_edge.
         Nodes first (RegionGraph.add_edge validates endpoints loudly)."""
@@ -351,6 +382,35 @@ class DungeonStore:
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise SerializationError(f"corrupt dungeon payload: {exc}") from exc
         return g
+
+    def load_masks(self) -> dict[str, dict]:
+        """Return persisted region masks as ``{region_id: mask_dict}``.
+
+        Rows whose ``mask BLOB`` is NULL are OMITTED from the result —
+        callers distinguish "no mask known" from "mask is {}" by the
+        absence/presence of the key. A fresh save returns ``{}``; a
+        corrupted BLOB raises ``SerializationError`` (No Silent
+        Fallbacks). The corresponding ``dungeon.persist.mask_load`` span
+        always fires (carries ``mask_rows`` so the GM panel can confirm
+        the load path engaged).
+        """
+        try:
+            rows = self._conn.execute(
+                "SELECT region_id, mask FROM dungeon_map WHERE mask IS NOT NULL ORDER BY region_id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"load_masks query failed: {exc}") from exc
+
+        masks: dict[str, dict] = {}
+        try:
+            for r in rows:
+                masks[r["region_id"]] = json.loads(r["mask"].decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as exc:
+            raise SerializationError(f"corrupt dungeon mask BLOB: {exc}") from exc
+
+        with mask_load_span(mask_rows=len(masks)):
+            pass
+        return masks
 
     def put_frontier(self, fe: FrontierEdge) -> None:
         try:

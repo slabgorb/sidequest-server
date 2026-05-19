@@ -53,12 +53,13 @@ same transaction via the real Plan-5 append-only primitive
 ``record_mutation(kind="setpiece_state", ...)``.  It is NEVER recomputed — the save is
 truth.  It is persisted EXACTLY as the attach stage produced it (spec §7 freeze target).
 
-**Mask persistence is a documented Plan-5-API gap.**  ``commit_expansion`` persists only
-``RegionNode.to_dict()`` (id / expansion_id / theme / depth_score).  There is NO mask BLOB
-write path on ``commit_expansion``; fill grids are not threaded to the commit stage; and no
-Plan 1–6 code consumes a persisted mask on reload.  The mask is inert until a future plan
-adds a mask-BLOB column and a loader.  This is NOT papered over — it is flagged here and
-in the Post-Implementation Corrections ledger (item 10).
+**Mask persistence — closed by Story 52-3.**  ``commit_expansion`` now accepts a
+``masks: Mapping[region_id, dict] | None`` parameter; fill_result masks are threaded
+through the commit stage at the call below (per-region ``RegionMask.to_dict()`` →
+JSON BLOB in the pre-existing ``dungeon_map.mask`` column).  ``DungeonStore.load_masks()``
+is the symmetric loader.  The original Plan 1–6 gap (commit_expansion writing only
+``RegionNode.to_dict()``, no mask write or reload path) is fully closed; the
+Post-Implementation Corrections ledger item 10 is resolved.
 
 -----
 Plan 6 binding — attach_set_piece coalescence entry point
@@ -133,10 +134,12 @@ without checking for that story.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -354,6 +357,28 @@ class RegionMask:
     mask_bytes: bytes
     mask_sha: str
     block: BlockInfo
+
+    def to_dict(self) -> dict:
+        """JSON-safe serialisation for Story 52-3 persistence.
+
+        ``mask_bytes`` is base64-encoded (the bytes are an ASCII mask
+        but persisting them through JSON requires a string-safe
+        encoding; base64 is the standard binary-in-JSON contract). The
+        ``grid`` field is OMITTED — it's the in-memory mutable working
+        copy the mask was derived from, not part of the on-disk truth
+        (``mask_bytes`` IS the truth per ADR-096 §2).
+        """
+        return {
+            "mask_bytes_b64": base64.b64encode(self.mask_bytes).decode("ascii"),
+            "mask_sha": self.mask_sha,
+            "block": {
+                "cell_width": self.block.cell_width,
+                "grid_width": self.block.grid_width,
+                "grid_height": self.block.grid_height,
+                "origin_x": self.block.origin_x,
+                "origin_y": self.block.origin_y,
+            },
+        }
 
 
 def _emit_mask(grid: Grid) -> RegionMask:
@@ -1237,9 +1262,7 @@ async def _stage_curate(
                 if "cr" not in row:
                     # RETAINED carve-out (ii): NOT degradable.
                     span.set_attribute("curated", False)
-                    span.set_attribute(
-                        "reason", f"curated row for {region_id!r} dropped 'cr'"
-                    )
+                    span.set_attribute("reason", f"curated row for {region_id!r} dropped 'cr'")
                     raise CurationError(
                         f"curated row for {region_id!r} dropped the 'cr' "
                         f"field ({row!r}); CR→Edge translation is impossible "
@@ -1299,8 +1322,7 @@ async def _stage_curate(
     if not curated:
         span.set_attribute(
             "reason",
-            f"degraded {sorted(uncurated)} (failure_kind={degrade_kind}): "
-            f"{degrade_reason}",
+            f"degraded {sorted(uncurated)} (failure_kind={degrade_kind}): {degrade_reason}",
         )
     span.set_attribute("region_count", len(manifests))
     span.set_attribute("creature_count", total_creatures)
@@ -1615,6 +1637,7 @@ def _stage_commit(
     attach_result: AttachResult | None,
     persistence: DungeonStore | None,
     span: _otel_trace.Span,
+    fill_result: Mapping[str, RegionFill] | None = None,
 ) -> None:
     """Plan 7 Task 6: commit stage — one transaction, caller-owned
     boundary, seed-as-Expansion-0, rollback on PersistError.
@@ -1751,7 +1774,24 @@ def _stage_commit(
                 generator_version=generator_version,
             )
 
-        persistence.commit_expansion(expansion, graph, generator_version=generator_version)
+        # Story 52-3 — thread fill-stage masks into the generated
+        # expansion's commit (the materializer.py:57 gap). The seed
+        # (Expansion 0) commit above passes NO masks: the entrance has
+        # no fill grid (Seed=Expansion-0 contract). Regions whose
+        # fill_result entry has no mask (e.g. test fixtures that
+        # construct RegionFill directly) are absent from the masks
+        # dict → their dungeon_map.mask BLOB stays NULL.
+        expansion_masks: dict[str, dict] | None = None
+        if fill_result is not None:
+            expansion_masks = {
+                rid: rf.mask.to_dict() for rid, rf in fill_result.items() if rf.mask is not None
+            } or None
+        persistence.commit_expansion(
+            expansion,
+            graph,
+            generator_version=generator_version,
+            masks=expansion_masks,
+        )
 
         # RECONCILE SEAM A: persist the spec §7 freeze target
         # AttachReport.rolled EXACTLY as attach produced it (never
@@ -1952,4 +1992,5 @@ async def materialize(
                 attach_result=attach_result,
                 persistence=persistence,
                 span=commit_span,
+                fill_result=fill_result,
             )

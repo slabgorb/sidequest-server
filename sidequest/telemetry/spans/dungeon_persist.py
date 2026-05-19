@@ -18,6 +18,8 @@ from ._core import SPAN_ROUTES, SpanRoute
 from .span import Span
 
 SPAN_DUNGEON_PERSIST_COMMIT = "dungeon.persist.commit"
+SPAN_DUNGEON_PERSIST_MASK_WRITE = "dungeon.persist.mask_write"
+SPAN_DUNGEON_PERSIST_MASK_LOAD = "dungeon.persist.mask_load"
 SPAN_LEDGER_ADD = "ledger.add"
 SPAN_LEDGER_RESOLVE = "ledger.resolve"
 
@@ -36,6 +38,24 @@ SPAN_ROUTES[SPAN_DUNGEON_PERSIST_COMMIT] = SpanRoute(
         "regions": _attr("regions")(s),
         "edges": _attr("edges")(s),
         "generator_version": _attr("generator_version")(s),
+    },
+)
+SPAN_ROUTES[SPAN_DUNGEON_PERSIST_MASK_WRITE] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    extract=lambda s: {
+        "field": "dungeon_map.mask",
+        "op": "write_masks",
+        "mask_rows": _attr("mask_rows")(s),
+    },
+)
+SPAN_ROUTES[SPAN_DUNGEON_PERSIST_MASK_LOAD] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    extract=lambda s: {
+        "field": "dungeon_map.mask",
+        "op": "load_masks",
+        "mask_rows": _attr("mask_rows")(s),
     },
 )
 SPAN_ROUTES[SPAN_LEDGER_ADD] = SpanRoute(
@@ -85,6 +105,36 @@ def dungeon_persist_commit_span(
 
 
 @contextmanager
+def mask_write_span(
+    *,
+    mask_rows: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_DUNGEON_PERSIST_MASK_WRITE,
+        {"mask_rows": mask_rows, **attrs},
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def mask_load_span(
+    *,
+    mask_rows: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_DUNGEON_PERSIST_MASK_LOAD,
+        {"mask_rows": mask_rows, **attrs},
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
 def ledger_add_span(
     *,
     thread_id: str,
@@ -123,9 +173,13 @@ def ledger_resolve_span(
 
 __all__ = [
     "SPAN_DUNGEON_PERSIST_COMMIT",
+    "SPAN_DUNGEON_PERSIST_MASK_LOAD",
+    "SPAN_DUNGEON_PERSIST_MASK_WRITE",
     "SPAN_LEDGER_ADD",
     "SPAN_LEDGER_RESOLVE",
     "dungeon_persist_commit_span",
     "ledger_add_span",
     "ledger_resolve_span",
+    "mask_load_span",
+    "mask_write_span",
 ]
