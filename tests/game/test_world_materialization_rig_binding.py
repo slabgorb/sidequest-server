@@ -210,8 +210,8 @@ def test_bind_rig_pools_propagates_invalid_vessel_tags_loudly() -> None:
     from sidequest.game import (
         Character,
         CreatureCore,
-        Inventory,
         InvalidVesselTagsError,
+        Inventory,
         bind_rig_pools,
     )
     from sidequest.game.session import GameSnapshot

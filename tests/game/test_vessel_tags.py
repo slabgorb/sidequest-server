@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Import wiring — the parser must be reachable from a stable production path.
 # ---------------------------------------------------------------------------
