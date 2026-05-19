@@ -52,6 +52,7 @@ from .dungeon_attach import *  # noqa: F401, F403
 from .dungeon_materialize import *  # noqa: F401, F403
 from .dungeon_persist import *  # noqa: F401, F403
 from .dungeon_region_projection import *  # noqa: F401, F403
+from .dungeon_render import *  # noqa: F401, F403
 from .dungeon_setpiece import *  # noqa: F401, F403
 from .emitter import Emitter  # noqa: F401
 from .encounter import *  # noqa: F401, F403
