@@ -4,8 +4,7 @@ regions:
   bar:
     name: The Bar
     summary: A small bar.
-    description: >-
-      Cassia leans on the bar, polishing a glass and watching the door.
+    description: At the bar stands Cassia.
     entities:
       - id: bar_counter
         label: the bar
