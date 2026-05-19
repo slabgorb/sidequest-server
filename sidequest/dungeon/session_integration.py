@@ -103,9 +103,7 @@ async def attach_dungeon_to_session(
     silent ``return None`` here is what produced the 2026-05-17 playtest
     misdiagnosis (a live, fully-materialized dungeon read as "the gate
     skipped / dungeon never bootstrapped")."""
-    with dungeon_attach_span(
-        genre_slug=genre_slug, world_slug=world_slug
-    ) as _span:
+    with dungeon_attach_span(genre_slug=genre_slug, world_slug=world_slug) as _span:
         if genre_slug != _GENRE or world_slug != _WORLD:
             _span.set_attribute("outcome", "skipped_other_world")
             _span.set_attribute(
@@ -169,7 +167,14 @@ async def attach_dungeon_to_session(
         if not already_seeded:
             entrance_theme = select_entrance_theme_id(palette)
             seed_graph = build_entrance_seed_graph(entrance_theme)
-            request = build_expansion_one_request(campaign_seed=campaign_seed)
+            request = build_expansion_one_request(
+                campaign_seed=campaign_seed,
+                # Story 55-1: thread the live slugs so the
+                # materializer's post-commit YAML emit can resolve
+                # <pack_root>/worlds/<world>.
+                genre_slug=genre_slug,
+                world_slug=world_slug,
+            )
             # The merged commit stage seeds Expansion 0 (entrance) before
             # expansion 1 and rolls back on PersistError (Seed=Expansion-0,
             # spec §6). A bootstrap failure raises loudly here — the
@@ -216,6 +221,11 @@ async def attach_dungeon_to_session(
             pack_tropes=genre_pack,
             claude_client=claude_client,
             campaign_seed=campaign_seed,
+            # Story 55-1: thread the session slugs so the
+            # materializer's post-commit YAML emit can resolve
+            # <pack_root>/worlds/<world>.
+            genre_slug=genre_slug,
+            world_slug=world_slug,
         )
         # Claim the save AFTER a successful register: a bootstrap/register
         # failure must leave no key behind (a later retry must be able to

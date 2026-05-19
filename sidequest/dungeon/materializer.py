@@ -141,6 +141,7 @@ import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from opentelemetry import trace as _otel_trace
@@ -166,7 +167,7 @@ from sidequest.dungeon.setpiece_attach import AttachReport, attach_set_piece
 from sidequest.dungeon.themes import ThemePalette
 from sidequest.game.cookbook.assemble import assemble_region
 from sidequest.game.cookbook.loader import CookbookBundle
-from sidequest.game.cookbook.models import RegionContentManifest
+from sidequest.game.cookbook.models import GeneratedRoomDescription, RegionContentManifest
 from sidequest.game.creature_core import EdgePool, creature_edge_pool_from_hp
 from sidequest.game.session import GameSnapshot
 from sidequest.telemetry.spans.dungeon_materialize import (
@@ -547,6 +548,16 @@ class MaterializationRequest:
     heading: str
     burst_magnitude: int
     lookahead_breadth: int
+    # Story 55-1 / ADR-109: location of the world the materializer is
+    # writing into. Optional (default empty) so older test call sites
+    # remain valid; production callers (``session_integration`` →
+    # ``build_expansion_one_request`` / ``lookahead_worker``) thread real
+    # slugs so the post-commit YAML emit can resolve
+    # ``<pack_root>/worlds/<world>``. Both must be non-empty to trigger
+    # the emit; either empty is a clean no-op (matches the "tests don't
+    # need to wire genre/world" contract).
+    genre_slug: str = ""
+    world_slug: str = ""
 
     @classmethod
     def build(
@@ -560,11 +571,19 @@ class MaterializationRequest:
         burst_magnitude: int,
         lookahead_breadth: int,
         frontier: list[FrontierEdge],
+        genre_slug: str = "",
+        world_slug: str = "",
     ) -> MaterializationRequest:
         """Validate then build a frozen request. No silent defaults.
 
         ``frontier`` is consumed here only to prove ``frontier_edge`` is a live
         frontier member; it is never stored on the returned object.
+
+        ``genre_slug`` / ``world_slug`` are optional (defaults empty) —
+        a request that does NOT carry them is a request that does NOT
+        emit room YAMLs. Production callers thread the real slugs;
+        test fixtures that exercise only design/curate/attach/commit
+        without the YAML-emit branch leave them empty.
         """
         if expansion_id < 1:
             raise ValueError(
@@ -591,6 +610,8 @@ class MaterializationRequest:
             heading,
             burst_magnitude,
             lookahead_breadth,
+            genre_slug,
+            world_slug,
         )
 
 
@@ -1139,6 +1160,11 @@ async def _stage_curate(
                 burst_magnitude=request.burst_magnitude,
                 look=resolved_look,
                 is_first_band_entry=is_first_band_entry,
+                # Story 55-1 / ADR-109: per-room deterministic seed
+                # threaded from the materialized RegionNode id (v1: one
+                # region = one room per ADR-106; the seam is open for a
+                # future multi-room-per-region extension).
+                room_id=node.id,
             )
     except ValueError as exc:
         span.set_attribute("curated", False)
@@ -1633,6 +1659,7 @@ def _stage_commit(
     request: MaterializationRequest,
     *,
     graph: RegionGraph | None,
+    curation: RegionCuration | None,
     expansion: Expansion | None,
     attach_result: AttachResult | None,
     persistence: DungeonStore | None,
@@ -1694,8 +1721,8 @@ def _stage_commit(
     when the frontier is updated.
 
     Invariants (No Silent Fallbacks):
-    - ``graph``/``expansion``/``attach_result``/``persistence`` must be
-      real objects — ``None`` is rejected loudly.
+    - ``graph``/``expansion``/``curation``/``attach_result``/``persistence``
+      must be real objects — ``None`` is rejected loudly.
     - Fresh-save detection is loud introspection, never an assumption.
     - ``PersistError`` → rollback + routed failure marker + re-raise; a
       partial/half-committed expansion is NEVER shipped.
@@ -1710,6 +1737,14 @@ def _stage_commit(
         raise ValueError(
             "_stage_commit requires a real Expansion — "
             "expansion=None is not valid (No Silent Fallbacks)"
+        )
+    if curation is None:
+        raise ValueError(
+            "_stage_commit requires the curate stage result — "
+            "curation=None is not valid (No Silent Fallbacks); the "
+            "RegionCuration.region_manifests are the source of the "
+            "cookbook-composed room_descriptions the post-commit YAML "
+            "emit writes to <world>/rooms/<id>.yaml (Story 55-1)"
         )
     if attach_result is None:
         raise ValueError(
@@ -1834,6 +1869,28 @@ def _stage_commit(
     span.set_attribute("frontier_edges_added", len(new_frontier))
     span.set_attribute("generator_version", generator_version)
 
+    # Story 55-1 / ADR-109 §5.2: write per-region YAMLs alongside the
+    # ADR-096 mask sidecar. Runs AFTER ``conn.commit()`` so a
+    # rolled-back expansion never produces orphan files on disk; a
+    # commit that succeeded but emit that fails leaves the
+    # materialization live in DB without a YAML — the freeze invariant
+    # ensures the next re-materialization will skip the frozen DB
+    # state and emit the YAML cleanly.
+    composed_by_region: dict[str, GeneratedRoomDescription] = {}
+    for node in expansion.new_nodes:
+        manifest = curation.region_manifests.get(node.id)
+        if manifest is None or not manifest.room_descriptions:
+            continue
+        composed_by_region[node.id] = manifest.room_descriptions[0]
+
+    if composed_by_region:
+        world_dir = _resolve_world_dir(request)
+        if world_dir is not None:
+            _stage_emit_room_yamls(
+                world_dir=world_dir,
+                composed_by_region=composed_by_region,
+            )
+
     # Plan 7 owns frontier.expand: emit one per new unexpanded frontier
     # edge so the GM panel sees the dungeon's frontier actually grew (the
     # OTEL Observability Principle — the frontier update must be
@@ -1847,6 +1904,69 @@ def _stage_commit(
             spawn_depth_score=fe.spawn_depth_score,
         ):
             pass
+
+
+def _stage_emit_room_yamls(
+    *,
+    world_dir: Path,
+    composed_by_region: dict[str, GeneratedRoomDescription],
+) -> None:
+    """Story 55-1 / ADR-109 §5.2: write one ``<world_dir>/rooms/<id>.yaml``
+    per region using the cookbook's composed ``(prose, entities[])``.
+
+    Idempotent — existing YAMLs are NEVER overwritten (freeze invariant
+    matches the rest of the Plan 7 commit stage; a re-materialization
+    of a frozen region must not rewrite its content). The 54-3
+    validator runs as a post-materialize CI smoke check on the emitted
+    YAMLs once 54-3 lands.
+
+    Empty ``composed_by_region`` is a clean no-op — no empty ``rooms/``
+    directory is created.
+
+    Runs **after** ``conn.commit()`` in the production caller so a
+    rolled-back expansion never deposits orphan files on disk.
+    """
+    if not composed_by_region:
+        return
+
+    from sidequest.dungeon.room_yaml_emit import write_room_yaml
+
+    rooms_dir = world_dir / "rooms"
+    for region_id, composed in composed_by_region.items():
+        target = rooms_dir / f"{region_id}.yaml"
+        if target.exists():
+            # Freeze invariant: a region whose YAML already exists is
+            # left alone (re-materialization of a frozen region must
+            # not rewrite content — ADR-106 §7). The skip is explicit,
+            # not silent: the function docstring and this comment
+            # document why.
+            continue
+        write_room_yaml(
+            world_dir=world_dir,
+            room_id=region_id,
+            description=composed.description,
+            entities=composed.entities,
+            overwrite=False,
+        )
+
+
+def _resolve_world_dir(request: MaterializationRequest) -> Path | None:
+    """Resolve ``<pack_root>/worlds/<world_slug>`` for the request.
+
+    Returns ``None`` when ``genre_slug`` or ``world_slug`` is empty —
+    this is the "test fixture didn't wire genre/world" path that
+    intentionally suppresses the YAML emit (Story 55-1 deliberate seam,
+    NOT a silent fallback: the explicit empty-string default on
+    ``MaterializationRequest`` is the gate).
+    """
+    if not request.genre_slug or not request.world_slug:
+        return None
+
+    from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
+
+    loader = GenreLoader(search_paths=DEFAULT_GENRE_PACK_SEARCH_PATHS)
+    pack_root = loader.find(request.genre_slug)
+    return pack_root / "worlds" / request.world_slug
 
 
 # ---------------------------------------------------------------------------
@@ -1988,6 +2108,7 @@ async def materialize(
             _stage_commit(
                 request,
                 graph=graph,
+                curation=curation,
                 expansion=expansion,
                 attach_result=attach_result,
                 persistence=persistence,

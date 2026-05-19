@@ -23,6 +23,7 @@ def test_no_denied_row_in_any_manifest(bundle) -> None:
             burst_magnitude=(i % 9) + 1,
             look=look,
             is_first_band_entry=(i % 7 == 0),
+            room_id=f"sweep_region_{i}",
         )
         for row in man.wandering_table:
             mon = by_name.get(row["name"])

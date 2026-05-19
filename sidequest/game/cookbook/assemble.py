@@ -10,15 +10,18 @@ from __future__ import annotations
 import hashlib
 import random
 
+from sidequest.game.cookbook.compose import compose_room_prose
 from sidequest.game.cookbook.corpus import resolve_race
 from sidequest.game.cookbook.curation import apply_world_register
 from sidequest.game.cookbook.loader import CookbookBundle, CookbookValidationError
 from sidequest.game.cookbook.models import (
     Affinities,
     CrBand,
+    LookDef,
     RaceDef,
     RegionContentManifest,
     SizeBudget,
+    SpecialRoom,
 )
 from sidequest.telemetry.spans import cookbook_race_reroll_span
 
@@ -223,6 +226,56 @@ def _floor_budget_for_capstone(bundle: CookbookBundle):
     return bundle.affinities.size_by_burst[-1]
 
 
+def _resolve_look_def(bundle: CookbookBundle, look_id: str) -> LookDef:
+    """Look up a ``LookDef`` by id from the bundle's ``looks`` list.
+
+    Raises ``CookbookValidationError`` loudly when the id is unknown —
+    ``validate_bundle`` should have caught this at load time, but the
+    runtime guard prevents a silent fallback to "first look" or similar.
+    """
+    for look in bundle.looks:
+        if look.id == look_id:
+            return look
+    raise CookbookValidationError(
+        f"cookbook: assemble_region received look={look_id!r} which is not in "
+        f"bundle.looks (have: {sorted(look.id for look in bundle.looks)}). "
+        "validate_bundle should have caught this."
+    )
+
+
+def _resolve_region_specials(
+    bundle: CookbookBundle, picked_specials: list[dict]
+) -> list[SpecialRoom]:
+    """Translate ``pick_specials`` output (list of dicts with ``id``)
+    into the typed ``SpecialRoom`` rows the compose path consumes.
+
+    ``CookbookBundle.specials`` is a flat ``list[SpecialRoom]`` per the
+    Plan 7 loader; this helper indexes it once per region.
+    """
+    by_id = {sp.id: sp for sp in bundle.specials}
+    resolved: list[SpecialRoom] = []
+    for picked in picked_specials:
+        sp_id = picked.get("id") if isinstance(picked, dict) else getattr(picked, "id", None)
+        if sp_id is None:
+            continue
+        sp_def = by_id.get(sp_id)
+        if sp_def is not None:
+            resolved.append(sp_def)
+    return resolved
+
+
+def _per_room_rng(campaign_seed: str, expansion_id: str, room_id: str) -> random.Random:
+    """A Random seeded purely by ``(campaign_seed, expansion_id, room_id)``.
+
+    Re-uses ``region_rng``'s SHA-256 derivation so the cookbook RNG
+    surface stays consistent; the extra ``room_id`` term keeps the
+    compose stream independent of the outer ``assemble_region`` rolls
+    (re-running compose must not perturb race/wandering/specials rolls).
+    """
+    digest = hashlib.sha256(f"{campaign_seed}\x1f{expansion_id}\x1f{room_id}".encode()).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
 def assemble_region(
     bundle: CookbookBundle,
     *,
@@ -232,13 +285,23 @@ def assemble_region(
     burst_magnitude: int,
     look: str,
     is_first_band_entry: bool,
+    room_id: str,
 ) -> RegionContentManifest:
     """The deterministic content-manifest contract (spec §4.3).
 
     Pure function of named inputs. depth_score / burst_magnitude / look /
-    is_first_band_entry are oq-1-owned signals passed in (never produced
-    here). NO CR→Edge translation — that is oq-1's materializer seam
-    (ADR-014/078); the manifest carries cr_band + raw corpus rows.
+    is_first_band_entry / room_id are oq-1-owned signals passed in
+    (never produced here). NO CR→Edge translation — that is oq-1's
+    materializer seam (ADR-014/078); the manifest carries cr_band + raw
+    corpus rows.
+
+    Story 55-1 / ADR-109: ``room_id`` is a required keyword. Compose
+    runs once per region with a per-room RNG seeded from
+    ``(campaign_seed, expansion_id, room_id)`` so re-materialization of
+    the same region produces identical prose + manifest. The result
+    lands on ``manifest.room_descriptions[0]`` (v1: one region = one
+    room per ADR-106; multi-room-per-region is a future seam open at
+    ``room_id``).
     """
     rng = region_rng(campaign_seed, expansion_id)
     band = band_for_depth(bundle.affinities, depth_score)
@@ -279,6 +342,19 @@ def assemble_region(
     )
     loot = build_loot_table(bundle, race, band, rolls=budget.loot_rolls, rng=rng)
     specials = pick_specials(bundle, band, budget=budget.special_rooms, rng=rng)
+
+    # Story 55-1 / ADR-109: compose the per-room prose + manifest on a
+    # fresh per-room RNG so the inner sampling does not perturb the
+    # outer (race / wandering / loot / specials) rolls.
+    look_def = _resolve_look_def(bundle, look)
+    region_specials = _resolve_region_specials(bundle, specials)
+    composed = compose_room_prose(
+        rng=_per_room_rng(campaign_seed, expansion_id, room_id),
+        look_def=look_def,
+        special_rooms=region_specials,
+        room_id=room_id,
+    )
+
     return RegionContentManifest(
         race=race.id,
         cr_band=band.id,
@@ -291,4 +367,5 @@ def assemble_region(
         loot_table=loot,
         special_rooms=specials,
         big_bad=big_bad,
+        room_descriptions=[composed],
     )
